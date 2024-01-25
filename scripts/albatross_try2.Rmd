@@ -1,0 +1,372 @@
+---
+title: "albatross demo with widowing"
+author: "Sarah Becker"
+date: "4/19/2022"
+output: html_document
+---
+
+```{r, echo= FALSE, include =FALSE}
+library(here)
+library(tidyverse)
+```
+
+**set vital rates. Try first without widowing**
+```{r}
+#survival rates - drawn from Weimerskirch 1998
+s_c <- 0.64 #chick+ fledgling survival year 0-1
+s_j <- 0.8 #juvenile survival year 1-3
+s_i <- 0.92 #immature survival year 3-7
+s_s <- 0.94 #subadult survival year 7-10
+s_a <- 0.94 #adult survival year 10+
+#males show senescence but femailes don't, so not including it here, though perhaps I should since it impacts breeding success?
+
+#fecundity building blocks
+#breeding success - drawn from Weimerskirch 1998 &Rackete 2021
+bs_a <- 0.8 #adult breeding success
+
+#breeding probability (biennial breeders) - adult rate drawn from Rackete 2021, subadult downscaled slightly from that
+bp_a <- 0.45 #adult breeding probablity (biennial breeding, most breeding by age 10)
+
+c <- 0.5# # of female chicks per year
+
+#fecundity 
+f_a <- bs_a*bp_a*c
+  
+#add widowing
+#assume 25% prob year1 -> 100% prob year 4?
+#Sun et al 2022 - takes 4 years to reach next breeding attempt, breeding prob with new mate after widowhood = ~0.25 (fig5)
+w <- 0.25
+w4 <- 1
+```
+
+**create matrix**
+```{r}
+#set up age-based matrix based on vital rates
+
+#Age classes (years)  0-1     1-2    2-3    3-4    4-5    5-6    6-7    7-8   8-9     9-10     10+         nw,        w1,             w2,              w3,             w4 
+m <- matrix(data = c(0,     0,    0,      0,     0,     0,     0,     0,      0,      0,       s_a*f_a,    s_a*f_a,    s_a*f_a*w,    s_a*f_a*w,     s_a*f_a*w,     s_a*f_a*w4,      #0-1
+                    s_c,    0,    0,      0,     0,     0,     0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #1-2
+                    0,      s_j,  0,      0,     0,     0,     0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #2-3
+                    0,      0,    s_j,    0,     0,     0,     0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #3-4
+                    0,      0,    0,      s_i,   0,     0,     0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #4-5
+                    0,      0,    0,      0,     s_i,   0,     0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #5-6
+                    0,      0,    0,      0,     0,     s_i,   0,     0,      0,      0,       0,          0,          0,             0,              0,              0,              #6-7
+                    0,      0,    0,      0,     0,     0,     s_i,   0,      0,      0,       0,          0,          0,             0,              0,              0,              #7-8
+                    0,      0,    0,      0,     0,     0,     0,     s_s,    0,      0,       0,          0,          0,             0,              0,              0,              #8-9
+                    0,      0,    0,      0,     0,     0,     0,     0,      s_s,    0,       0,          0,          0,             0,              0,              0,              #9-10
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      s_s,     0,          0,          0,             0,              0,              0,              #10
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      0,       s_a*s_a,    s_a*s_a,    s_a*s_a*w,     s_a*s_a*w,      s_a*s_a*w,      s_a*s_a*w4,     #nw
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      0,       s_a*(1-s_a),s_a*(1-s_a),s_a*(1-s_a)*w, s_a*(1-s_a)*w,  s_a*(1-s_a)*w,  s_a*(1-s_a)*w4, #w1
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      0,       0,          0,          s_a*(1-w),     0,              0,              0,              #w2 
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      0,       0,          0,          0,             s_a*(1-w),      0,              0,              #w3 
+                    0,      0,    0,      0,     0,     0,     0,     0,      0,      0,       0,          0,          0,             0,              s_a*(1-w),      0),             #w4 
+                   nrow = 16, byrow = TRUE) 
+m
+```
+
+**extract lambda, SSDs, and RVs from eigenvalues**
+```{r}
+#deterministic growth rate (lambda)
+#extract eigenvalues and lambda from the matrix 
+m_eig <- eigen(m)
+lambda <- as.numeric(m_eig$values[1])
+lambda # this matches the ideal population growth rate in the table
+
+#Stable state distribution
+#extract and scale the right eigenvector 
+SSD <- round(as.numeric(m_eig$vectors[,1]/sum(m_eig$vectors[,1])),3)
+SSD
+
+#extract reproductive values
+RV <- as.numeric(eigen(t(m))$vectors[,1]/eigen(t(m))$vectors[1,1])
+RV
+```
+
+**identify mortality rate, mitigation efficacy**
+```{r}
+#bycatch mortality rates
+# ~25 - 35% of mortality has been attributed to bycatch (Cleeland et al 2021), 
+# so I calculated the baseline mortality and divided by 4 (testing 33% now - /3)
+m_j <- (1-s_j)/3 
+m_i <- (1-s_i)/3
+m_s <- (1-s_s)/3
+m_a <- (1-s_a)/3
+
+mitigation_eff <- 0.8
+```
+
+**loop through different bycatch reductions scenarios, find lambda for each**
+```{r}
+bycatch_reductions <- data.frame(reduction = seq(0, 1, by =0.01),
+                        lambda = NA)
+
+for(i in 1:nrow(bycatch_reductions)){
+  
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
+  
+  #Age classes (years)  0-1   1-2    2-3     3-4    4-5    5-6    6-7    7-8     8-9     9-10     10+              nw,              w1,                w2,                 w3,                 w4 
+  n_m <- matrix(data = c(0,   0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*f_a,       n_s_a*f_a,       n_s_a*f_a*w,      n_s_a*f_a*w,       n_s_a*f_a*w,       n_s_a*f_a*1,        #0-1
+                       s_c,   0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #1-2
+                       0,     n_s_j, 0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #2-3
+                       0,     0,     n_s_j,  0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #3-4
+                       0,     0,     0,      n_s_i, 0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #4-5
+                       0,     0,     0,      0,     n_s_i, 0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #5-6
+                       0,     0,     0,      0,     0,     n_s_i, 0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #6-7
+                       0,     0,     0,      0,     0,     0,     n_s_i, 0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #7-8
+                       0,     0,     0,      0,     0,     0,     0,     n_s_s,  0,      0,       0,               0,               0,                 0,                  0,                  0,                  #8-9
+                       0,     0,     0,      0,     0,     0,     0,     0,      n_s_s,  0,       0,               0,               0,                 0,                  0,                  0,                  #9-10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      n_s_s,   0,               0,               0,                 0,                  0,                  0,                  #10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*n_s_a,     n_s_a*n_s_a,     n_s_a*n_s_a*w,     n_s_a*n_s_a*w,      n_s_a*n_s_a*w,      n_s_a*n_s_a*w4,     #nw
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*(1-n_s_a), n_s_a*(1-n_s_a), n_s_a*(1-n_s_a)*w, n_s_a*(1-n_s_a)*w,  n_s_a*(1-n_s_a)*w,  n_s_a*(1-n_s_a)*w4, #w1
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               n_s_a*(1-w),       0,                  0,                  0,                  #w2 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 n_s_a*(1-w),        0,                  0,                  #w3 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  n_s_a*(1-w),        0),                 #w4 
+                      nrow = 16, byrow = TRUE) 
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1])
+  bycatch_reductions$lambda[i] <- lambda_n # this matches the ideal population growth rate in the table
+
+}
+```
+
+**plot bycatch reduction against changes to lambda**
+```{r}
+ggplot(bycatch_reductions)+
+  geom_line(aes(x=reduction, y=as.numeric(lambda)))+
+   geom_hline(aes(yintercept = 1), color = "blue", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
+  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+ labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  theme_classic()
+```
+
+**add uncertainty - vary mitigation efficacy**
+```{r}
+bycatch_reductions2 <- seq(0, 1, by =0.01)
+# mitigation_eff_range <- seq(0.45,0.95, by  = 0.01)
+mitigation_eff_range <- seq(0.5,1, by  = 0.1)
+output <- matrix(nrow = length(bycatch_reductions2), ncol = length(mitigation_eff_range)) %>% as.data.frame() 
+
+for(k in 1:length(mitigation_eff_range)){
+  mit_eff <- mitigation_eff_range[k]
+  
+  for(i in 1:length(bycatch_reductions2)){
+  
+  n_s_j <- 1-((m_j*(1-(mit_eff*bycatch_reductions2[i])))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mit_eff*bycatch_reductions2[i])))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mit_eff*bycatch_reductions2[i])))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mit_eff*bycatch_reductions2[i])))+(m_s*2))
+  
+  #Age classes (years)  0-1   1-2    2-3     3-4    4-5    5-6    6-7    7-8     8-9     9-10     10+              nw,              w1,                w2,                 w3,                 w4 
+  n_m <- matrix(data = c(0,   0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*f_a,       n_s_a*f_a,       n_s_a*f_a*w,      n_s_a*f_a*w,       n_s_a*f_a*w,       n_s_a*f_a*w4,        #0-1
+                       s_c,   0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #1-2
+                       0,     n_s_j, 0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #2-3
+                       0,     0,     n_s_j,  0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #3-4
+                       0,     0,     0,      n_s_i, 0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #4-5
+                       0,     0,     0,      0,     n_s_i, 0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #5-6
+                       0,     0,     0,      0,     0,     n_s_i, 0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #6-7
+                       0,     0,     0,      0,     0,     0,     n_s_i, 0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #7-8
+                       0,     0,     0,      0,     0,     0,     0,     n_s_s,  0,      0,       0,               0,               0,                 0,                  0,                  0,                  #8-9
+                       0,     0,     0,      0,     0,     0,     0,     0,      n_s_s,  0,       0,               0,               0,                 0,                  0,                  0,                  #9-10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      n_s_s,   0,               0,               0,                 0,                  0,                  0,                  #10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*n_s_a,     n_s_a*n_s_a,     n_s_a*n_s_a*w,     n_s_a*n_s_a*w,      n_s_a*n_s_a*w,      n_s_a*n_s_a*w4,     #nw
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a*(1-n_s_a), n_s_a*(1-n_s_a), n_s_a*(1-n_s_a)*w, n_s_a*(1-n_s_a)*w,  n_s_a*(1-n_s_a)*w,  n_s_a*(1-n_s_a)*w4, #w1
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               n_s_a*(1-w),       0,                  0,                  0,                  #w2 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 n_s_a*(1-w),        0,                  0,                  #w3 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  n_s_a*(1-w),        0),                 #w4 
+                      nrow = 16, byrow = TRUE) 
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1])
+  output[i,k] <- lambda_n # this matches the ideal population growth rate in the table
+
+}
+}
+
+```
+
+```{r}
+
+# oldnames = c("V1","V2","V3","V4" ,"V5" , "V6" , "V7"  ,"V8" , "V9" , "V10", "V11" ,"V12", "V13" ,"V14" ,"V15" ,"V16" ,"V17" ,"V18" ,"V19" ,"V20" ,"V21" ,"V22" ,"V23", "V24" ,"V25", "V26" ,"V27" ,"V28" ,"V29", "V30" ,"V31" ,"V32", "V33", "V34", "V35" ,"V36", "V37", "V38", "V39" ,"V40" ,"V41" ,"V42" ,"V43", "V44" ,"V45" ,"V46" ,"V47" ,"V48", "V49", "V50" ,"V51")
+# newnames = c("0.45", "0.46", "0.47", "0.48", "0.49", "0.50", "0.51" ,"0.52" ,"0.53" ,"0.54" ,"0.55", "0.56" ,"0.57" ,"0.58" ,"0.59" ,"0.60" ,"0.61", "0.62", "0.63" ,"0.64" ,"0.65" ,"0.66" ,"0.67" ,"0.68" ,"0.69" ,"0.70", "0.71" ,"0.72", "0.73", "0.74", "0.75" ,"0.76" ,"0.77" ,"0.78" ,"0.79", "0.80" ,"0.81" ,"0.82" ,"0.83" ,"0.84", "0.85", "0.86", "0.87", "0.88" ,"0.89", "0.90", "0.91" ,"0.92", "0.93", "0.94" ,"0.95")
+
+oldnames = c("V1","V2","V3","V4" ,"V5", "V6")
+newnames = c("0.5", "0.6", "0.7", "0.8", "0.9", "1")
+
+output<- output %>% 
+  rename_with(~ newnames[which(oldnames == .x)], .cols = oldnames)
+
+output$bycatch_reductions <- bycatch_reductions2
+
+output_l <- output %>% 
+  pivot_longer(cols = !bycatch_reductions,names_to = "mit_eff", values_to = "lambda")
+
+output_l$mit_eff <- as.numeric(output_l$mit_eff)
+```
+
+```{r}
+ggplot(output_l)+
+  geom_line(aes(x=bycatch_reductions, y=lambda, group = factor(mit_eff), color = factor(mit_eff)))+
+   geom_hline(aes(yintercept = 1), color = "darkgrey", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
+  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  labs(x="% fisheries with bycatch mitigation", y="lambda", color = "% mitigation efficacy")+
+  theme_classic()
+```
+**add uncertainty, simulate 1000 runs with varying range of vital rates (randomly draw with replacement from values found in the literature)**
+```{r}
+#full_output = matrix(nrow = length(bycatch_reductions2)*length(mitigation_eff_range), ncol = length(sims)) %>% as.data.frame() 
+full_output <- vector("list", 6)
+bycatch_reductions2 <- seq(0, 1, by =0.01)
+mitigation_eff_range <- seq(0.5,1, by  = 0.1)
+sims = 1:100
+
+for(k in 1:length(mitigation_eff_range)){
+  mit_eff <- mitigation_eff_range[k]
+  
+  output2 <- matrix(nrow = length(bycatch_reductions2), ncol = length(sims)) %>% as.data.frame() 
+  
+for(j in 1:length(sims)){
+    
+    s_c2 <- sample(seq(0.6,0.7, by =0.01), size =1, replace = TRUE) #chick+ fledgling survival year 0-1 - 0.64 
+    s_j2 <- sample(seq(0.6,0.9, by = 0.01), size =1, replace = TRUE) #juvenile survival year 1-3 -  0.8 
+    s_i2 <- sample(seq(0.8,0.95, by =0.01), size =1, replace = TRUE) #immature survival year 3-7 -  0.92
+    s_s2 <- sample(seq(0.92,0.96, by =0.01), size =1, replace =TRUE) #subadult survival year 7-10 - 0.94
+    s_a2 <- sample(seq(0.92,0.96, by =0.01), size=1, replace=TRUE) #adult survival year 10+ - 0.94
+
+    bs_a2 <- sample(seq(0.6,0.9, by =0.01), size =1, replace = TRUE) #adult breeding success - 0.8 
+    bp_a2 <- sample(seq(0.4,0.6, by =0.01), size=1, replace = TRUE)  #adult breeding probablity (biennial breeding, most breeding by age 10) - 0.45
+    c2 <- 0.5# # of female chicks per year
+    f_a2 <- bs_a*bp_a*c #fecundity
+  
+    w2 <- sample(seq(0.2,0.6, by =0.01), size=1, replace = TRUE)
+    w42 <- 1
+    
+    m_j2 <- (1-s_j2)/sample(c(3,4), size=1, replace = TRUE)
+    m_i2 <- (1-s_i2)/sample(c(3,4), size=1, replace = TRUE)
+    m_s2 <- (1-s_s2)/sample(c(3,4), size=1, replace = TRUE)
+    m_a2 <- (1-s_a2)/sample(c(3,4), size=1, replace = TRUE)
+    
+    # which1 <- sample(c(3,4), size=1, replace = TRUE)  #select whether to partition mortality into 3 sections (33% = bycatch) or 4 (25%=bycatch)
+    # m_j2 <- (1-s_j2)/which # divide total moratlity by 3 or 4 to get bycatch mortality
+    # o_m_j2 <- m_j2*(which-1) #multiply bycatch by 1-(3 or 4) to get non-bycatch mortality
+    # 
+    # which2 <- sample(c(3,4), size=1, replace = TRUE) 
+    # m_i2 <- (1-s_i2)/ which2
+    # o_m_i2 <- m_i2*(which2-1)
+    # 
+    # which3 <- sample(c(3,4), size=1, replace = TRUE) 
+    # m_s2 <- (1-s_s2)/which3 
+    # o_m_s2 <- m_s2*(which3-1)
+    # 
+    # which4 <- sample(c(3,4), size=1, replace = TRUE) 
+    # m_a2 <- (1-s_a2)/which4 
+    # o_m_a2 <- m_a2*(which4-1)
+    
+    
+for(i in 1:length(bycatch_reductions2)){
+  
+  #calculate new survival rates = 1-(bycatch mortality*(1-efficacy of intervention action * proportion of fishery implementing intervention actions))+mortality remainder)
+  # n_s_j2 <- 1-((m_j2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_j2)) 
+  # n_s_i2 <- 1-((m_i2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_i2))
+  # n_s_s2 <- 1-((m_s2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_s2))
+  # n_s_a2 <- 1-((m_a2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_a2))
+  
+  n_s_j2 <- 1-((m_j2*(1-(mit_eff*bycatch_reductions2[i])))+(m_j2*2)) 
+  n_s_i2 <- 1-((m_i2*(1-(mit_eff*bycatch_reductions2[i])))+(m_i2*2))
+  n_s_s2 <- 1-((m_s2*(1-(mit_eff*bycatch_reductions2[i])))+(m_s2*2))
+  n_s_a2 <- 1-((m_a2*(1-(mit_eff*bycatch_reductions2[i])))+(m_a2*2))
+  
+  #Age classes (years)  0-1   1-2    2-3     3-4    4-5    5-6    6-7    7-8     8-9     9-10     10+              nw,              w1,                w2,                 w3,                 w4 
+  n_m2 <- matrix(data = c(0,   0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a2*f_a2,       n_s_a2*f_a2,       n_s_a2*f_a2*w2,      n_s_a2*f_a2*w2,       n_s_a2*f_a2*w2,       n_s_a2*f_a2*w42,        #0-1
+                       s_c2,  0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #1-2
+                       0,     n_s_j2, 0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #2-3
+                       0,     0,     n_s_j2,  0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #3-4
+                       0,     0,     0,      n_s_i2, 0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #4-5
+                       0,     0,     0,      0,     n_s_i2, 0,     0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #5-6
+                       0,     0,     0,      0,     0,     n_s_i2, 0,     0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #6-7
+                       0,     0,     0,      0,     0,     0,     n_s_i2, 0,      0,      0,       0,               0,               0,                 0,                  0,                  0,                  #7-8
+                       0,     0,     0,      0,     0,     0,     0,     n_s_s2,  0,      0,       0,               0,               0,                 0,                  0,                  0,                  #8-9
+                       0,     0,     0,      0,     0,     0,     0,     0,      n_s_s2,  0,       0,               0,               0,                 0,                  0,                  0,                  #9-10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      n_s_s2,   0,               0,               0,                 0,                  0,                  0,                  #10
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a2*n_s_a2,     n_s_a2*n_s_a2,     n_s_a2*n_s_a2*w2,     n_s_a2*n_s_a2*w2,      n_s_a2*n_s_a2*w2,      n_s_a2*n_s_a2*w42,     #nw
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       n_s_a2*(1-n_s_a2), n_s_a2*(1-n_s_a2), n_s_a2*(1-n_s_a2)*w2, n_s_a2*(1-n_s_a2)*w2,  n_s_a2*(1-n_s_a2)*w2,  n_s_a2*(1-n_s_a2)*w42, #w1
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               n_s_a2*(1-w2),       0,                  0,                  0,                  #w2 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 n_s_a2*(1-w2),        0,                  0,                  #w3 
+                       0,     0,     0,      0,     0,     0,     0,     0,      0,      0,       0,               0,               0,                 0,                  n_s_a2*(1-w2),        0),                 #w4 
+                      nrow = 16, byrow = TRUE) 
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig2 <- eigen(n_m2)
+  lambda_n2 <- as.numeric(n_m_eig2$values[1])
+  output2[i,j] <- lambda_n2 # this matches the ideal population growth rate in the table
+  output2 <- as.data.frame(output2)
+  output2$mitigation_efficacy <- mit_eff
+  output2$bycatch_reduction <- bycatch_reductions2
+    
+ full_output[[k]] <- output2
+
+}
+}
+}
+
+full_output[[1]]
+```
+
+```{r}
+mitigation_eff_range #0.5 0.6 0.7 0.8 0.9 1.0
+
+mit05_l <- full_output[[1]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+mit06_l <- full_output[[2]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+mit07_l <- full_output[[3]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+mit08_l <- full_output[[4]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+mit09_l <- full_output[[5]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+mit1_l <- full_output[[6]] %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+fulldat <- rbind(mit05_l,mit06_l,mit07_l,mit08_l,mit09_l,mit1_l)
+fulldat$mitsim <- paste(fulldat$mitigation_efficacy, fulldat$simrun)
+
+```
+
+```{r}
+ggplot(fulldat)+
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey")+
+   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
+  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  facet_wrap(~mitigation_efficacy)+
+  theme_classic()
+```
+
+```{r}
+ggplot(fulldat)+
+  #geom_line(aes(x=bycatch_reduction, y=lambda, group = mitsim), color = "grey", alpha =0.25)+
+   geom_line(aes(x=bycatch_reduction, y=lambda, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.5)+
+  geom_line(data = bycatch_reductions, aes(x=reduction, y=as.numeric(lambda)))+
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
+  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  theme_classic()
+```
+```{r}
+ggplot(fulldat)+
+ #geom_density(aes(x=lambda), color= "grey", fill= "lightgrey")+
+  geom_histogram(aes(x=lambda), fill="darkgrey")+
+  #geom_vline(aes(xintercept=0.9841507))+
+  theme_classic()
+```
+

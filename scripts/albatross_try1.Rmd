@@ -1,0 +1,218 @@
+---
+title: "Wandering albatross bycatch mitigation impacts on demography"
+author: "Sarah Becker"
+date: "4/13/2022"
+output: html_document
+---
+
+
+```{r, echo= FALSE, include =FALSE}
+library(here)
+library(tidyverse)
+```
+
+**set vital rates. Try first without widowing**
+```{r}
+#survival rates - drawn from Weimerskirch 1998
+s_c <- 0.64 #chick+ fledgling survival year 0-1
+s_j <- 0.8 #juvenile survival year 1-3
+s_i <- 0.92 #immature survival year 3-7
+s_s <- 0.94 #subadult survival year 7-10
+s_a <- 0.94 #adult survival year 10+
+#males show senescence but females don't, so not including it here, though perhaps I should since it impacts breeding success?
+
+#fecundity building blocks
+#breeding success - drawn from Weimerskirch 1998 &Rackete 2021
+bs_s <- 0.7 #subadult breeding success
+bs_a <- 0.8 #adult breeding success
+
+#breeding probability (biennial breeders) - adult rate drawn from Rackete 2021, subadult downscaled slightly from that
+bp_s <- 0.4 #subadult breeding probability (range of ages at which individuals recruit)
+bp_a <- 0.45 #adult breeding probablity (biennial breeding, most breeding by age 10)
+
+c <- 0.5# # of female chicks per year
+
+#fecundity 
+f_s <- bs_s*bp_s*c
+f_a <- bs_a*bp_a*c
+
+```
+
+**create matrix. first without widowing, try to add that later**
+```{r}
+#set up age-based matrix based on vital rates
+#Age classes (years)  0-1     1-2    2-3    3-4    4-5    5-6    6-7    7-8        8-9        9-10       10+        
+m <- matrix(data = c( 0,      0,    0,      0,     0,     0,     0,     s_s*f_s,   s_s*f_s,   s_s*f_s,   s_a*f_a, #0-1
+                      s_c,    0,    0,      0,     0,     0,     0,     0,         0,         0,         0,       #1-2
+                      0,      s_j,  0,      0,     0,     0,     0,     0,         0,         0,         0,       #2-3
+                      0,      0,    s_j,    0,     0,     0,     0,     0,         0,         0,         0,       #3-4
+                      0,      0,    0,      s_i,   0,     0,     0,     0,         0,         0,         0,       #4-5
+                      0,      0,    0,      0,     s_i,   0,     0,     0,         0,         0,         0,       #5-6
+                      0,      0,    0,      0,     0,     s_i,   0,     0,         0,         0,         0,       #6-7
+                      0,      0,    0,      0,     0,     0,     s_i,   0,         0,         0,         0,       #7-8
+                      0,      0,    0,      0,     0,     0,     0,     s_s,       0,         0,         0,       #8-9
+                      0,      0,    0,      0,     0,     0,     0,     0,         s_s,       0,         0,       #9-10
+                      0,      0,    0,      0,     0,     0,     0,     0,         0,         s_s,       s_a),    #10+
+                   nrow = 11, byrow = TRUE) 
+m
+```
+
+**extract lambda, SSDs, and RVs from eigenvalues**
+```{r}
+#deterministic growth rate (lambda)
+#extract eigenvalues and lambda from the matrix 
+m_eig <- eigen(m)
+lambda <- as.numeric(m_eig$values[1])
+lambda # this matches the ideal population growth rate in the table
+
+#Stable state distribution
+#extract and scale the right eigenvector 
+SSD <- round(as.numeric(m_eig$vectors[,1]/sum(m_eig$vectors[,1])),3)
+SSD
+
+#extract reproductive values
+RV <- as.numeric(eigen(t(m))$vectors[,1]/eigen(t(m))$vectors[1,1])
+RV
+```
+
+**identify mortality rate, mitigation efficacy**
+```{r}
+#bycatch mortality rates
+# ~25 - 35% of mortality has been attributed to bycatch (Cleeland et al 2021), 
+# so I calculated the baseline mortality and divided by 4 (testing 33% now - /3)
+m_j <- (1-s_j)/3
+m_i <- (1-s_i)/3
+m_s <- (1-s_s)/3
+m_a <- (1-s_a)/3
+
+mitigation_eff <- 0.8
+```
+
+**test two examples of mortality adjustment**
+```{r}
+#zero mitigation
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*0)))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mitigation_eff*0)))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mitigation_eff*0)))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mitigation_eff*0)))+(m_s*2))
+  
+  #Age classes (years)    0-1     1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
+  n_m <- matrix(data = c( 0,      0,      0,      0,      0,     0,     0,     n_s_s*f_s,   n_s_s*f_s,   n_s_s*f_s,   n_s_a*f_a, #0-1
+                          s_c,    0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
+                          0,      n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
+                          0,      0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
+                          0,      0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
+                          0,      0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
+                          0,      0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
+                          0,      0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
+                          0,      0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
+                          0,      0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
+                          0,      0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
+                   nrow = 11, byrow = TRUE) 
+  
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1]) # 0.9792239
+  lambda #0.9792239
+
+#50% mitigation
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*0.5)))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mitigation_eff*0.5)))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mitigation_eff*0.5)))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mitigation_eff*0.5)))+(m_s*2))
+  
+  #Age classes (years)    0-1     1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
+  n_m <- matrix(data = c( 0,      0,      0,      0,      0,     0,     0,     n_s_s*f_s,   n_s_s*f_s,   n_s_s*f_s,   n_s_a*f_a, #0-1
+                          s_c,    0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
+                          0,      n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
+                          0,      0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
+                          0,      0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
+                          0,      0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
+                          0,      0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
+                          0,      0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
+                          0,      0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
+                          0,      0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
+                          0,      0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
+                   nrow = 11, byrow = TRUE) 
+  
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1]) # 0.9891705
+  lambda #  0.9792239
+  
+  
+ #100% mitigation
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*1)))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mitigation_eff*1)))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mitigation_eff*1)))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mitigation_eff*1)))+(m_s*2))
+  
+  #Age classes (years)    0-1     1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
+  n_m <- matrix(data = c( 0,      0,      0,      0,      0,     0,     0,     n_s_s*f_s,   n_s_s*f_s,   n_s_s*f_s,   n_s_a*f_a, #0-1
+                          s_c,    0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
+                          0,      n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
+                          0,      0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
+                          0,      0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
+                          0,      0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
+                          0,      0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
+                          0,      0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
+                          0,      0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
+                          0,      0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
+                          0,      0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
+                   nrow = 11, byrow = TRUE) 
+  
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1]) # 0.9991264
+  lambda #  0.9792239 
+```
+
+
+**loop through different bycatch reductions scenarios, find lambda for each**
+```{r}
+bycatch_reductions <- data.frame(reduction = seq(0, 1, by =0.01),
+                        lambda = NA)
+
+for(i in 1:nrow(bycatch_reductions)){
+  
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_j*2))
+  n_s_i <- 1-((m_i*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_i*2))
+  n_s_s <- 1-((m_s*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
+  n_s_a <- 1-((m_a*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
+  
+  #Age classes (years)    0-1     1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
+  n_m <- matrix(data = c( 0,      0,      0,      0,      0,     0,     0,     n_s_s*f_s,   n_s_s*f_s,   n_s_s*f_s,   n_s_a*f_a, #0-1
+                          s_c,    0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
+                          0,      n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
+                          0,      0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
+                          0,      0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
+                          0,      0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
+                          0,      0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
+                          0,      0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
+                          0,      0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
+                          0,      0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
+                          0,      0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
+                   nrow = 11, byrow = TRUE) 
+  
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1])
+  bycatch_reductions$lambda[i] <- lambda_n # this matches the ideal population growth rate in the table
+
+}
+```
+
+**plot bycatch reduction against changes to lambda**
+```{r}
+ggplot(bycatch_reductions)+
+  geom_line(aes(x=reduction, y=as.numeric(lambda)))+
+  geom_hline(aes(yintercept = 1), color = "blue", alpha =0.5)+ 
+  geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
+   geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  labs(x="% bycatch reduction", y="lambda")+
+  theme_classic()
+```

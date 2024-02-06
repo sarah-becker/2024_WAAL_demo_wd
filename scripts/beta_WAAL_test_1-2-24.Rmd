@@ -33,7 +33,7 @@ themeo <-theme_classic()+
 ```{r}
 #survival rates - drawn from Weimerskirch 1998 & rackete 2021
 s_c <- 0.64 #chick+ fledgling survival year 0-1
-s_cc <- 0.73 #conditional chick survival (disregarding parental survival) * calculated from other VR, not directly in literature
+s_cc <- 0.7244736 #conditional chick survival (disregarding parental survival) * calculated from other VR, not directly in literature
 s_j <- 0.85 #juvenile survival year 1-3
 s_i <- 0.92 #immature survival year 3-7
 s_s <- 0.94 #subadult survival year 7-10

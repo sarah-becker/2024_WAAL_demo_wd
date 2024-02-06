@@ -259,8 +259,8 @@ s_c2alpha = s_c2mean * ((1 - s_c2mean) / s_c2var - 1 / s_c2mean)
 s_c2beta = (1 - s_c2mean) * ((1 -s_c2mean) /s_c2var - 1 / (1 - s_c2mean))
 
 #s_cc2
-s_cc2mean <-0.73
-s_cc2upper_CI <- 0.74
+s_cc2mean <-0.7244736
+s_cc2upper_CI <- 0.73
 s_cc2lower_CI <- 0.72
   
 s_cc2SE <- (s_cc2upper_CI - s_cc2lower_CI) / 3.92

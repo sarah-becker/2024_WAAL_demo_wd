@@ -6,27 +6,19 @@ output: html_document
 ---
 
 
----
-title: "Wandering albatross bycatch mitigation impacts on demography - no widowing"
-author: "Sarah Becker"
-date: "4/13/2022"
-output: html_document
----
-
-
 ```{r, echo= FALSE, include =FALSE}
 library(here)
 library(tidyverse)
 library(RColorBrewer)
 
-#set up various plotting themes
+#set up plotting theme
 themeo <-theme_classic()+
   theme(strip.background = element_blank(),
         panel.grid.major = element_line(colour = "transparent"), 
         panel.grid.minor = element_line(colour = "transparent"),
         axis.line = element_blank(),
         axis.title = element_text(color = "black", size = 10),
-          axis.ticks.length=unit(-0.1, "cm"),
+        axis.ticks.length=unit(-0.1, "cm"),
         axis.ticks = element_line(color = "black", size = .25),
         axis.ticks.x = element_line(color = "black"),
         axis.ticks.y = element_line(color = "black"),
@@ -39,21 +31,21 @@ themeo <-theme_classic()+
 
 **set vital rates. Try first without widowing**
 ```{r}
-#survival rates - drawn from Weimerskirch 1998
+#survival rates - drawn from Weimerskirch 1998 & rackete 2021
 s_c <- 0.64 #chick+ fledgling survival year 0-1
-s_cc <- 0.7244736 #conditional chick survival (disregarding parental survival)
+s_cc <- 0.73 #conditional chick survival (disregarding parental survival) * calculated from other VR, not directly in literature
 s_j <- 0.85 #juvenile survival year 1-3
 s_i <- 0.92 #immature survival year 3-7
 s_s <- 0.94 #subadult survival year 7-10
 s_a <- 0.94 #adult survival year 10+
-#males show senescence but femailes don't, so not including it here, though perhaps I should since it impacts breeding success?
+#males show senescence but females don't, so not including it here, though perhaps I should since it impacts breeding success?
 
 #fecundity building blocks
-#breeding success - drawn from Weimerskirch 1998 &Rackete 2021
+#breeding success - drawn from Weimerskirch 1998 & Rackete 2021
 bs_a <- 0.76 #adult breeding success
 
-#breeding probability (biennial breeders) - adult rate drawn from Rackete 2021, subadult downscaled slightly from that
-bp_a <- 0.45 #adult breeding probablity (biennial breeding, most breeding by age 10)
+#breeding probability (biennial breeders) - adult rate drawn from Rackete 2021
+bp_a <- 0.45 #adult breeding probability (biennial breeding, most breeding by age 10)
 
 c <- 0.5# # of female chicks per year
 
@@ -64,18 +56,18 @@ f_a <- bs_a*bp_a*c
 **create matrix. first without widowing, try to add that later**
 ```{r}
 #set up age-based matrix based on vital rates
-#Age classes (years)  0-1            1-2    2-3    3-4    4-5    5-6    6-7    7-8        8-9        9-10       10+        
-m <- matrix(data = c( 0,             0,    0,      0,     0,     0,     0,     0,         0,         0,        s_a*f_a, #0-1
-                      s_cc*(s_a^2),  0,    0,      0,     0,     0,     0,     0,         0,         0,         0,       #1-2
-                      0,             s_j,  0,      0,     0,     0,     0,     0,         0,         0,         0,       #2-3
-                      0,             0,    s_j,    0,     0,     0,     0,     0,         0,         0,         0,       #3-4
-                      0,             0,    0,      s_i,   0,     0,     0,     0,         0,         0,         0,       #4-5
-                      0,             0,    0,      0,     s_i,   0,     0,     0,         0,         0,         0,       #5-6
-                      0,             0,    0,      0,     0,     s_i,   0,     0,         0,         0,         0,       #6-7
-                      0,             0,    0,      0,     0,     0,     s_i,   0,         0,         0,         0,       #7-8
-                      0,             0,    0,      0,     0,     0,     0,     s_s,       0,         0,         0,       #8-9
-                      0,             0,    0,      0,     0,     0,     0,     0,         s_s,       0,         0,       #9-10
-                      0,             0,    0,      0,     0,     0,     0,     0,         0,         s_s,       s_a),    #10+
+#Age classes (years)  0-1         1-2    2-3    3-4    4-5    5-6    6-7    7-8        8-9        9-10  10+        
+m <- matrix(data = c( 0,          0,    0,      0,     0,     0,     0,     0,         0,         0,     s_a^2*f_a, #0-1 
+                      s_cc*s_a^2, 0,    0,      0,     0,     0,     0,     0,         0,         0,     0,         #1-2
+                      0,          s_j,  0,      0,     0,     0,     0,     0,         0,         0,     0,         #2-3
+                      0,          0,    s_j,    0,     0,     0,     0,     0,         0,         0,     0,         #3-4
+                      0,          0,    0,      s_i,   0,     0,     0,     0,         0,         0,     0,         #4-5
+                      0,          0,    0,      0,     s_i,   0,     0,     0,         0,         0,     0,         #5-6
+                      0,          0,    0,      0,     0,     s_i,   0,     0,         0,         0,     0,         #6-7
+                      0,          0,    0,      0,     0,     0,     s_i,   0,         0,         0,     0,         #7-8
+                      0,          0,    0,      0,     0,     0,     0,     s_s,       0,         0,     0,         #8-9
+                      0,          0,    0,      0,     0,     0,     0,     0,         s_s,       0,     0,         #9-10
+                      0,          0,    0,      0,     0,     0,     0,     0,         0,         s_s,   s_a),      #10+
                    nrow = 11, byrow = TRUE) 
 m
 ```
@@ -117,42 +109,45 @@ bycatch_reductions <- data.frame(reduction = seq(0, 1, by =0.01),
                         lambda = NA)
 
 for(i in 1:nrow(bycatch_reductions)){
-  
-  n_s_j <- 1-((m_j*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_j*2))
+  #New_surv = 1-((baseline_bycatch_mort*(1-mit_eff*mit_amount))+baseline_non_bycatch_mort)
+  #new_surv = 1-(modified bycatch mortality + baseline non-bycatch mortality)
+  n_s_j <- 1-((m_j*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_j*2)) 
   n_s_i <- 1-((m_i*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_i*2))
   n_s_s <- 1-((m_s*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
   n_s_a <- 1-((m_a*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(m_s*2))
   
-  #Age classes (years)    0-1            1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
-  n_m <- matrix(data = c( 0,             0,      0,      0,      0,     0,     0,     0,           0,           0,           n_s_a*f_a, #0-1
-                         s_cc*(n_s_a^2), 0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
-                          0,             n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
-                          0,             0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
-                          0,             0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
-                          0,             0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
-                          0,             0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
-                          0,             0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
-                          0,             0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
-                          0,             0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
-                          0,             0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
+
+  #Age classes (years)  0-1         1-2     2-3     3-4     4-5     5-6     6-7     7-8     8-9     9-10    10+        
+n_m <- matrix(data = c( 0,          0,      0,      0,      0,      0,      0,      0,      0,      0,      n_s_a^2*f_a,  #0-1 
+                      s_cc*s_a^2,   0,      0,      0,      0,      0,      0,      0,      0,      0,      0,            #1-2
+                      0,            n_s_j,  0,      0,      0,      0,      0,      0,      0,      0,      0,            #2-3
+                      0,            0,      n_s_j,  0,      0,      0,      0,      0,      0,      0,      0,            #3-4
+                      0,            0,      0,      n_s_i,  0,      0,      0,      0,      0,      0,      0,            #4-5
+                      0,            0,      0,      0,      n_s_i,  0,      0,      0,      0,      0,      0,            #5-6
+                      0,            0,      0,      0,      0,      n_s_i,  0,      0,      0,      0,      0,            #6-7
+                      0,            0,      0,      0,      0,      0,      n_s_i,  0,      0,      0,      0,            #7-8
+                      0,            0,      0,      0,      0,      0,      0,      n_s_s,  0,      0,      0,            #8-9
+                      0,            0,      0,      0,      0,      0,      0,      0,      n_s_s,  0,      0,            #9-10
+                      0,            0,      0,      0,      0,      0,      0,      0,      0,     n_s_s,   n_s_a),       #10+
                    nrow = 11, byrow = TRUE) 
-  
-  
-  #extract eigenvalues and lambda from the matrix 
+n_m
+
+#extract eigenvalues and lambda from the matrix 
   n_m_eig <- eigen(n_m)
   lambda_n <- as.numeric(n_m_eig$values[1])
-  bycatch_reductions$lambda[i] <- lambda_n # this matches the ideal population growth rate in the table
+  bycatch_reductions$lambda[i] <- lambda_n 
 
 }
 ```
+
 
 **plot bycatch reduction against changes to lambda**
 ```{r}
 ggplot(bycatch_reductions)+
   geom_line(aes(x=reduction, y=as.numeric(lambda)))+
   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fishing transition
+  # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fishing transition
   labs(x="% fisheries with bycatch mitigation", y="lambda")+
   theme_classic()
 ```
@@ -160,7 +155,6 @@ ggplot(bycatch_reductions)+
 **add uncertainty - vary mitigation efficacy**
 ```{r}
 bycatch_reductions2 <- seq(0, 1, by =0.01)
-# mitigation_eff_range <- seq(0.45,0.95, by  = 0.01)
 mitigation_eff_range <- seq(0.5,1, by  = 0.1)
 output <- matrix(nrow = length(bycatch_reductions2), ncol = length(mitigation_eff_range)) %>% as.data.frame() 
 
@@ -174,36 +168,35 @@ for(k in 1:length(mitigation_eff_range)){
   n_s_s <- 1-((m_s*(1-(mit_eff*bycatch_reductions2[i])))+(m_s*2))
   n_s_a <- 1-((m_a*(1-(mit_eff*bycatch_reductions2[i])))+(m_s*2))
   
-   #Age classes (years)   0-1            1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
-  n_m <- matrix(data = c( 0,             0,      0,      0,      0,     0,     0,     0,           0,           0,           n_s_a*f_a, #0-1
-                         s_cc*(n_s_a^2), 0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
-                          0,             n_s_j,  0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
-                          0,             0,      n_s_j,  0,      0,     0,     0,     0,           0,           0,           0,         #3-4
-                          0,             0,      0,      n_s_i,  0,     0,     0,     0,           0,           0,           0,         #4-5
-                          0,             0,      0,      0,      n_s_i, 0,     0,     0,           0,           0,           0,         #5-6
-                          0,             0,      0,      0,      0,     n_s_i, 0,     0,           0,           0,           0,         #6-7
-                          0,             0,      0,      0,      0,     0,     n_s_i, 0,           0,           0,           0,         #7-8
-                          0,             0,      0,      0,      0,     0,     0,     n_s_s,       0,           0,           0,         #8-9
-                          0,             0,      0,      0,      0,     0,     0,     0,           n_s_s,       0,           0,         #9-10
-                          0,             0,      0,      0,      0,     0,     0,     0,           0,           n_s_s,       n_s_a),    #10+
-                   nrow = 11, byrow = TRUE) 
   
+  
+  #Age classes (years)  0-1         1-2     2-3     3-4     4-5     5-6     6-7     7-8     8-9      9-10     10+        
+n_m <- matrix(data = c( 0,          0,      0,      0,      0,      0,      0,      0,      0,       0,       n_s_a^2*f_a,  #0-1 
+                      s_cc*s_a^2,   0,      0,      0,      0,      0,      0,      0,      0,       0,       0,            #1-2
+                      0,            n_s_j,  0,      0,      0,      0,      0,      0,      0,       0,       0,            #2-3
+                      0,            0,      n_s_j,  0,      0,      0,      0,      0,      0,       0,       0,            #3-4
+                      0,            0,      0,      n_s_i,  0,      0,      0,      0,      0,       0,       0,            #4-5
+                      0,            0,      0,      0,      n_s_i,  0,      0,      0,      0,       0,       0,            #5-6
+                      0,            0,      0,      0,      0,      n_s_i,  0,      0,      0,       0,       0,            #6-7
+                      0,            0,      0,      0,      0,      0,      n_s_i,  0,      0,       0,       0,            #7-8
+                      0,            0,      0,      0,      0,      0,      0,      n_s_s,  0,       0,       0,            #8-9
+                      0,            0,      0,      0,      0,      0,      0,      0,      n_s_s,   0,       0,            #9-10
+                      0,            0,      0,      0,      0,      0,      0,      0,      0,       n_s_s,   n_s_a),       #10+
+                   nrow = 11, byrow = TRUE) 
+n_m
+
   #extract eigenvalues and lambda from the matrix 
   n_m_eig <- eigen(n_m)
   lambda_n <- as.numeric(n_m_eig$values[1])
-  output[i,k] <- lambda_n # this matches the ideal population growth rate in the table
+  output[i,k] <- lambda_n 
 
 }
 }
 
 ```
 
-
+**format output**
 ```{r}
-
-# oldnames = c("V1","V2","V3","V4" ,"V5" , "V6" , "V7"  ,"V8" , "V9" , "V10", "V11" ,"V12", "V13" ,"V14" ,"V15" ,"V16" ,"V17" ,"V18" ,"V19" ,"V20" ,"V21" ,"V22" ,"V23", "V24" ,"V25", "V26" ,"V27" ,"V28" ,"V29", "V30" ,"V31" ,"V32", "V33", "V34", "V35" ,"V36", "V37", "V38", "V39" ,"V40" ,"V41" ,"V42" ,"V43", "V44" ,"V45" ,"V46" ,"V47" ,"V48", "V49", "V50" ,"V51")
-# newnames = c("0.45", "0.46", "0.47", "0.48", "0.49", "0.50", "0.51" ,"0.52" ,"0.53" ,"0.54" ,"0.55", "0.56" ,"0.57" ,"0.58" ,"0.59" ,"0.60" ,"0.61", "0.62", "0.63" ,"0.64" ,"0.65" ,"0.66" ,"0.67" ,"0.68" ,"0.69" ,"0.70", "0.71" ,"0.72", "0.73", "0.74", "0.75" ,"0.76" ,"0.77" ,"0.78" ,"0.79", "0.80" ,"0.81" ,"0.82" ,"0.83" ,"0.84", "0.85", "0.86", "0.87", "0.88" ,"0.89", "0.90", "0.91" ,"0.92", "0.93", "0.94" ,"0.95")
-
 oldnames = c("V1","V2","V3","V4" ,"V5", "V6")
 newnames = c("0.5", "0.6", "0.7", "0.8", "0.9", "1")
 
@@ -222,8 +215,8 @@ output_l$mit_eff <- as.numeric(output_l$mit_eff)
 ggplot(output_l)+
   geom_line(aes(x=bycatch_reductions, y=lambda, group = factor(mit_eff), color = factor(mit_eff)))+
    geom_hline(aes(yintercept = 1), color = "darkgrey", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fishing transition
+  # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fishing transition
   labs(x="% fisheries with bycatch mitigation", y="lambda", color = "% mitigation efficacy")+
   themeo+
   guides(colour = guide_legend(nrow = 1))+
@@ -231,9 +224,10 @@ ggplot(output_l)+
   scale_color_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))
 ```
 
-**add uncertainty, simulate 1000 runs with varying range of vital rates (randomly draw with replacement from values found in the literature)** 
-**mortality = 33% bycatch, 67% other causes**
-**fist, set mean and CI for VR, use these to pull randomly with replacement from a beta distribution**
+**add uncertainty in vital rates (simulate 100 runs with varying vital rates)** 
+**assume mortality = 1/3 bycatch, 2/3 other causes**
+
+**first, set mean and CI for VR from literature, use these to pull randomly with replacement from a beta distribution**
 ```{r}
 
 #set mean, CI for each vital rate, use these to pull VR rates within beta distribution
@@ -249,8 +243,21 @@ s_c2var <- s_c2SE^2
 s_c2alpha = s_c2mean * ((1 - s_c2mean) / s_c2var - 1 / s_c2mean)
 s_c2beta = (1 - s_c2mean) * ((1 -s_c2mean) /s_c2var - 1 / (1 - s_c2mean))
 
+#s_cc2
+s_cc2mean <-0.73
+s_cc2upper_CI <- 0.74
+s_cc2lower_CI <- 0.72
+  
+s_cc2SE <- (s_cc2upper_CI - s_cc2lower_CI) / 3.92
+
+s_cc2var <- s_cc2SE^2
+
+s_cc2alpha = s_cc2mean * ((1 - s_cc2mean) / s_cc2var - 1 / s_cc2mean)
+s_cc2beta = (1 - s_cc2mean) * ((1 -s_cc2mean) /s_cc2var - 1 / (1 - s_cc2mean))
+
 #s_j2
-s_j2mean <-0.825
+#s_j2mean <-0.825
+s_j2mean <-0.85
 s_j2upper_CI <- 0.85
 s_j2lower_CI <- 0.8
   
@@ -262,7 +269,8 @@ s_j2alpha = s_j2mean * ((1 - s_j2mean) / s_j2var - 1 / s_j2mean)
 s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
 
 # s_i2
- s_i2mean <-0.925
+ #s_i2mean <-0.925
+ s_i2mean <-0.92
  s_i2upper_CI <- 0.94
  s_i2lower_CI <- 0.91
   
@@ -274,7 +282,8 @@ s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
  s_i2beta = (1 -  s_i2mean) * ((1 - s_i2mean) / s_i2var - 1 / (1 -  s_i2mean))
  
 # s_s2
- s_s2mean <-0.944
+ #s_s2mean <-0.944
+ s_s2mean <-0.94
  s_s2upper_CI <- 0.95
  s_s2lower_CI <- 0.94
   
@@ -286,7 +295,8 @@ s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
  s_s2beta = (1 -  s_s2mean) * ((1 - s_s2mean) / s_s2var - 1 / (1 -  s_s2mean))
  
  # s_a2
- s_a2mean <-0.945
+ #s_a2mean <-0.945
+  s_a2mean <-0.94
  s_a2upper_CI <- 0.95
  s_a2lower_CI <- 0.94
   
@@ -299,7 +309,7 @@ s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
 
  
   # bs_a2
- bs_a2mean <-0.74
+ bs_a2mean <-0.76
  bs_a2upper_CI <- 0.8
  bs_a2lower_CI <- 0.68
   
@@ -312,7 +322,7 @@ s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
  
  
    # bp_a2
- bp_a2mean <-0.55
+ bp_a2mean <-0.45
  bp_a2upper_CI <- 0.7
  bp_a2lower_CI <- 0.4
   
@@ -322,18 +332,19 @@ s_j2beta = (1 - s_j2mean) * ((1 -s_j2mean) /s_j2var - 1 / (1 - s_j2mean))
 
  bp_a2alpha =  bp_a2mean * ((1 -  bp_a2mean) /  bp_a2var - 1 /  bp_a2mean)
  bp_a2beta = (1 -  bp_a2mean) * ((1 - bp_a2mean) / bp_a2var - 1 / (1 -  bp_a2mean))
+ 
+
 ```
 
 **run loop with VR uncertainty**
 ```{r}
- 
- #full_output = matrix(nrow = length(bycatch_reductions2)*length(mitigation_eff_range), ncol = length(sims)) %>% as.data.frame() 
+
 full_output <- vector("list", 6)
 bycatch_reductions2 <- seq(0, 1, by =0.01)
 mitigation_eff_range <- seq(0.5,1, by  = 0.1)
 sims = 1:100
 
-
+set.seed(123)
 
 for(k in 1:length(mitigation_eff_range)){
   mit_eff <- mitigation_eff_range[k]
@@ -342,7 +353,10 @@ for(k in 1:length(mitigation_eff_range)){
   
 for(j in 1:length(sims)){
     
+    set.seed(j)
+  
     s_c2 <- random_values <- rbeta(n = 1, shape1 = s_c2alpha, shape2 = s_c2beta) #chick+ fledgling survival year 0-1 - 0.64 
+    s_cc2 <- random_values <- rbeta(n = 1, shape1 = s_cc2alpha, shape2 = s_cc2beta) # conditional chick+ fledgling survival year 0-1 - 0.64 
     s_j2 <- random_values <- rbeta(n = 1, shape1 = s_j2alpha, shape2 = s_j2beta)#juvenile survival year 1-3 -  0.8 
     s_i2 <- random_values <- rbeta(n = 1, shape1 = s_i2alpha, shape2 = s_i2beta) #immature survival year 3-7 -  0.92
     s_s2 <- random_values <- rbeta(n = 1, shape1 = s_s2alpha, shape2 = s_s2beta) #subadult survival year 7-10 - 0.94
@@ -351,10 +365,8 @@ for(j in 1:length(sims)){
     bs_a2 <- random_values <- rbeta(n = 1, shape1 = bs_a2alpha, shape2 = bs_a2beta) #adult breeding success - 0.8 
     bp_a2 <- random_values <- rbeta(n = 1, shape1 = bp_a2alpha, shape2 = bp_a2beta)  #adult breeding probablity (biennial breeding, most breeding by age 10) - 0.45
     c2 <- 0.5# # of female chicks per year
-    f_a2 <- bs_a*bp_a*c #fecundity
-  
-    w2 <- sample(seq(0.4,0.5, by =0.01), size=1, replace = TRUE)
-    w42 <- 1
+    f_a2 <- bp_a2*c2*s_cc2 #fecundity
+
     
     which1 <- as.numeric(sample(c(3,4), size=1, replace = TRUE))  #select whether to partition mortality into 3 sections (33% = bycatch) or 4 (25%=bycatch)
     m_j2 <- (1-s_j2)/which1 # divide total mortality by 3 or 4 to get bycatch mortality
@@ -381,24 +393,26 @@ for(i in 1:length(bycatch_reductions2)){
   n_s_s2 <- 1-((m_s2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_s2))
   n_s_a2 <- 1-((m_a2*(1-(mit_eff*bycatch_reductions2[i])))+(o_m_a2))
   
-  #Age classes (years)     0-1              1-2     2-3     3-4     4-5    5-6    6-7    7-8          8-9          9-10         10+        
-  n_m2 <- matrix(data = c( 0,               0,      0,      0,      0,     0,     0,     0,           0,           0,           n_s_a2*f_a, #0-1
-                           s_cc*(n_s_a2^2), 0,      0,      0,      0,     0,     0,     0,           0,           0,           0,         #1-2
-                           0,               n_s_j2, 0,      0,      0,     0,     0,     0,           0,           0,           0,         #2-3
-                           0,               0,      n_s_j2, 0,      0,     0,     0,     0,           0,           0,           0,         #3-4
-                           0,               0,      0,      n_s_i2, 0,     0,     0,     0,           0,           0,           0,         #4-5
-                           0,               0,      0,      0,      n_s_i2,0,     0,     0,           0,           0,           0,         #5-6
-                           0,               0,      0,      0,      0,     n_s_i2,0,     0,           0,           0,           0,         #6-7
-                           0,               0,      0,      0,      0,     0,     n_s_i2,0,           0,           0,           0,         #7-8
-                           0,               0,      0,      0,      0,     0,     0,     n_s_s2,      0,           0,           0,         #8-9
-                           0,               0,      0,      0,      0,     0,     0,     0,           n_s_s2,      0,           0,         #9-10
-                           0,               0,      0,      0,      0,     0,     0,     0,           0,           n_s_s2,      n_s_a2),    #10+
+  
+  #Age classes (years)  0-1         1-2       2-3      3-4     4-5      5-6      6-7      7-8      8-9      9-10     10+        
+n_m2 <- matrix(data = c( 0,          0,       0,       0,      0,       0,       0,       0,       0,       0,       n_s_a2^2*f_a2,  #0-1 
+                      s_cc2*s_a2^2,  0,       0,       0,      0,       0,       0,       0,       0,       0,       0,              #1-2
+                      0,             n_s_j2,  0,       0,      0,       0,       0,       0,       0,       0,       0,              #2-3
+                      0,             0,       n_s_j2,  0,      0,       0,       0,       0,       0,       0,       0,              #3-4
+                      0,             0,       0,       n_s_i2, 0,       0,       0,       0,       0,       0,       0,              #4-5
+                      0,             0,       0,       0,      n_s_i2,  0,       0,       0,       0,       0,       0,              #5-6
+                      0,             0,       0,       0,      0,       n_s_i2,  0,       0,       0,       0,       0,              #6-7
+                      0,             0,       0,       0,      0,       0,       n_s_i2,  0,       0,       0,       0,              #7-8
+                      0,             0,       0,       0,      0,       0,       0,       n_s_s2,  0,       0,       0,              #8-9
+                      0,             0,       0,       0,      0,       0,       0,       0,       n_s_s2,  0,       0,              #9-10
+                      0,             0,       0,       0,      0,       0,       0,       0,       0,       n_s_s2,  n_s_a2),        #10+
                    nrow = 11, byrow = TRUE) 
+n_m2
   
   #extract eigenvalues and lambda from the matrix 
   n_m_eig2 <- eigen(n_m2)
   lambda_n2 <- as.numeric(n_m_eig2$values[1])
-  output2[i,j] <- lambda_n2 # this matches the ideal population growth rate in the table
+  output2[i,j] <- lambda_n2 
   output2 <- as.data.frame(output2)
   output2$mitigation_efficacy <- mit_eff
   output2$bycatch_reduction <- bycatch_reductions2
@@ -411,11 +425,13 @@ for(i in 1:length(bycatch_reductions2)){
 
 full_output[[1]]
 
-# sim_results <- full_output[[1]]
-# sim_results$quantile5 <-  apply(sim_results[1:100], 1, quantile, (probs =c(0.05)))
-# sim_results$quantile95 <-  apply(sim_results[1:100], 1, quantile, (probs =c(0.95)))
+ 
+sim_results <- full_output[[1]]
+sim_results$quantile5 <-  apply(sim_results[1:100], 1, quantile, (probs =c(0.05)))
+sim_results$quantile95 <-  apply(sim_results[1:100], 1, quantile, (probs =c(0.95)))
 ```
 
+**format output**
 ```{r}
 mitigation_eff_range #0.5 0.6 0.7 0.8 0.9 1.0
 
@@ -457,11 +473,11 @@ fulldat <- fulldat %>% group_by(mitigation_efficacy, bycatch_reduction) %>% muta
 
 ggplot(fulldat)+
   geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey")+
-    geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
-  #geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
-   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
+  geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
+  # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
   labs(x="% fisheries with bycatch mitigation", y="lambda")+
   facet_wrap(~mitigation_efficacy)+
   themeo+
@@ -473,18 +489,17 @@ ggplot(fulldat)+
 ```{r}
 fig2_nowidowing <- ggplot(full_dat_w)+
   geom_line(aes(x=bycatch_reduction, y=quantile5), color = "grey")+
-   geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
-     geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95), color = "lightgrey", alpha =0.25)+
-   geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
-   # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
-   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95), color = "lightgrey", alpha =0.25)+
+  geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
+  # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
   labs(x="% fisheries with bycatch mitigation", y="lambda")+
   facet_wrap(~mitigation_efficacy)+
   themeo+
   coord_cartesian(expand=FALSE)
-
 
  # ggsave(fig2_nowidowing, path ="/Users/sarahbecker/Dropbox/CU_ENVS/Classes/Spring2022/ENVS_5100_QuantConsBiol/project/w_albatross_demo_wd",   file="fig2_nowidowing.png")
 ```
@@ -492,17 +507,17 @@ fig2_nowidowing <- ggplot(full_dat_w)+
 ```{r}
 fig2_nowidowingb <- ggplot(full_dat_w)+
   geom_line(aes(x=bycatch_reduction, y=quantile5), color = "grey")+
-   geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
-     geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
-  geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
-   # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
-   geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean vR
+  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
+  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
+  # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
   labs(x="% fisheries with bycatch mitigation", y="lambda", fill = "mitigation efficacy", color = "mitigation efficacy")+
-   geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+
-    # geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+
-    # geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+
+  geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+
+  # geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+ #variation around illegal vs legal fishing transition
+  # geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+ #variation around illegal vs legal fishing transition
   facet_wrap(~mitigation_efficacy, nrow =1)+
   themeo+
   guides(colour = guide_legend(nrow = 1))+
@@ -517,13 +532,11 @@ fig2_nowidowingb <- ggplot(full_dat_w)+
 ```{r}
  fig2_nowidowingc <- ggplot(full_dat_w)+
   geom_line(aes(x=bycatch_reduction, y=quantile5), color = "grey")+
-   geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
-     geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
-    #geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
-    geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
-   geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
   labs(x="% fisheries with bycatch mitigation", y="lambda")+
   facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
@@ -537,18 +550,15 @@ fig2_nowidowingb <- ggplot(full_dat_w)+
  
  
 ```{r}
- 
-  fig2_nowidowingd <- ggplot(full_dat_w)+
+fig2_nowidowingd <- ggplot(full_dat_w)+
   geom_line(aes(x=bycatch_reduction, y=quantile5), color = "grey")+
-   geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
-     geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
-  #  geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+
-      geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+
-   geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
-  # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+
-  #  geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+
+  geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
   labs(x="% fisheries with bycatch mitigation", y="lambda", color = "mitigation efficacy")+
-    geom_vline(aes(xintercept = 0.33), color = "#a50f15", alpha =0.5)+
+  geom_vline(aes(xintercept = 0.33), color = "#a50f15", alpha =0.5)+
   facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
   guides(colour = guide_legend(nrow = 1))+
@@ -562,10 +572,7 @@ fig2_nowidowingb <- ggplot(full_dat_w)+
 
 ```{r}
 fig1_nowidowing <- ggplot(full_dat_w)+
-  #geom_line(aes(x=bycatch_reduction, y=lambda, group = mitsim), color = "grey", alpha =0.25)+
-  #  geom_line(aes(x=bycatch_reduction, y=quantile5, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-  # geom_line(aes(x=bycatch_reduction, y=quantile95, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-   geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
   geom_line(data = bycatch_reductions, aes(x=reduction, y=as.numeric(lambda)))+
   geom_hline(aes(yintercept = 1), color = "#525252")+ 
   labs(x="% fisheries with bycatch mitigation", y="lambda", color = "mitigation efficacy", fill = "mitigation efficacy")+
@@ -575,25 +582,17 @@ fig1_nowidowing <- ggplot(full_dat_w)+
   scale_color_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))+
   scale_fill_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))
 
-
  #ggsave(fig1_nowidowing, path ="/Users/sarahbecker/Dropbox/CU_ENVS/Classes/Spring2022/ENVS_5100_QuantConsBiol/project/w_albatross_demo_wd",   file="fig1_nowidowing.png")
-
 ```
 
 ```{r}
 fig1_nowidowing_illegal <- ggplot(full_dat_w)+
-  #geom_line(aes(x=bycatch_reduction, y=lambda, group = mitsim), color = "grey", alpha =0.25)+
-  #  geom_line(aes(x=bycatch_reduction, y=quantile5, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-  # geom_line(aes(x=bycatch_reduction, y=quantile95, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-   geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
   geom_line(data = bycatch_reductions, aes(x=reduction, y=as.numeric(lambda)))+
   geom_hline(aes(yintercept = 1), color = "#525252")+ 
   geom_vline(aes(xintercept = 0.34), color = "#a50f15", alpha =0.5)+
-    geom_vline(aes(xintercept = 0.28), color = "#a50f15", alpha =0.25)+
-    geom_vline(aes(xintercept = 0.40), color = "#a50f15", alpha =0.25)+
-   # geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+
-   #  geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+
-   #  geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+
+  geom_vline(aes(xintercept = 0.28), color = "#a50f15", alpha =0.25)+
+  geom_vline(aes(xintercept = 0.40), color = "#a50f15", alpha =0.25)+
   labs(x="% fisheries with bycatch mitigation", y="lambda", color = "mitigation efficacy", fill = "mitigation efficacy")+
   themeo+
   guides(colour = guide_legend(nrow = 1))+
@@ -606,25 +605,18 @@ fig1_nowidowing_illegal <- ggplot(full_dat_w)+
 
 ```{r}
 fig1_nowidowing_legal <- ggplot(full_dat_w)+
-  #geom_line(aes(x=bycatch_reduction, y=lambda, group = mitsim), color = "grey", alpha =0.25)+
-  #  geom_line(aes(x=bycatch_reduction, y=quantile5, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-  # geom_line(aes(x=bycatch_reduction, y=quantile95, group = mitsim, color = factor(mitigation_efficacy)), alpha =0.25)+
-   geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95, color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
   geom_line(data = bycatch_reductions, aes(x=reduction, y=as.numeric(lambda)))+
   geom_hline(aes(yintercept = 1), color = "#525252")+ 
-  # geom_vline(aes(xintercept = 0.34), color = "#a50f15", alpha =0.5)+
-  #   geom_vline(aes(xintercept = 0.28), color = "#a50f15", alpha =0.25)+
-  #   geom_vline(aes(xintercept = 0.40), color = "#a50f15", alpha =0.25)+
-   geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+
-    geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+
-    geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+
+  geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+
+  geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+
+  geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+
   labs(x="% fisheries with bycatch mitigation", y="lambda", color = "mitigation efficacy", fill = "mitigation efficacy")+
   themeo+
   guides(colour = guide_legend(nrow = 1))+
   coord_cartesian(expand=FALSE)+
   scale_color_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))+
   scale_fill_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))
-
 
 #ggsave(fig1_nowidowing_legal, path ="/Users/sarahbecker/Dropbox/CU_ENVS/Classes/Spring2022/ENVS_5100_QuantConsBiol/project/w_albatross_demo_wd",  file="fig1_nowidowing_legal.png")
 ```

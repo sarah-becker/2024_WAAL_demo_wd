@@ -342,6 +342,7 @@ s_cc2beta = (1 - s_cc2mean) * ((1 -s_cc2mean) /s_cc2var - 1 / (1 - s_cc2mean))
 #s_j2mean <-0.825
 s_j2mean <-0.85
 s_j2upper_CI <- 0.85
+# s_j2upper_CI <- 0.89
 s_j2lower_CI <- 0.8
   
 s_j2SE <- (s_j2upper_CI - s_j2lower_CI) / 3.92
@@ -543,8 +544,8 @@ for(i in 1:length(bycatch_reductions2)){
   n_s_s2 <- 1-((fm2*(1-(mit_eff*bycatch_reductions$reduction[i])))+(nm_s2))
   n_s_a2 <- 1-((fm2*(1-(mit_eff*bycatch_reductions$reduction[i])))+(nm_s2))
   
-  
-   #Age classes (years)    0-1      1-2      2-3     3-4     4-5     5-6     6-7    7-8     8-9      nw,                w1,                  w2,                   w3,                   w4 
+
+   #Age classes (years)    0-1      1-2      2-3     3-4     4-5     5-6     6-7    7-8     8-9      nw,                w1,                  w2,                   w3,                   w4
   n_m2 <- matrix(data = c( 0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2^2*f_a2,     n_s_a2^2*f_a2*w,     n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w4,      #0-1
                            n_s_j2,  0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #1-2
                            0,       n_s_j2,  0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #2-3
@@ -556,11 +557,13 @@ for(i in 1:length(bycatch_reductions2)){
                            0,       0,       0,      0,      0,      0,      0,      n_s_s2, 0,      0,                 0,                   0,                    0,                    0,                     #8-9
                            0,       0,       0,      0,      0,      0,      0,      0,      n_s_s2, n_s_a2^2,          n_s_a2^2*w,          n_s_a2^2*w,           n_s_a2^2*w,           n_s_a2^2*w4,           #nw
                            0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2*(1-n_s_a2), n_s_a2*(1-n_s_a2)*w, n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w4,  #w1
-                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 n_s_a2*(1-w),        0,                    0,                    0,                     #w2 
-                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   n_s_a2*(1-w),         0,                    0,                     #w3 
-                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    n_s_a2*(1-w),         0),                    #w4 
-                   nrow = 14, byrow = TRUE) 
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 n_s_a2*(1-w),        0,                    0,                    0,                     #w2
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   n_s_a2*(1-w),         0,                    0,                     #w3
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    n_s_a2*(1-w),         0),                    #w4
+                   nrow = 14, byrow = TRUE)
 n_m2
+  
+   
   
   #extract eigenvalues and lambda from the matrix 
   n_m_eig2 <- eigen(n_m2)
@@ -624,14 +627,17 @@ output_l$mitigation_efficacy <- output_l$mit_eff
 fulldat <- fulldat %>% group_by(mitigation_efficacy, bycatch_reduction) %>% mutate(mean_lambda = mean(lambda)) %>% ungroup()
 
 ggplot(fulldat)+
-  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey")+
-  geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
+ # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
   geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
   # geom_vline(aes(xintercept = 0.66), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
   # geom_vline(aes(xintercept = 0.33), color = "red", alpha =0.5)+ #illegal vs legal fisheries transition
+   geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.25)+ #illegal vs legal fisheries transition - weimerskirch
+   geom_vline(aes(xintercept = 0.8), color = "#a50f15", alpha =0.5)+ #mean illegal vs legal fisheries transition - welch &weimerskirch
+  geom_vline(aes(xintercept = 0.94), color = "#a50f15", alpha =0.25)+ #illegal vs legal fisheries transition - welch 
   labs(x="% fisheries with bycatch mitigation", y="lambda")+
-  facet_wrap(~mitigation_efficacy)+
+  facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
   coord_cartesian(expand=FALSE)
 ```
@@ -661,12 +667,14 @@ fig2_widowingb <- ggplot(full_dat_w)+
   geom_line(aes(x=bycatch_reduction, y=quantile5), color = "grey")+
   geom_line(aes(x=bycatch_reduction, y=quantile95), color = "grey")+
   geom_ribbon(aes(x=bycatch_reduction, ymin=quantile5, ymax=quantile95,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
-  #geom_ribbon(aes(x=bycatch_reduction, ymin=quantile25, ymax=quantile75,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
+  geom_ribbon(aes(x=bycatch_reduction, ymin=quantile25, ymax=quantile75,color = factor(mitigation_efficacy),fill  = factor(mitigation_efficacy)), alpha =0.25)+
   #geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
   geom_line(data = fulldat, aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
   geom_hline(aes(yintercept = 1), color = "#525252", alpha =0.5)+ 
   labs(x="% fisheries with bycatch mitigation", y="lambda", fill = "mitigation efficacy", color = "mitigation efficacy")+
-  geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.5)+ #illegal vs legal fisheries transition
+geom_vline(aes(xintercept = 0.66), color = "#a50f15", alpha =0.25)+ #illegal vs legal fisheries transition - weimerskirch
+   geom_vline(aes(xintercept = 0.8), color = "#a50f15", alpha =0.5)+ #mean illegal vs legal fisheries transition - welch &weimerskirch
+  geom_vline(aes(xintercept = 0.94), color = "#a50f15", alpha =0.25)+ #illegal vs legal fisheries transition - welch 
   # geom_vline(aes(xintercept = 0.6), color = "#a50f15", alpha =0.25)+ #variation in illegal vs legal fisheries transition
   # geom_vline(aes(xintercept = 0.72), color = "#a50f15", alpha =0.25)+ #variation in illegal vs legal fisheries transition
   facet_wrap(~mitigation_efficacy, nrow =1)+

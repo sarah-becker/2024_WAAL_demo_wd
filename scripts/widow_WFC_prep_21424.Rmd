@@ -1635,13 +1635,13 @@ ggplot(fulldat_IUU_filtered)+
 *this looks reasonable*
 *now, calculate the probability of lambda being >=1 (aka prob of success) for each bycatch reduction percentile - do this across all mitigation efficacy rates, and broken up by efficacy rates*
 ```{r}
-unique(fulldat_IUU$bycatch_reduction)
+unique(fulldat_IUU_filtered$bycatch_reduction)
 
-fulldat_IUU_prob1 <- fulldat_IUU %>% 
+fulldat_IUU_prob1 <- fulldat_IUU_filtered %>% 
   group_by(bycatch_reduction) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
 
-fulldat_IUU_prob1mit <- fulldat_IUU %>% 
+fulldat_IUU_prob1mit <- fulldat_IUU_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
 ```
@@ -2008,7 +2008,6 @@ levelplot(z ~ x * y, data,
 *now with my data*
 ```{r}
 
-library(RColorBrewer)
 # Heatmap 
 ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+

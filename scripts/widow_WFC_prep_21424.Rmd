@@ -1646,15 +1646,745 @@ fulldat_IUU_prob1mit <- fulldat_IUU %>%
   summarise(prob1 =sum(lambda>=1)/length(lambda))
 ```
 
+```{r}
+ggplot(fulldat_IUU_prob1)+
+  geom_line(aes(bycatch_reduction, prob1))+
+  theme_bw()
+```
+```{r}
+ggplot(fulldat_IUU_prob1mit)+
+  geom_line(aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)))+
+  theme_bw()
+```
+```{r}
+ggplot()+
+  geom_line(data = fulldat_IUU_prob1mit, aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)), alpha = 0.5)+
+  geom_line(data = fulldat_IUU_prob1, aes(bycatch_reduction, prob1))+
+   labs(x="% legal fisheries with bycatch mitigation", y="Probability lambda >=1 ", color = "% mitigation efficacy")+
+    coord_cartesian(expand=FALSE)+
+  theme_bw()
+```
+*now try a heatmap with latticeextra*
+*first a test plot*
+```{r}
+# library
+library(latticeExtra) 
+ 
+# create data
+set.seed(1) 
+data <- data.frame(x = rnorm(100), y = rnorm(100)) 
+data$z <- with(data, x * y + rnorm(100, sd = 1)) 
+ 
+# showing data points on the same color scale 
+levelplot(z ~ x * y, data, 
+          panel = panel.levelplot.points, cex = 1.2
+    ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
+
+*now with my data*
+```{r}
+
+# Heatmap 
+ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  scale_fill_viridis_c()
+
+```
+
+
+
+```{r}
+# showing data points on the same color scale 
+levelplot(prob1 ~ bycatch_reduction * mitigation_efficacy, fulldat_IUU_prob1mit, 
+        #  panel = panel.levelplot.points, cex = 1.2 
+          ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
+
+*increase # of mit eff categories*
+*increase sims to 1500, rerun full version, then filter for 0 reductions lambda >=1 AND natural mortality lambda < 1*
+```{r}
+full_output_IUU <- vector("list", 6)
+bycatch_reductions2 <- seq(0, 1, by =0.01)
+mitigation_eff_range2 <- seq(0.5,1, by  = 0.05)
+sims = 1:1500
+
+
+
+set.seed(123)
+
+for(k in 1:length(mitigation_eff_range2)){
+  mit_eff <- mitigation_eff_range2[k]
+  
+  output2_IUU <- matrix(nrow = length(bycatch_reductions2), ncol = length(sims)) %>% as.data.frame() 
+  
+for(j in 1:length(sims)){
+    
+  set.seed(j)
+  
+    s_c2 <-    rbeta(n = 1, shape1 = s_c2alpha, shape2 = s_c2beta) #chick+ fledgling survival year 0-1 - 0.64 
+    s_cc2 <-  rbeta(n = 1, shape1 = s_cc2alpha, shape2 = s_cc2beta) # conditional chick+ fledgling survival year 0-1 - 0.64 
+    s_j2 <- rbeta(n = 1, shape1 = s_j2alpha, shape2 = s_j2beta)#juvenile survival year 1-3 -  0.8 
+    s_i2 <-  rbeta(n = 1, shape1 = s_i2alpha, shape2 = s_i2beta) #immature survival year 3-7 -  0.92
+    s_s2 <- rbeta(n = 1, shape1 = s_s2alpha, shape2 = s_s2beta) #subadult survival year 7-10 - 0.94
+    s_a2 <-  rbeta(n = 1, shape1 = s_a2alpha, shape2 = s_a2beta) #adult survival year 10+ - 0.94
+    bs_a2 <-  rbeta(n = 1, shape1 = bs_a2alpha, shape2 = bs_a2beta) #adult breeding success - 0.8 
+    bp_a2 <-  rbeta(n = 1, shape1 = bp_a2alpha, shape2 = bp_a2beta)  #adult breeding probablity (biennial breeding, most breeding by age 10) - 0.45
+    c2 <- 0.5# # of female chicks per year
+    f_a2 <- bp_a*c2*s_cc2 #fecundity
+
+    
+      # Check the condition and skip to the next iteration if it's true
+  if (s_j2 > s_s2 || s_j2 > s_a2 || s_j2 > s_i2 || s_i2 > s_s2 || s_i2 > s_a2 || s_s2 > s_a2) {
+    next
+  }
+    
+    
+    #fishing mortality = per capita calculation above
+   # fm2 <- fm #set bycatch mortality
+    fm2 <-  rbeta(n = 1, shape1 = fm2_alpha, shape2 = fm2_beta)  #variable bycatch mortality
+    
+    #natural mortality
+    nm_j2 <- (1-s_j2)-fm2
+    nm_i2 <- (1-s_i2)-fm2
+    nm_s2 <- (1-s_s2)-fm2
+    nm_a2 <- (1-s_a2)-fm2
+    
+    #need to calculate legal fishing, illegal fishing mortality, and non fishing mortality, and only module fishing mortality
+    non_IUU_count<- round(runif(1, min = 66, max = 94))
+    non_IUU<- round(runif(1, min = 0.66, max = 0.94),2)
+    IUU <- round(runif(1, min =0.06, max = 0.34),2)
+  
+    fm2_nonIUU <- fm2*non_IUU
+    fm2_IUU <- fm2*IUU
+    
+    
+    bycatch_reductions2b<- bycatch_reductions2*non_IUU
+    
+for(i in 1:length(bycatch_reductions2)){
+ #   for(i in 1:non_IUU_count){
+  
+  #calculate new survival rates = 1-(bycatch mortality*(1-efficacy of intervention action * proportion of legal fishery implementing intervention actions * prop of legal fishery to total fishery))+mortality remainder)
+
+  n_s_j2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_j2)+fm2_IUU)
+  n_s_i2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_i2)+fm2_IUU)
+  n_s_s2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_s2)+fm2_IUU)
+  n_s_a2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_s2)+fm2_IUU)
+  
+
+   #Age classes (years)    0-1      1-2      2-3     3-4     4-5     5-6     6-7    7-8     8-9      nw,                w1,                  w2,                   w3,                   w4
+  n_m2_IUU <- matrix(data = c( 0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2^2*f_a2,     n_s_a2^2*f_a2*w,     n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w4,      #0-1
+                           n_s_j2,  0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #1-2
+                           0,       n_s_j2,  0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #2-3
+                           0,       0,       n_s_j2, 0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #3-4
+                           0,       0,       0,      n_s_i2, 0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #4-5
+                           0,       0,       0,      0,      n_s_i2, 0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #5-6
+                           0,       0,       0,      0,      0,      n_s_i2, 0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #6-7
+                           0,       0,       0,      0,      0,      0,      n_s_i2, 0,      0,      0,                 0,                   0,                    0,                    0,                     #7-8
+                           0,       0,       0,      0,      0,      0,      0,      n_s_s2, 0,      0,                 0,                   0,                    0,                    0,                     #8-9
+                           0,       0,       0,      0,      0,      0,      0,      0,      n_s_s2, n_s_a2^2,          n_s_a2^2*w,          n_s_a2^2*w,           n_s_a2^2*w,           n_s_a2^2*w4,           #nw
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2*(1-n_s_a2), n_s_a2*(1-n_s_a2)*w, n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w4,  #w1
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 n_s_a2*(1-w),        0,                    0,                    0,                     #w2
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   n_s_a2*(1-w),         0,                    0,                     #w3
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    n_s_a2*(1-w),         0),                    #w4
+                   nrow = 14, byrow = TRUE)
+n_m2_IUU
+  
+   
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m2_IUU_eig2 <- eigen(n_m2_IUU)
+  lambda_n2_IUU <- as.numeric(n_m2_IUU_eig2$values[1])
+  output2_IUU[i,j] <- lambda_n2_IUU # this matches the ideal population growth rate in the table
+   output2_IUU <- as.data.frame(output2_IUU)
+   output2_IUU$mitigation_efficacy <- mit_eff
+  output2_IUU$bycatch_reduction <- bycatch_reductions2
+   full_output_IUU[[k]] <- output2_IUU
+
+
+    }
+
+}
+}
+
+full_output_IUU[[1]]
+ sim_results_IUU<- full_output_IUU[[1]]
+ sim_results_IUU$quantile5 <-  apply(sim_results_IUU[1:100], 1, quantile, (probs =c(0.05)), na.rm=TRUE)
+ sim_results_IUU$quantile95 <-  apply(sim_results_IUU[1:100], 1, quantile, (probs =c(0.95)), na.rm=TRUE)
+ 
+ 
+```
+
+
+*format output*
+```{r}
+mitigation_eff_range2 #0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.00
+
+mit05_l_IUU <- full_output_IUU[[1]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit055_l_IUU <- full_output_IUU[[2]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit06_l_IUU  <- full_output_IUU[[3]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit065_l_IUU  <- full_output_IUU[[4]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit07_l_IUU  <- full_output_IUU[[5]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit075_l_IUU  <- full_output_IUU[[6]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit08_l_IUU  <- full_output_IUU[[7]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit085_l_IUU  <- full_output_IUU[[8]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit09_l_IUU  <- full_output_IUU[[9]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit095_l_IUU  <- full_output_IUU[[10]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit1_l_IUU  <- full_output_IUU[[11]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+fulldat_IUU  <- rbind(mit05_l_IUU,mit055_l_IUU,mit06_l_IUU,mit065_l_IUU,mit07_l_IUU,mit075_l_IUU,
+                      mit08_l_IUU,mit085_l_IUU,mit09_l_IUU,mit095_l_IUU,mit1_l_IUU)
+fulldat_IUU$mitsim <- paste(fulldat_IUU$mitigation_efficacy, fulldat_IUU$simrun)
+
+mit05_IUU  <- full_output_IUU[[1]] %>%  select_if(~all(!is.na(.)))
+mit055_IUU  <- full_output_IUU[[1]] %>%  select_if(~all(!is.na(.)))
+mit06_IUU  <- full_output_IUU[[2]] %>%  select_if(~all(!is.na(.)))
+mit065_IUU  <- full_output_IUU[[2]] %>%  select_if(~all(!is.na(.)))
+mit07_IUU  <- full_output_IUU[[3]] %>%  select_if(~all(!is.na(.)))
+mit075_IUU  <- full_output_IUU[[3]] %>%  select_if(~all(!is.na(.)))
+mit08_IUU  <- full_output_IUU[[4]] %>%  select_if(~all(!is.na(.)))
+mit085_IUU  <- full_output_IUU[[4]] %>%  select_if(~all(!is.na(.)))
+mit09_IUU  <- full_output_IUU[[5]] %>%  select_if(~all(!is.na(.)))
+mit095_IUU  <- full_output_IUU[[5]] %>%  select_if(~all(!is.na(.)))
+mit1_IUU  <- full_output_IUU[[6]] %>%  select_if(~all(!is.na(.)))
+
+full_dat_w_IUU <- rbind(mit05_IUU ,mit055_IUU ,mit06_IUU ,mit065_IUU ,mit07_IUU ,mit075_IUU ,
+                        mit08_IUU ,mit085_IUU ,mit09_IUU ,mit095_IUU ,mit1_IUU )
+# full_dat_w_IUU$quantile5 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.05)))
+# full_dat_w_IUU$quantile95 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.95)))
+# full_dat_w_IUU$quantile25 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.25)))
+# full_dat_w_IUU$quantile75 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.75)))
+full_dat_w_IUU$mitsim <- paste(full_dat_w_IUU$mitigation_efficacy, full_dat_w_IUU$simrun)
+
+```
+
+*plot VR uncertainty plots*
+```{r}
+output_l$mitigation_efficacy <- output_l$mit_eff
+fulldat_IUU <- fulldat_IUU %>% group_by(mitigation_efficacy, bycatch_reduction) %>% mutate(mean_lambda = mean(lambda)) %>% ungroup()
+
+ggplot(fulldat_IUU)+
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
+ # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  facet_wrap(~mitigation_efficacy, nrow = 1)+
+  themeo+
+  coord_cartesian(expand=FALSE)
+```
+
+*then filter for 0 reductions lambda >=1 AND natural mortality lambda < 1 and replot*
+```{r}
+highfilter <- fulldat_IUU %>%
+  filter(bycatch_reduction ==0 & lambda >=1) %>% 
+  select(!mean_lambda)
+
+lowfiltertest <- fulldat_IUU %>% 
+  filter(simrun%in%c("V4"  , "V13" , "V30" , "V31" , "V59" , "V74" , "V89"  ,"V165" ,"V170", "V186" ,"V281", "V304" ,"V326" ,"V377" ,"V383" ,"V412" ,"V453" ,"V458", "V495" ,"V521",
+                      "V555" ,"V570", "V573" ,"V576" ,"V577" ,"V635" ,"V658" ,"V679", "V683", "V687", "V709", "V737" ,"V777", "V787", "V819" ,"V822" ,"V823" ,"V835" ,"V846" ,"V854",
+                      "V866" ,"V956" ,"V974" ,"V976", "V987", "V993"))
+
+unique(lowfilter$simrun)
+#  [1] "V4"   "V13"  "V30"  "V31"  "V59"  "V74"  "V89"  "V165" "V170" "V186" "V281" "V304" "V326" "V377" "V383" "V412" "V453" "V458" "V495" "V521" "V555" "V570" "V573" "V576" "V577" "V635" "V658" "V679"
+# [29] "V683" "V687" "V709" "V737" "V777" "V787" "V819" "V822" "V823" "V835" "V846" "V854" "V866" "V956" "V974" "V976" "V987" "V993"
+unique(highfilter$simrun)
+#  [1] "V12"   "V40"   "V44"   "V49"   "V94"   "V107"  "V153"  "V198"  "V207"  "V245"  "V391"  "V445"  "V452"  "V490"  "V540"  "V611"  "V769"  "V820"  "V843"  "V853"  "V957"  "V973"  "V1151" "V1227" "V1312"
+# [26] "V1397"
+unique(fulldat_IUU$simrun)
+
+fulldat_IUU_filtered <- fulldat_IUU %>% 
+  filter(!simrun%in%c("V4"  , "V13" , "V30" , "V31" , "V59" , "V74" , "V89"  ,"V165" ,"V170", "V186" ,"V281", "V304" ,"V326" ,"V377" ,"V383" ,"V412" ,"V453" ,"V458", "V495" ,"V521",
+                      "V555" ,"V570", "V573" ,"V576" ,"V577" ,"V635" ,"V658" ,"V679", "V683", "V687", "V709", "V737" ,"V777", "V787", "V819" ,"V822" ,"V823" ,"V835" ,"V846" ,"V854",
+                      "V866" ,"V956" ,"V974" ,"V976", "V987", "V993", #lowfilter
+                     "V12"  , "V40"  , "V44"  , "V49"  , "V94"  , "V107" , "V153" , "V198" , "V207" , "V245" , "V391" , "V445" , "V452" , "V490"  ,"V540" , "V611" , "V769",  "V820" ,
+                     "V843" , "V853"  ,"V957" , "V973",  "V1151", "V1227" ,"V1312","V1397")) #highfilter
+unique(fulldat_IUU_filtered$simrun)
+
+ggplot(fulldat_IUU_filtered)+
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
+ # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  facet_wrap(~mitigation_efficacy, nrow = 1)+
+  themeo+
+  coord_cartesian(expand=FALSE)
+
+```
+*this looks reasonable*
+*now, calculate the probability of lambda being >=1 (aka prob of success) for each bycatch reduction percentile - do this across all mitigation efficacy rates, and broken up by efficacy rates*
+```{r}
+unique(fulldat_IUU_filtered$bycatch_reduction)
+
+fulldat_IUU_prob1 <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction) %>% 
+  summarise(prob1 =sum(lambda>=1)/length(lambda))
+
+fulldat_IUU_prob1mit <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction, mitigation_efficacy) %>% 
+  summarise(prob1 =sum(lambda>=1)/length(lambda))
+
+fulldat_IUU_meanlambda <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction, mitigation_efficacy) %>% 
+  summarise(mean_lambda =mean(lambda))
+```
+
+```{r}
+ggplot(fulldat_IUU_prob1)+
+  geom_line(aes(bycatch_reduction, prob1))+
+  theme_bw()
+```
+
+```{r}
+ggplot(fulldat_IUU_prob1mit)+
+  geom_line(aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)))+
+  theme_bw()
+```
+
+```{r}
+ggplot()+
+  geom_line(data = fulldat_IUU_prob1mit, aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)), alpha = 0.5)+
+  geom_line(data = fulldat_IUU_prob1, aes(bycatch_reduction, prob1))+
+   labs(x="% legal fisheries with bycatch mitigation", y="Probability \u03BB \u2265 1 ", color = "% mitigation efficacy")+
+    coord_cartesian(expand=FALSE)+
+  #scale_color_viridis_d()+
+  theme_bw()
+```
+
+*now try a heatmap with latticeextra*
+*first a test plot*
+```{r}
+# library
+library(latticeExtra) 
+ 
+# create data
+set.seed(1) 
+data <- data.frame(x = rnorm(100), y = rnorm(100)) 
+data$z <- with(data, x * y + rnorm(100, sd = 1)) 
+ 
+# showing data points on the same color scale 
+levelplot(z ~ x * y, data, 
+          panel = panel.levelplot.points, cex = 1.2
+    ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
+
+*now with my data*
+```{r}
+
+library(RColorBrewer)
+# Heatmap 
+ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  scale_fill_viridis_c()
+
+```
+
+heatmap of mean lambda
+```{r}
+# Heatmap 
+ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+  scale_fill_viridis_c()
+  #scale_fill_distiller(palette = "RdBu")
+```
+
+
+
+```{r}
+# showing data points on the same color scale 
+levelplot(prob1 ~ bycatch_reduction * mitigation_efficacy, fulldat_IUU_prob1mit, 
+        #  panel = panel.levelplot.points, cex = 1.2 
+          ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
+
+*TEST FOR DIFFERENT IUU AMOUNTS INSTEAD OF VARIED*
+*increase # of mit eff categories*
+*increase sims to 1500, rerun full version, then filter for 0 reductions lambda >=1 AND natural mortality lambda < 1*
+*ZERO BYCATCH*
+```{r}
+full_output_IUU <- vector("list", 6)
+bycatch_reductions2 <- seq(0, 1, by =0.01)
+mitigation_eff_range2 <- seq(0.5,1, by  = 0.05)
+sims = 1:1500
+
+
+
+set.seed(123)
+
+for(k in 1:length(mitigation_eff_range2)){
+  mit_eff <- mitigation_eff_range2[k]
+  
+  output2_IUU <- matrix(nrow = length(bycatch_reductions2), ncol = length(sims)) %>% as.data.frame() 
+  
+for(j in 1:length(sims)){
+    
+  set.seed(j)
+  
+    s_c2 <-    rbeta(n = 1, shape1 = s_c2alpha, shape2 = s_c2beta) #chick+ fledgling survival year 0-1 - 0.64 
+    s_cc2 <-  rbeta(n = 1, shape1 = s_cc2alpha, shape2 = s_cc2beta) # conditional chick+ fledgling survival year 0-1 - 0.64 
+    s_j2 <- rbeta(n = 1, shape1 = s_j2alpha, shape2 = s_j2beta)#juvenile survival year 1-3 -  0.8 
+    s_i2 <-  rbeta(n = 1, shape1 = s_i2alpha, shape2 = s_i2beta) #immature survival year 3-7 -  0.92
+    s_s2 <- rbeta(n = 1, shape1 = s_s2alpha, shape2 = s_s2beta) #subadult survival year 7-10 - 0.94
+    s_a2 <-  rbeta(n = 1, shape1 = s_a2alpha, shape2 = s_a2beta) #adult survival year 10+ - 0.94
+    bs_a2 <-  rbeta(n = 1, shape1 = bs_a2alpha, shape2 = bs_a2beta) #adult breeding success - 0.8 
+    bp_a2 <-  rbeta(n = 1, shape1 = bp_a2alpha, shape2 = bp_a2beta)  #adult breeding probablity (biennial breeding, most breeding by age 10) - 0.45
+    c2 <- 0.5# # of female chicks per year
+    f_a2 <- bp_a*c2*s_cc2 #fecundity
+
+    
+      # Check the condition and skip to the next iteration if it's true
+  if (s_j2 > s_s2 || s_j2 > s_a2 || s_j2 > s_i2 || s_i2 > s_s2 || s_i2 > s_a2 || s_s2 > s_a2) {
+    next
+  }
+    
+    
+    #fishing mortality = per capita calculation above
+   # fm2 <- fm #set bycatch mortality
+    fm2 <-  rbeta(n = 1, shape1 = fm2_alpha, shape2 = fm2_beta)  #variable bycatch mortality
+    
+    #natural mortality
+    nm_j2 <- (1-s_j2)-fm2
+    nm_i2 <- (1-s_i2)-fm2
+    nm_s2 <- (1-s_s2)-fm2
+    nm_a2 <- (1-s_a2)-fm2
+    
+    #need to calculate legal fishing, illegal fishing mortality, and non fishing mortality, and only module fishing mortality
+    non_IUU<- 1
+    IUU <- 0
+  
+    fm2_nonIUU <- fm2*non_IUU
+    fm2_IUU <- fm2*IUU
+    
+    
+    bycatch_reductions2b<- bycatch_reductions2*non_IUU
+    
+for(i in 1:length(bycatch_reductions2)){
+  
+  #calculate new survival rates = 1-(bycatch mortality*(1-efficacy of intervention action * proportion of legal fishery implementing intervention actions * prop of legal fishery to total fishery))+mortality remainder)
+
+  n_s_j2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_j2)+fm2_IUU)
+  n_s_i2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_i2)+fm2_IUU)
+  n_s_s2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_s2)+fm2_IUU)
+  n_s_a2 <- 1-((fm2_nonIUU*(1-(mit_eff*bycatch_reductions2b[i])))+(nm_s2)+fm2_IUU)
+  
+
+   #Age classes (years)    0-1      1-2      2-3     3-4     4-5     5-6     6-7    7-8     8-9      nw,                w1,                  w2,                   w3,                   w4
+  n_m2_IUU <- matrix(data = c( 0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2^2*f_a2,     n_s_a2^2*f_a2*w,     n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w,      n_s_a2^2*f_a2*w4,      #0-1
+                           n_s_j2,  0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #1-2
+                           0,       n_s_j2,  0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #2-3
+                           0,       0,       n_s_j2, 0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #3-4
+                           0,       0,       0,      n_s_i2, 0,      0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #4-5
+                           0,       0,       0,      0,      n_s_i2, 0,      0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #5-6
+                           0,       0,       0,      0,      0,      n_s_i2, 0,      0,      0,      0,                 0,                   0,                    0,                    0,                     #6-7
+                           0,       0,       0,      0,      0,      0,      n_s_i2, 0,      0,      0,                 0,                   0,                    0,                    0,                     #7-8
+                           0,       0,       0,      0,      0,      0,      0,      n_s_s2, 0,      0,                 0,                   0,                    0,                    0,                     #8-9
+                           0,       0,       0,      0,      0,      0,      0,      0,      n_s_s2, n_s_a2^2,          n_s_a2^2*w,          n_s_a2^2*w,           n_s_a2^2*w,           n_s_a2^2*w4,           #nw
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      n_s_a2*(1-n_s_a2), n_s_a2*(1-n_s_a2)*w, n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w,  n_s_a2*(1-n_s_a2)*w4,  #w1
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 n_s_a2*(1-w),        0,                    0,                    0,                     #w2
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   n_s_a2*(1-w),         0,                    0,                     #w3
+                           0,       0,       0,      0,      0,      0,      0,      0,      0,      0,                 0,                   0,                    n_s_a2*(1-w),         0),                    #w4
+                   nrow = 14, byrow = TRUE)
+n_m2_IUU
+  
+   
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m2_IUU_eig2 <- eigen(n_m2_IUU)
+  lambda_n2_IUU <- as.numeric(n_m2_IUU_eig2$values[1])
+  output2_IUU[i,j] <- lambda_n2_IUU # this matches the ideal population growth rate in the table
+   output2_IUU <- as.data.frame(output2_IUU)
+   output2_IUU$mitigation_efficacy <- mit_eff
+  output2_IUU$bycatch_reduction <- bycatch_reductions2
+   full_output_IUU[[k]] <- output2_IUU
+
+
+    }
+
+}
+}
+
+full_output_IUU[[1]]
+ sim_results_IUU<- full_output_IUU[[1]]
+ sim_results_IUU$quantile5 <-  apply(sim_results_IUU[1:100], 1, quantile, (probs =c(0.05)), na.rm=TRUE)
+ sim_results_IUU$quantile95 <-  apply(sim_results_IUU[1:100], 1, quantile, (probs =c(0.95)), na.rm=TRUE)
+ 
+ 
+```
+
+
+*format output*
+```{r}
+mitigation_eff_range2 #0.50 0.55 0.60 0.65 0.70 0.75 0.80 0.85 0.90 0.95 1.00
+
+mit05_l_IUU <- full_output_IUU[[1]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit055_l_IUU <- full_output_IUU[[2]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit06_l_IUU  <- full_output_IUU[[3]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit065_l_IUU  <- full_output_IUU[[4]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit07_l_IUU  <- full_output_IUU[[5]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit075_l_IUU  <- full_output_IUU[[6]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit08_l_IUU  <- full_output_IUU[[7]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit085_l_IUU  <- full_output_IUU[[8]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit09_l_IUU  <- full_output_IUU[[9]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit095_l_IUU  <- full_output_IUU[[10]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+mit1_l_IUU  <- full_output_IUU[[11]] %>% 
+  select_if(~all(!is.na(.))) %>% 
+  pivot_longer(cols = starts_with("V"), names_to = "simrun", values_to = "lambda")
+
+fulldat_IUU  <- rbind(mit05_l_IUU,mit055_l_IUU,mit06_l_IUU,mit065_l_IUU,mit07_l_IUU,mit075_l_IUU,
+                      mit08_l_IUU,mit085_l_IUU,mit09_l_IUU,mit095_l_IUU,mit1_l_IUU)
+fulldat_IUU$mitsim <- paste(fulldat_IUU$mitigation_efficacy, fulldat_IUU$simrun)
+
+mit05_IUU  <- full_output_IUU[[1]] %>%  select_if(~all(!is.na(.)))
+mit055_IUU  <- full_output_IUU[[1]] %>%  select_if(~all(!is.na(.)))
+mit06_IUU  <- full_output_IUU[[2]] %>%  select_if(~all(!is.na(.)))
+mit065_IUU  <- full_output_IUU[[2]] %>%  select_if(~all(!is.na(.)))
+mit07_IUU  <- full_output_IUU[[3]] %>%  select_if(~all(!is.na(.)))
+mit075_IUU  <- full_output_IUU[[3]] %>%  select_if(~all(!is.na(.)))
+mit08_IUU  <- full_output_IUU[[4]] %>%  select_if(~all(!is.na(.)))
+mit085_IUU  <- full_output_IUU[[4]] %>%  select_if(~all(!is.na(.)))
+mit09_IUU  <- full_output_IUU[[5]] %>%  select_if(~all(!is.na(.)))
+mit095_IUU  <- full_output_IUU[[5]] %>%  select_if(~all(!is.na(.)))
+mit1_IUU  <- full_output_IUU[[6]] %>%  select_if(~all(!is.na(.)))
+
+full_dat_w_IUU <- rbind(mit05_IUU ,mit055_IUU ,mit06_IUU ,mit065_IUU ,mit07_IUU ,mit075_IUU ,
+                        mit08_IUU ,mit085_IUU ,mit09_IUU ,mit095_IUU ,mit1_IUU )
+# full_dat_w_IUU$quantile5 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.05)))
+# full_dat_w_IUU$quantile95 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.95)))
+# full_dat_w_IUU$quantile25 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.25)))
+# full_dat_w_IUU$quantile75 <-  apply(full_dat_w_IUU[1:100], 1, quantile, (probs =c(0.75)))
+full_dat_w_IUU$mitsim <- paste(full_dat_w_IUU$mitigation_efficacy, full_dat_w_IUU$simrun)
+
+```
+
+*plot VR uncertainty plots*
+```{r}
+output_l$mitigation_efficacy <- output_l$mit_eff
+fulldat_IUU <- fulldat_IUU %>% group_by(mitigation_efficacy, bycatch_reduction) %>% mutate(mean_lambda = mean(lambda)) %>% ungroup()
+
+ggplot(fulldat_IUU)+
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
+ # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  facet_wrap(~mitigation_efficacy, nrow = 1)+
+  themeo+
+  coord_cartesian(expand=FALSE)
+```
+
+*then filter for 0 reductions lambda >=1 AND natural mortality lambda < 1 and replot*
+```{r}
+highfilter <- fulldat_IUU %>%
+  filter(bycatch_reduction ==0 & lambda >=1) %>% 
+  select(!mean_lambda)
+
+lowfiltertest <- fulldat_IUU %>% 
+  filter(simrun%in%c("V4"  , "V13" , "V30" , "V31" , "V59" , "V74" , "V89"  ,"V165" ,"V170", "V186" ,"V281", "V304" ,"V326" ,"V377" ,"V383" ,"V412" ,"V453" ,"V458", "V495" ,"V521",
+                      "V555" ,"V570", "V573" ,"V576" ,"V577" ,"V635" ,"V658" ,"V679", "V683", "V687", "V709", "V737" ,"V777", "V787", "V819" ,"V822" ,"V823" ,"V835" ,"V846" ,"V854",
+                      "V866" ,"V956" ,"V974" ,"V976", "V987", "V993"))
+
+unique(lowfilter$simrun)
+#  [1] "V4"   "V13"  "V30"  "V31"  "V59"  "V74"  "V89"  "V165" "V170" "V186" "V281" "V304" "V326" "V377" "V383" "V412" "V453" "V458" "V495" "V521" "V555" "V570" "V573" "V576" "V577" "V635" "V658" "V679"
+# [29] "V683" "V687" "V709" "V737" "V777" "V787" "V819" "V822" "V823" "V835" "V846" "V854" "V866" "V956" "V974" "V976" "V987" "V993"
+unique(highfilter$simrun)
+#  [1] "V12"   "V40"   "V44"   "V49"   "V94"   "V107"  "V153"  "V198"  "V207"  "V245"  "V391"  "V445"  "V452"  "V490"  "V540"  "V611"  "V769"  "V820"  "V843"  "V853"  "V957"  "V973"  "V1151" "V1227" "V1312"
+# [26] "V1397"
+unique(fulldat_IUU$simrun)
+
+fulldat_IUU_filtered <- fulldat_IUU %>% 
+  filter(!simrun%in%c("V4"  , "V13" , "V30" , "V31" , "V59" , "V74" , "V89"  ,"V165" ,"V170", "V186" ,"V281", "V304" ,"V326" ,"V377" ,"V383" ,"V412" ,"V453" ,"V458", "V495" ,"V521",
+                      "V555" ,"V570", "V573" ,"V576" ,"V577" ,"V635" ,"V658" ,"V679", "V683", "V687", "V709", "V737" ,"V777", "V787", "V819" ,"V822" ,"V823" ,"V835" ,"V846" ,"V854",
+                      "V866" ,"V956" ,"V974" ,"V976", "V987", "V993", #lowfilter
+                     "V12"  , "V40"  , "V44"  , "V49"  , "V94"  , "V107" , "V153" , "V198" , "V207" , "V245" , "V391" , "V445" , "V452" , "V490"  ,"V540" , "V611" , "V769",  "V820" ,
+                     "V843" , "V853"  ,"V957" , "V973",  "V1151", "V1227" ,"V1312","V1397")) #highfilter
+unique(fulldat_IUU_filtered$simrun)
+
+ggplot(fulldat_IUU_filtered)+
+  geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
+ # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
+  geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
+  geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
+  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  facet_wrap(~mitigation_efficacy, nrow = 1)+
+  themeo+
+  coord_cartesian(expand=FALSE)
+
+```
+*this looks reasonable*
+*now, calculate the probability of lambda being >=1 (aka prob of success) for each bycatch reduction percentile - do this across all mitigation efficacy rates, and broken up by efficacy rates*
+```{r}
+unique(fulldat_IUU_filtered$bycatch_reduction)
+
+fulldat_IUU_prob1 <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction) %>% 
+  summarise(prob1 =sum(lambda>=1)/length(lambda))
+
+fulldat_IUU_prob1mit <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction, mitigation_efficacy) %>% 
+  summarise(prob1 =sum(lambda>=1)/length(lambda))
+
+fulldat_IUU_meanlambda <- fulldat_IUU_filtered %>% 
+  group_by(bycatch_reduction, mitigation_efficacy) %>% 
+  summarise(mean_lambda =mean(lambda))
+```
+
+```{r}
+ggplot(fulldat_IUU_prob1)+
+  geom_line(aes(bycatch_reduction, prob1))+
+  theme_bw()
+```
+
+```{r}
+ggplot(fulldat_IUU_prob1mit)+
+  geom_line(aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)))+
+  theme_bw()
+```
+
+```{r}
+ggplot()+
+  geom_line(data = fulldat_IUU_prob1mit, aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)), alpha = 0.5)+
+  geom_line(data = fulldat_IUU_prob1, aes(bycatch_reduction, prob1))+
+   labs(x="% legal fisheries with bycatch mitigation", y="Probability \u03BB \u2265 1 ", color = "% mitigation efficacy")+
+    coord_cartesian(expand=FALSE)+
+  #scale_color_viridis_d()+
+  theme_bw()
+```
+
+*now try a heatmap with latticeextra*
+*first a test plot*
+```{r}
+# library
+library(latticeExtra) 
+ 
+# create data
+set.seed(1) 
+data <- data.frame(x = rnorm(100), y = rnorm(100)) 
+data$z <- with(data, x * y + rnorm(100, sd = 1)) 
+ 
+# showing data points on the same color scale 
+levelplot(z ~ x * y, data, 
+          panel = panel.levelplot.points, cex = 1.2
+    ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
+
+*now with my data*
+```{r}
+
+library(RColorBrewer)
+# Heatmap 
+ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  scale_fill_viridis_c()
+
+```
+
+heatmap of mean lambda
+```{r}
+# Heatmap 
+ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+  scale_fill_viridis_c()
+  #scale_fill_distiller(palette = "RdBu")
+```
+
+
+
+```{r}
+# showing data points on the same color scale 
+levelplot(prob1 ~ bycatch_reduction * mitigation_efficacy, fulldat_IUU_prob1mit, 
+        #  panel = panel.levelplot.points, cex = 1.2 
+          ) + 
+    layer_(panel.2dsmoother(..., n = 200))
+```
 change plots x axis to amount of mitigation needed in legal fisheries*
 increase sims to 1500 to have spares*
 for each 0 bycatch reduction simulation run, remove any run with lambda greater than 1*
 for each 100% bycatch simulation and 100% effectiveness run, remove any run with lambda less than 1, but remove those for all columns?*
 also constrain for not accepting any where juv survival is higher than adult survival*
 remake old figures above to look at how this looks*
-*then, for each % mitigation, calculate the probability that lambda is >=1 - do this for all ranges of mitigation pooled, and then also broken into panels, also do it for all IUU pooled, and for 0 low med and high IUU scenarios*
-*remake old figures to see how THAT looks*
-*then, start trying to make new figures, and send versions to Dan*
+then, for each % mitigation, calculate the probability that lambda is >=1 - do this for all ranges of mitigation pooled, and then also broken into panels, also do it for all IUU pooled, and for 0 low med and high IUU scenarios*
+then, start trying to make new figures, and send versions to Dan*
 *once figure workflow is down, rerun this for set bins of IUU - 0,low, min, high, and remake plots for that*
 
 

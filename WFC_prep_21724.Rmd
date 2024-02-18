@@ -2501,12 +2501,24 @@ range(fulldat_IUU_prob1mit$prob1) #0.001526718 0.861068702
 ```
 
 *remake figures (test zero and high first)*
+*PROB1*
 ```{r}
 #grad <- c("#b2182b", "#ef8a62", "#fddbc7", "#f7f7f7","#d1e5f0","#67a9cf", "#2166ac")
 #grad <- c("#b2182b", "#ef8a62", "#fddbc7","#d1e5f0","#67a9cf", "#2166ac")
-grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#e0f3f8","#91bfdb", "#4575b4")
+#grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#e0f3f8","#91bfdb", "#4575b4")
 #grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#91bfdb", "#4575b4")
 #grad_lims <- c(0 ,0.957251908)
+#grad <- c("#67001f", "#b2182b", "#d6604d", "#f4a582","#fddbc7","#f7f7f7", "#d1e5f0","#92c5de","#4393c3","#2166ac","#053061")
+
+#grad <- c("#67001f", "#b2182b",  "#542788","#2166ac", "#4393c3")
+#grad <- c("#67001f", "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+ #grad <- c("#67001f", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+#grad <- c( "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+
+#grad <- c("#1034A6", "#412f88",  "#722B6A","#A2264B", "#D3212D", "#F62D2D")
+grad <- c("#F62D2D", "#D3212D", "#A2264B","#722B6A", "#412f88", "#1034A6")
+
+grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
 grad_lims <- c(0 ,1)
 
 
@@ -2569,4 +2581,83 @@ ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= p
 
 ```
 
+*MEAN LAMBDA 20*
+```{r}
+#grad <- c("#b2182b", "#ef8a62", "#fddbc7", "#f7f7f7","#d1e5f0","#67a9cf", "#2166ac")
+#grad <- c("#b2182b", "#ef8a62", "#fddbc7","#d1e5f0","#67a9cf", "#2166ac")
+#grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#e0f3f8","#91bfdb", "#4575b4")
+#grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#91bfdb", "#4575b4")
+#grad_lims <- c(0 ,0.957251908)
+#grad <- c("#67001f", "#b2182b", "#d6604d", "#f4a582","#fddbc7","#f7f7f7", "#d1e5f0","#92c5de","#4393c3","#2166ac","#053061")
 
+#grad <- c("#67001f", "#b2182b",  "#542788","#2166ac", "#4393c3")
+#grad <- c("#67001f", "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+ #grad <- c("#67001f", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+#grad <- c( "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+
+#grad <- c("#1034A6", "#412f88",  "#722B6A","#A2264B", "#D3212D", "#F62D2D")
+#grad <- c("#F62D2D", "#D3212D", "#A2264B","#722B6A", "#412f88", "#1034A6")
+
+grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
+#grad_lims <- c(0 ,1)
+grad_lims <-c(0.8939271, 1.0742888)
+
+
+ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ #scale_fill_viridis_c()
+ scale_fill_gradientn(colors  = grad, limits = grad_lims)
+```
+
+```{r}
+
+ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ scale_fill_gradientn(colors = grad, limits = grad_lims)
+
+```
+
+```{r}
+
+ggplot(fulldat_IUU_med_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ scale_fill_gradientn(colors = grad, limits = grad_lims)
+
+```
+
+
+```{r}
+
+ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ scale_fill_gradientn(colors = grad, limits = grad_lims)
+
+```
+
+I think this one might be wrong - this may have been overwritten by the low IUU somehow
+```{r}
+grad_lims2<- c(0.8 ,1.0742888)
+ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ scale_fill_gradientn(colors = grad, limits = grad_lims)
+
+```

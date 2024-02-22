@@ -1221,6 +1221,10 @@ full_dat_w_IUU$mitsim <- paste(full_dat_w_IUU$mitigation_efficacy, full_dat_w_IU
 
 *plot VR uncertainty plots*
 ```{r}
+
+#"Probability \u03BB \u2265 1"
+
+
 output_l$mitigation_efficacy <- output_l$mit_eff
 fulldat_IUU <- fulldat_IUU %>% group_by(mitigation_efficacy, bycatch_reduction) %>% mutate(mean_lambda = mean(lambda)) %>% ungroup()
 
@@ -1229,10 +1233,13 @@ ggplot(fulldat_IUU)+
  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
   geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
-  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  labs(x="% fisheries with bycatch mitigation", y=" \u03BB")+
+  scale_x_continuous(breaks = c(0,0.5,1), labels = c("0", "50", "100"))+
   facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
   coord_cartesian(expand=FALSE)
+
+
 ```
 
 *then filter for 0 reductions lambda >=1 AND natural mortality lambda < 1 and replot*
@@ -1262,15 +1269,20 @@ fulldat_IUU_filtered <- fulldat_IUU %>%
                      "V843" , "V853"  ,"V957" , "V973",  "V1151", "V1227" ,"V1312","V1397")) #highfilter
 unique(fulldat_IUU_filtered$simrun)
 
-ggplot(fulldat_IUU_filtered)+
+p1<- ggplot(fulldat_IUU_filtered)+
   geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
   geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
-  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  labs(x="% fisheries with bycatch mitigation", y=" \u03BB")+
+  scale_x_continuous(breaks = c(0,0.5,1), labels = c("0", "50", "100"))+
   facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
   coord_cartesian(expand=FALSE)
+
+ggsave(filename = "fulldat_IUU_p1",
+         plot = p1, device = "png", width = 28, height = 7, units = "cm",
+     path = here::here())
 
 ```
 *this looks reasonable*
@@ -1285,10 +1297,12 @@ fulldat_IUU_prob1 <- fulldat_IUU_filtered %>%
 fulldat_IUU_prob1mit <- fulldat_IUU_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
+write_csv(fulldat_IUU_prob1mit, here::here("fulldat_IUU_prob1mit.csv"))
 
 fulldat_IUU_meanlambda <- fulldat_IUU_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(mean_lambda =mean(lambda))
+write_csv(fulldat_IUU_meanlambda, here::here("fulldat_IUU_meanlambda"))
 ```
 
 ```{r}
@@ -1304,38 +1318,104 @@ ggplot(fulldat_IUU_prob1mit)+
 ```
 
 ```{r}
-ggplot()+
+p2<- ggplot()+
   geom_line(data = fulldat_IUU_prob1mit, aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)), alpha = 0.5)+
   geom_line(data = fulldat_IUU_prob1, aes(bycatch_reduction, prob1))+
    labs(x="% legal fisheries with bycatch mitigation", y="Probability \u03BB \u2265 1 ", color = "% mitigation efficacy")+
     coord_cartesian(expand=FALSE)+
   #scale_color_viridis_d()+
   theme_bw()
+
+ggsave(filename = "fulldat_IUU_prob1mit_line",
+         plot = p2, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 *heatplot of prb1*
 ```{r}
 
 # Heatmap 
-ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+p3<- ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
-  scale_fill_viridis_c()
+  scale_fill_viridis_c(limits = c(0,1))
+
+ggsave(filename = "fulldat_IUU_prob1mit_heatmap_vir",
+         plot = p3, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
+
+p3b<- ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  scale_fill_gradientn(colors  = grad, limits = c(0,1))
+
+ggsave(filename = "fulldat_IUU_prob1mit_heatmap_rb",
+         plot = p3b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p3c<- ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+   scale_fill_distiller(direction =1, palette = "RdBu", limits =c(0,1))
+
+ggsave(filename = "fulldat_IUU_prob1mit_heatmap_rb2",
+         plot = p3c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```
 
 *heatmap of mean lambda*
 ```{r}
 # Heatmap 
-ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+p4<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
-  scale_fill_viridis_c()
+  scale_fill_viridis_c(limits = c(0.9944091 , 1.0035894))
   #scale_fill_distiller(palette = "RdBu")
+
+
+ggsave(filename = "fulldat_IUU_meanlamda_heatmap_vir",
+         plot = p4, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p4b<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+ scale_fill_gradientn(colors  = grad, limits = c(0.9944091 , 1.0035894))
+  #scale_fill_distiller(palette = "RdBu")
+
+
+ggsave(filename = "fulldat_IUU_meanlamda_heatmap_rb",
+         plot = p4b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+p4c<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+   scale_fill_distiller(direction =1, palette = "RdBu", limits = c(0.9944091 , 1.0035894))
+
+
+ggsave(filename = "fulldat_IUU_meanlamda_heatmap_rb2",
+         plot = p4c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 
@@ -1344,13 +1424,42 @@ ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill=
 # Heatmap 
 
 fulldat_IUU_meanlambda$mean_lambda20 <- fulldat_IUU_meanlambda$mean_lambda^20
-ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda20)) + 
+p5<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda20)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
-  scale_fill_viridis_c()
+  scale_fill_viridis_c(limits = c(0.8939271, 1.0742888))
   #scale_fill_distiller(palette = "RdBu")
+
+ggsave(filename = "fulldat_IUU_meanlamda20_heatmap_vir",
+         plot = p5, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p5b<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+   scale_fill_gradientn(colors  = grad, limits = c(0.8939271, 1.0742888))
+  #scale_fill_distiller(palette = "RdBu")
+
+ggsave(filename = "fulldat_IUU_meanlamda20_heatmap_rb",
+         plot = p5b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+p5c<- ggplot(fulldat_IUU_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda20)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+   #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  scale_fill_distiller(direction = 1, palette = "RdBu", limits = c(0.8939271, 1.0742888))
+
+ggsave(filename = "fulldat_IUU_meanlamda20_heatmap_rb2",
+         plot = p5c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 
@@ -1569,15 +1678,19 @@ fulldat_IUU_none_filtered <- fulldat_IUU_none %>%
                      "V843" , "V853"  ,"V957" , "V973",  "V1151", "V1227" ,"V1312","V1397")) #highfilter
 unique(fulldat_IUU_none_filtered$simrun)
 
-ggplot(fulldat_IUU_none_filtered)+
+p6<- ggplot(fulldat_IUU_none_filtered)+
   geom_line(aes(x=bycatch_reduction, y=lambda, group = simrun), color = "grey", alpha = 0.1)+
  # geom_line(data = output_l, aes(x=bycatch_reductions, y=lambda))+ #"best" VR
   geom_hline(aes(yintercept = 1), color = "red", alpha =0.5)+ 
   geom_line(aes(x=bycatch_reduction, y=mean_lambda, group = simrun), color = "blue")+ #mean VR
-  labs(x="% fisheries with bycatch mitigation", y="lambda")+
+  labs(x="% fisheries with bycatch mitigation", y="\u03BB")+
   facet_wrap(~mitigation_efficacy, nrow = 1)+
   themeo+
   coord_cartesian(expand=FALSE)
+
+ggsave(filename = "fulldat_IUU_none_prob1",
+         plot = p6, device = "png", width = 28, height = 7, units = "cm",
+     path = here::here())
 
 ```
 *this looks reasonable*
@@ -1592,43 +1705,117 @@ fulldat_IUU_none_prob1 <- fulldat_IUU_none_filtered %>%
 fulldat_IUU_none_prob1mit <- fulldat_IUU_none_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
+write_csv(fulldat_IUU_none_prob1mit, here::here("fulldat_IUU_none_prob1mit"))
 
 fulldat_IUU_none_meanlambda <- fulldat_IUU_none_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(mean_lambda =mean(lambda))
+write_csv(fulldat_IUU_none_meanlambda, here::here("fulldat_IUU_none_meanlambda"))
 ```
 
 ```{r}
-ggplot()+
+p7<- ggplot()+
   geom_line(data = fulldat_IUU_none_prob1mit, aes(bycatch_reduction, prob1, color = factor(mitigation_efficacy)), alpha = 0.5)+
   geom_line(data = fulldat_IUU_none_prob1, aes(bycatch_reduction, prob1))+
    labs(x="% legal fisheries with bycatch mitigation", y="Probability \u03BB \u2265 1 ", color = "% mitigation efficacy")+
     coord_cartesian(expand=FALSE)+
   #scale_color_viridis_d()+
   theme_bw()
+
+ggsave(filename = "fulldat_IUU_none_prob1_line",
+         plot = p7, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 *heatmap prob1*
 ```{r}
-ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+p8<- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
   scale_fill_viridis_c()
 
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_vir",
+         plot = p8, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p8b<- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+    scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  #scale_fill_distiller(palette = "RdBu")
+
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_rb",
+         plot = p8b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+
+
+p8c<- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+    #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  scale_fill_distiller(direction = 1, palette = "RdBu")
+
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_rb2",
+         plot = p8c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
 ```
 
 heatmap of mean lambda
 ```{r}
 # Heatmap 
-ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+p9<- ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
   scale_fill_viridis_c()
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
   #scale_fill_distiller(palette = "RdBu")
+
+
+ggsave(filename = "fulldat_IUU_none_meanlamda_heatmap_vir",
+         plot = p9, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p9b<- ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+  #scale_fill_viridis_c()
+ scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  #scale_fill_distiller(palette = "RdBu")
+
+#THIS ONE IS FUCKED UP
+ggsave(filename = "fulldat_IUU_none_meanlamda_heatmap_rb",
+         plot = p9b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p9c<- ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+  #scale_fill_viridis_c()
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  scale_fill_distiller(direction =1, palette = "RdBu")
+
+
+ggsave(filename = "fulldat_IUU_none_meanlamda_heatmap_rb2",
+         plot = p9c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 *high BYCATCH*
@@ -1867,10 +2054,12 @@ fulldat_IUU_high_prob1 <- fulldat_IUU_high_filtered %>%
 fulldat_IUU_high_prob1mit <- fulldat_IUU_high_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
+write_csv(fulldat_IUU_high_prob1mit, here::here("fulldat_IUU_high_prob1mit"))
 
 fulldat_IUU_high_meanlambda <- fulldat_IUU_high_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(mean_lambda =mean(lambda))
+write_csv(fulldat_IUU_high_meanlambda, here::here("fulldat_IUU_high_meanlambda"))
 ```
 
 
@@ -1887,25 +2076,90 @@ ggplot()+
 *heatmap prob1*
 ```{r}
 # Heatmap 
-ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+p10<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
   scale_fill_viridis_c()
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  #scale_fill_distiller(direction =1, palette = "RdBu")
+
+
+
+ggsave(filename = "fulldat_IUU_high_prob1_vir",
+         plot = p10, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p10b<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  #scale_fill_viridis_c()
+ scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  #scale_fill_distiller(direction =1, palette = "RdBu")
+
+
+
+ggsave(filename = "fulldat_IUU_high_prob1_rb",
+         plot = p10b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+p10c<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  #scale_fill_viridis_c()
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  scale_fill_distiller(direction =1, palette = "RdBu")
+
+
+
+ggsave(filename = "fulldat_IUU_high_prob1_rb2",
+         plot = p10c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```
 
 heatmap of mean lambda
 ```{r}
 # Heatmap 
-ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
-  geom_tile()+
+ #establish the min and max of scale 
+grandmin <- min(grad_lims)
+grandmax <- max(grad_lims)
+
+#define the number of breaks.  In this case 8 +1 
+mybreaks <- seq(grandmin, grandmax, length.out = 15)
+#Function to return the dersired number of colors
+mycolors<- function(x) {
+   colors<-colorRampPalette(c("darkblue", "yellow"))( 14 )
+   colors[1:x]
+}
+
+#Function to create labels for legend
+breaklabel <- function(x){
+   labels<- paste0(mybreaks[1:8], "-", mybreaks[2:15])
+   labels[1:x]
+}
+
+
+#ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+#geom_tile()+
+ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks, show.legend = TRUE)+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
-  scale_fill_viridis_c()
+scale_fill_manual(palette=mycolors, values=breaklabel(14), name="Value", drop=FALSE)
+  #scale_fill_viridis_c()
+  #scale_fill_viridis_b()
   #scale_fill_distiller(palette = "RdBu")
+#scale_fill_binned(guide = guide_bins(show.limits = T))
+ 
 ```
 
 
@@ -2146,10 +2400,12 @@ fulldat_IUU_med_prob1 <- fulldat_IUU_med_filtered %>%
 fulldat_IUU_med_prob1mit <- fulldat_IUU_med_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
+write_csv(fulldat_IUU_med_prob1mit, here::here("fulldat_IUU_med_prob1mit"))
 
 fulldat_IUU_med_meanlambda <- fulldat_IUU_med_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(mean_lambda =mean(lambda))
+write_csv(fulldat_IUU_med_meanlambda, here::here("fulldat_IUU_med_meanlambda"))
 ```
 
 
@@ -2423,10 +2679,12 @@ fulldat_IUU_low_prob1 <- fulldat_IUU_low_filtered %>%
 fulldat_IUU_low_prob1mit <- fulldat_IUU_low_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(prob1 =sum(lambda>=1)/length(lambda))
+write_csv(fulldat_IUU_low_prob1mit, here::here("fulldat_IUU_low_prob1mit"))
 
 fulldat_IUU_low_meanlambda <- fulldat_IUU_low_filtered %>% 
   group_by(bycatch_reduction, mitigation_efficacy) %>% 
   summarise(mean_lambda =mean(lambda))
+write_csv(fulldat_IUU_low_meanlambda, here::here("fulldat_IUU_low_meanlambda"))
 ```
 
 
@@ -2516,68 +2774,159 @@ range(fulldat_IUU_prob1mit$prob1) #0.001526718 0.861068702
 #grad <- c( "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
 
 #grad <- c("#1034A6", "#412f88",  "#722B6A","#A2264B", "#D3212D", "#F62D2D")
-grad <- c("#F62D2D", "#D3212D", "#A2264B","#722B6A", "#412f88", "#1034A6")
+#grad <- c("#F62D2D", "#D3212D", "#A2264B","#722B6A", "#412f88", "#1034A6")
 
 grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
 grad_lims <- c(0 ,1)
 
 
-ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+noIUU1 <- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
- #scale_fill_viridis_c()
+ #scale_fill_viridis_c(limits = grad_lims)
  scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ #scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+
+
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_rb",
+         plot = noIUU1, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+
+noIUU1b <- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+ #scale_fill_viridis_c(limits = grad_lims)
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+
+
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_rb2",
+         plot = noIUU1b, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+
+noIUU1c <- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+ scale_fill_viridis_c(limits = grad_lims)
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ #scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+
+
+ggsave(filename = "fulldat_IUU_none_prob1_heatmap_vir",
+         plot = noIUU1c, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
 ```
 
 ```{r}
 
-ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+highIUU<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ scale_fill_gradientn(colors = grad, limits = grad_lims) 
+#scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ #scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
 
-```
 
-```{r}
+ggsave(filename = "fulldat_IUU_high_prob1_heatmap_rb",
+         plot = highIUU, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
-ggplot(fulldat_IUU_med_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+
+highIUUb<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims) 
+#scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+
+ggsave(filename = "fulldat_IUU_high_prob1_heatmap_rb2",
+         plot = highIUUb, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+
+
+highIUUc<- ggplot(fulldat_IUU_high_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+  scale_fill_viridis_c(limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims) 
+#scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ #scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+
+ggsave(filename = "fulldat_IUU_high_prob1_heatmap_vir",
+         plot = highIUUc, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+```
+
+```{r}
+
+medIUU <- ggplot(fulldat_IUU_med_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+ # scale_fill_viridis_c()
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_med_prob1_heatmap_rb2",
+         plot = medIUU, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```
 
 
 ```{r}
 
-ggplot(fulldat_IUU_low_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+lowIUU<- ggplot(fulldat_IUU_low_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
 
+ggsave(filename = "fulldat_IUU_low_prob1_heatmap_rb2",
+         plot = lowIUU, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 I think this one might be wrong - this may have been overwritten by the low IUU somehow
 ```{r}
 
-ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
-  geom_tile()+
-  theme_bw()+
-  coord_cartesian(expand=FALSE)+
-  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
- # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+# ggplot(fulldat_IUU_prob1mit, aes(bycatch_reduction, mitigation_efficacy, fill= prob1)) + 
+#   geom_tile()+
+#   theme_bw()+
+#   coord_cartesian(expand=FALSE)+
+#   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+#  # scale_fill_viridis_c()
+#  scale_fill_gradientn(colors = grad, limits = grad_lims)
 
 ```
 
@@ -2603,61 +2952,166 @@ grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
 grad_lims <-c(0.8939271, 1.0742888)
 
 
-ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+meanl20none <- ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
  #scale_fill_viridis_c()
- scale_fill_gradientn(colors  = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_none_meanlamda20_heatmap_rb2",
+         plot = meanl20none, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 ```{r}
 
-ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+meanl20high <- ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
 
+ggsave(filename = "fulldat_IUU_high_meanlamda20_heatmap_rb2",
+         plot = meanl20high, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 ```
 
 ```{r}
 
-ggplot(fulldat_IUU_med_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+meanl20med <- ggplot(fulldat_IUU_med_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_med_meanlamda20_heatmap_rb2",
+         plot = meanl20med, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```
 
 
 ```{r}
 
-ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+meanl20low<- ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_low_meanlamda20_heatmap_rb2",
+         plot = meanl20low, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```
 
 I think this one might be wrong - this may have been overwritten by the low IUU somehow
 ```{r}
-grad_lims2<- c(0.8 ,1.0742888)
-ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+# grad_lims2<- c(0.8 ,1.0742888)
+# ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda^20)) + 
+#   geom_tile()+
+#   theme_bw()+
+#   coord_cartesian(expand=FALSE)+
+#   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+#  # scale_fill_viridis_c()
+#  scale_fill_gradientn(colors = grad, limits = grad_lims)
+
+```
+*MEAN LAMBDA*
+```{r}
+#grad <- c("#b2182b", "#ef8a62", "#fddbc7", "#f7f7f7","#d1e5f0","#67a9cf", "#2166ac")
+#grad <- c("#b2182b", "#ef8a62", "#fddbc7","#d1e5f0","#67a9cf", "#2166ac")
+#grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#e0f3f8","#91bfdb", "#4575b4")
+#grad <- c("#d73027", "#fc8d59", "#fee090", "#ffffbf","#91bfdb", "#4575b4")
+#grad_lims <- c(0 ,0.957251908)
+#grad <- c("#67001f", "#b2182b", "#d6604d", "#f4a582","#fddbc7","#f7f7f7", "#d1e5f0","#92c5de","#4393c3","#2166ac","#053061")
+
+#grad <- c("#67001f", "#b2182b",  "#542788","#2166ac", "#4393c3")
+#grad <- c("#67001f", "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+ #grad <- c("#67001f", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+#grad <- c( "#b2182b", "#c51b7d",  "#542788","#2166ac", "#4393c3")
+
+#grad <- c("#1034A6", "#412f88",  "#722B6A","#A2264B", "#D3212D", "#F62D2D")
+#grad <- c("#F62D2D", "#D3212D", "#A2264B","#722B6A", "#412f88", "#1034A6")
+
+grad <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
+#grad_lims <- c(0 ,1)
+grad_lims <-c(0.9944091 , 1.0035894)
+
+
+meanlnone <- ggplot(fulldat_IUU_none_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ #scale_fill_viridis_c()
+ #scale_fill_gradientn(colors  = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_none_meanlamda_heatmap_rb2",
+         plot = meanlnone, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+```
+
+```{r}
+
+meanlhigh <- ggplot(fulldat_IUU_high_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
   geom_tile()+
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
  # scale_fill_viridis_c()
- scale_fill_gradientn(colors = grad, limits = grad_lims)
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_high_meanlamda_heatmap_rb2",
+         plot = meanlhigh, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+```
+
+```{r}
+
+meanlmed <- ggplot(fulldat_IUU_med_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_med_meanlamda_heatmap_rb2",
+         plot = meanlmed, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
+
+```
+
+
+```{r}
+
+meanllow<- ggplot(fulldat_IUU_low_meanlambda, aes(bycatch_reduction, mitigation_efficacy, fill= mean_lambda)) + 
+  geom_tile()+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB ^20")+
+ # scale_fill_viridis_c()
+ #scale_fill_gradientn(colors = grad, limits = grad_lims)
+scale_fill_distiller(direction =1, palette = "RdBu", limits = grad_lims)
+
+ggsave(filename = "fulldat_IUU_low_meanlamda_heatmap_rb2",
+         plot = meanllow, device = "png", width = 14, height = 9, units = "cm",
+     path = here::here())
 
 ```

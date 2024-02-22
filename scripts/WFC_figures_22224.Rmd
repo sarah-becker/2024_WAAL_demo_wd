@@ -1,0 +1,278 @@
+---
+title: "WFC_figures"
+author: "Sarah Becker"
+date: '2024-02-22'
+output: html_document
+---
+
+packages
+```{r}
+library(tidyverse)
+```
+
+read in data for plotting
+```{r}
+#all IUU uncertainty values
+allIUU_p1mit <- read_csv(here::here("fulldat_IUU_prob1mit.csv"))
+allIUU_meanl <- read_csv(here::here("fulldat_IUU_meanlambda"))
+
+#no IUU
+noIUU_p1mit <- read_csv(here::here("fulldat_IUU_none_prob1mit"))
+noIUU_mean1 <- read_csv(here::here("fulldat_IUU_none_meanlambda"))
+
+#high IUU
+highIUU_p1mit <- read_csv(here::here("fulldat_IUU_high_prob1mit"))
+highIUU_mean1 <- read_csv(here::here("fulldat_IUU_high_meanlambda"))
+
+#medIUU
+medIUU_p1mit <- read_csv(here::here("fulldat_IUU_med_prob1mit"))
+medIUU_mean1 <- read_csv(here::here("fulldat_IUU_med_meanlambda"))
+
+#lowIUU
+lowIUU_p1mit <- read_csv(here::here("fulldat_IUU_low_prob1mit"))
+lowIUU_mean1 <- read_csv(here::here("fulldat_IUU_low_meanlambda"))
+
+```
+
+
+min and max color scale - PROB1 AND MEAN L
+```{r}
+
+cols <- c("#FF0000", "#CC0033", "#990066","#660099", "#3300CC", "#0000FF")
+
+#MEAN LAMDA
+##0.9944091 - 1.0035894
+
+ #establish the min and max of scale 
+grandmin_ml <- 0.9944091-0.0005
+grandmax_ml <- 1.0035894
+
+#define the number of breaks.  In this case 8 +1 
+mybreaks_ml <- round(seq(grandmin_ml, grandmax_ml, length.out = 11),4)
+#Function to return the dersired number of colors
+mycolors_ml<- function(x) {
+   colors<-colorRampPalette(cols)( 10 )
+   colors[1:x]
+}
+
+#Function to create labels for legend
+breaklabel_ml <- function(x){
+   labels<- paste0(mybreaks_ml[1:10], "-", mybreaks_ml[2:11])
+   labels[1:x]
+}
+
+
+
+
+#Prob 1
+##0.001526718 - 0.957251908
+
+ #establish the min and max of scale 
+grandmin_p1 <- 0
+grandmax_p1 <- 1
+
+#define the number of breaks.  In this case 8 +1 
+mybreaks_p1 <- round(seq(grandmin_p1, grandmax_p1, length.out = 11),4)
+#Function to return the dersired number of colors
+mycolors_p1<- function(x) {
+   colors<-colorRampPalette(cols)( 10 )
+   colors[1:x]
+}
+
+#Function to create labels for legend
+breaklabel_p1 <- function(x){
+   labels<- paste0(mybreaks_p1[1:10], "-", mybreaks_p1[2:11])
+   labels[1:x]
+}
+```
+
+**START PLOTTING!**
+
+**all IUU**
+
+Mean l
+```{r}
+p_aIUU_ml<- ggplot(allIUU_meanl, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks_ml, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+scale_fill_manual(palette=mycolors_ml, values=breaklabel_ml(10), name="Mean \u03BB", drop=FALSE)
+
+p_aIUU_ml
+
+ggsave(filename = "p_aIUU_ml",
+         plot = p_aIUU_ml, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+prob1
+```{r}
+p_aIUU_p1 <- ggplot(allIUU_p1mit, aes(bycatch_reduction, mitigation_efficacy, z=prob1)) + 
+  geom_contour_filled(breaks = mybreaks_p1, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+scale_fill_manual(palette=mycolors_p1, values=breaklabel_p1(10), name="Probability \u03BB \u2265 1", drop=FALSE)
+
+p_aIUU_p1
+
+ggsave(filename = "p_aIUU_p1",
+         plot = p_aIUU_p1, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+**HGIH IUU**
+
+Mean l
+```{r}
+p_hIUU_ml <- ggplot(highIUU_mean1, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks_ml, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+scale_fill_manual(palette=mycolors_ml, values=breaklabel_ml(10), name="Mean \u03BB", drop=FALSE)
+
+p_hIUU_ml
+
+ggsave(filename = "p_hIUU_ml",
+         plot = p_hIUU_ml, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+prob1
+```{r}
+p_hIUU_p1 <- ggplot(highIUU_p1mit, aes(bycatch_reduction, mitigation_efficacy, z=prob1)) + 
+  geom_contour_filled(breaks = mybreaks_p1, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+scale_fill_manual(palette=mycolors_p1, values=breaklabel_p1(10), name="Probability \u03BB \u2265 1", drop=FALSE)
+
+p_hIUU_p1
+
+ggsave(filename = "p_hIUU_p1",
+         plot = p_hIUU_p1, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+
+**MED IUU**
+
+Mean l
+```{r}
+p_mIUU_ml <- ggplot(medIUU_mean1, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks_ml, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+scale_fill_manual(palette=mycolors_ml, values=breaklabel_ml(10), name="Mean \u03BB", drop=FALSE)
+
+p_mIUU_ml
+
+ggsave(filename = "p_mIUU_ml",
+         plot = p_mIUU_ml, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+prob1
+```{r}
+p_mIUU_p1 <- ggplot(medIUU_p1mit, aes(bycatch_reduction, mitigation_efficacy, z=prob1)) + 
+  geom_contour_filled(breaks = mybreaks_p1, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+scale_fill_manual(palette=mycolors_p1, values=breaklabel_p1(10), name="Probability \u03BB \u2265 1", drop=FALSE)
+
+p_mIUU_p1
+
+ggsave(filename = "p_mIUU_p1",
+         plot = p_mIUU_p1, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+
+```
+
+
+
+**LOW IUU**
+
+Mean l
+```{r}
+p_lIUU_ml <- ggplot(lowIUU_mean1, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks_ml, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+scale_fill_manual(palette=mycolors_ml, values=breaklabel_ml(10), name="Mean \u03BB", drop=FALSE)
+
+p_lIUU_ml
+
+ggsave(filename = "p_lIUU_ml",
+         plot = p_lIUU_ml, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+
+```
+
+prob1
+```{r}
+p_lIUU_p1 <- ggplot(lowIUU_p1mit, aes(bycatch_reduction, mitigation_efficacy, z=prob1)) + 
+  geom_contour_filled(breaks = mybreaks_p1, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+scale_fill_manual(palette=mycolors_p1, values=breaklabel_p1(10), name="Probability \u03BB \u2265 1", drop=FALSE)
+
+p_lIUU_p1
+
+ggsave(filename = "p_lIUU_p1",
+         plot = p_lIUU_p1, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+
+
+
+**ZERO IUU**
+
+Mean l
+```{r}
+p_0IUU_ml <- ggplot(noIUU_mean1, aes(bycatch_reduction, mitigation_efficacy, z=mean_lambda)) + 
+  geom_contour_filled(breaks = mybreaks_ml, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Mean \u03BB")+
+scale_fill_manual(palette=mycolors_ml, values=breaklabel_ml(10), name="Mean \u03BB", drop=FALSE)
+
+p_0IUU_ml
+
+ggsave(filename = "p_0IUU_ml",
+         plot = p_0IUU_ml, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+
+prob1
+```{r}
+p_0IUU_p1 <- ggplot(noIUU_p1mit, aes(bycatch_reduction, mitigation_efficacy, z=prob1)) + 
+  geom_contour_filled(breaks = mybreaks_p1, show.legend = TRUE)+
+  theme_bw()+
+  coord_cartesian(expand=FALSE)+
+  labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
+scale_fill_manual(palette=mycolors_p1, values=breaklabel_p1(10), name="Probability \u03BB \u2265 1", drop=FALSE)
+
+p_0IUU_p1
+
+ggsave(filename = "p_0IUU_p1",
+         plot = p_0IUU_p1, device = "png", width = 15, height = 10, units = "cm",
+     path = here::here())
+
+```
+

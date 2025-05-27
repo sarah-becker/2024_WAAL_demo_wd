@@ -1,0 +1,339 @@
+---
+title: "WAAL bycatch 5-27-25"
+output: html_notebook
+---
+
+```{r, echo= FALSE, include =FALSE}
+library(here)
+library(tidyverse)
+library(RColorBrewer)
+
+#set up various plotting themes
+themeo <-theme_classic()+
+  theme(strip.background = element_blank(),
+        panel.grid.major = element_line(colour = "transparent"), 
+        panel.grid.minor = element_line(colour = "transparent"),
+        axis.line = element_blank(),
+        axis.title = element_text(color = "black", size = 10),
+        axis.ticks.length=unit(-0.1, "cm"),
+        axis.ticks = element_line(color = "black", size = .25),
+        axis.ticks.x = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        panel.border = element_rect(colour = "black", fill=NA, size=.5),
+        panel.spacing = unit(1, "lines"),
+        legend.position = "bottom",
+        legend.title = element_text(colour = "black", size = 10, face = "bold"),
+        legend.text = element_text(color = "black", size =8)) #default legend position
+```
+
+
+*SET UP DEMO MATRIX, VRs, CALCULATE MEAN POP GROWTH RATE, SSD, etc*
+
+**set vital rates**
+```{r}
+#breeding prob
+b_EF	<- 0.746 #experienced failed
+b_ENB	<- 0.589 #experienced non breeding
+b_ES  <- 0.016 #experienced successful
+b_IF  <- 0.744 #inexperienced failed
+b_Imm	<- 0.101 #immature
+b_IS  <- 0.011 #inexperienced successful
+b_PF	<- 0.941 #sabbatical 
+
+#success prob
+k_EF	<- 0.631 #experienced failed
+k_ENB	<- 0.675 #experienced non breeding
+k_ES	<- 0.500 #experienced successful
+k_IF	<- 0.627 #inexperienced failed
+k_Imm	<- 0.585 #immature
+k_IS	<- 0.627 #inexperienced successful
+k_PF	<- 0.791 #sabbatical 
+
+#return prob
+r_EF	<- 0.973 #experienced failed
+r_ENB	<- 0.953 #experienced non breeding
+r_ES	<- 0.292 #experienced successful
+r_IF	<- 0.948 #inexperienced failed
+r_Imm	<- 0.692 #immature
+r_IS	<- 0.459 #inexperienced successful
+r_PF	<- 0.972 #sabbatical 
+
+#survival
+s_EF	<- 0.913 #experienced failed
+s_ENB	<- 0.943 #experienced non breeding
+s_ES	<- 0.895 #experienced successful
+s_IF	<- 0.920 #inexperienced failed
+s_Imm	<- 0.921 #immature
+s_IS	<- 0.892 #inexperienced successful
+s_Juv	<- 0.846 #juvenile
+s_PF	<- 0.935 #sabbatical        
+``` 
+
+**create matrix**
+```{r}
+#Stages          #J2	 J3    Imm4  Imm5  PB	                                   IS                      IF    	                 ES	                     EF    	                 ENB	                       Sabb
+m<-matrix(data=c(0,    0,	   0,	   0,	   0,	                                   0.5*s_Juv,              0,	                     0.5*s_Juv,	             0,	                     0,	                         0,                      #J2
+                 s_Juv,0,	   0,	   0,	   0,                                 	 0,	                     0,	                     0,	                     0,	                     0,	                         0,                      #J3
+	               0,	   s_Juv,0,	   0,	   0,	                                   0,	                     0,	                     0,	                     0,	                     0,	                         0,                      #Imm4
+	               0,	   0,	   s_Imm,0,	   0,	                                   0,	                     0,	                     0,	                     0,	                     0,                          0,                      #Imm5
+                 0,    0,	   0,	   s_Imm,s_Imm*r_Imm*(1-b_Imm)+s_Imm*(1-r_Imm),0,	                     0,	                     0,                      0,	                     0,	                         0,                      #PB
+	               0,	   0,	   0,	   0,	   s_Imm*r_Imm*b_Imm*k_Imm,	             0,	                     0,	                     0,	                     0,	                     0,	                         0,                      #IS
+	               0,    0,	   0,	   0,	   s_Imm*r_Imm*b_Imm*(1-k_Imm),	         0,	                     0,	                     0,	                     0,	                     0,	                         0,                      #IF
+	               0,	   0,	   0,	   0,	   0,	                                   s_IS*r_IS*b_IS*k_IS,    s_IF*r_IF*b_IF*k_IF,	   s_ES*r_ES*b_ES*k_ES,	   s_EF*r_EF*b_EF*k_EF,	   s_ENB*r_ENB*b_ENB*k_ENB,	   s_PF*r_PF*b_PF*k_PF,    #ES
+                 0,	   0,	   0,	   0,	   0,	                                   s_IS*r_IS*b_IS*(1-k_IS),s_IF*r_IF*b_IF*(1-k_IF),s_ES*r_ES*b_ES*(1-k_ES),s_EF*r_EF*b_EF*(1-k_EF),s_ENB*r_ENB*b_ENB*(1-k_ENB),s_PF*r_PF*b_PF*(1-k_PF),#EF
+	               0,	   0,	   0,	   0,	   0,	                                   s_IS*r_IS*(1-b_IS),	   s_IF*r_IF*(1-b_IF),	   s_ES*r_ES*(1-b_ES),	   s_EF*r_EF*(1-b_EF),	   s_ENB*r_ENB*(1-b_ENB),	     s_PF*r_PF*(1-b_PF),     #ENB
+	               0,    0,	   0,	   0,	   0,	                                   s_IS*(1-r_IS),	         s_IF*(1-r_IF),	         s_ES*(1-r_ES),	         s_EF*(1-r_EF),	         s_ENB*(1-r_ENB),	           s_PF*(1-r_PF) ),        #Sabb
+	               nrow = 11, byrow = TRUE)
+m
+```
+
+**extract lambda, SSDs, and RVs from eigenvalues**
+```{r}
+#deterministic growth rate (lambda)
+#extract eigenvalues and lambda from the matrix 
+m_eig <- eigen(m)
+lambda <- as.numeric(m_eig$values[1])
+lambda # 0.9749412 - this looks reasonable compared to Pardo's figure. Just a guess-timate since she doesn't report a mean lambda across all years
+
+#Stable state distribution
+#extract and scale the right eigenvector 
+SSD <- round(as.numeric(m_eig$vectors[,1]/sum(m_eig$vectors[,1])),3)
+SSD
+
+#extract reproductive values
+RV <- as.numeric(eigen(t(m))$vectors[,1]/eigen(t(m))$vectors[1,1])
+RV
+```
+
+*FISHING EFFORT AND BPUE*
+
+**mean annual fishing effort - pelagic**
+```{r}
+#read in all pelagic data
+#create a raster of mean fishing effort
+#create a raster of total fishing effort
+#create a raster of fishing effort by different RMFOs, flag states etc
+```
+
+**mean annual fishing effort - demersal**
+```{r}
+#read in all demersal data
+#create a raster of mean fishing effort
+#create a raster of total fishing effort
+#create a raster of fishing effort by different RMFOs, flag states etc
+```
+
+**distributions by age classes**
+```{r}
+#read in all age class distributions (mean annual - aka averaged across months)
+```
+
+**calculate overlap scores for all age classes**
+```{r}
+# # of hooks * percent population [in each grid cell, using grids that sum to 1]
+```
+
+**compare distributions to other populations, map proportion of populations in each grid cell**
+Distributions from Carneiro et al. 2020 Biol Conserc (BAS & CNRS tracking databases)
+Pop estimates from IUCN RedList (?)
+```{r}
+#first get population estimates for each population and scale what % of global pop each population represents - (Ker, Crozet, SG. For Prince Edward islands, take mean of K&Cr rasters and save that map)
+#read in maps of % of each population in each grid cell & multiply by that population estimate to get total birds from each pop in each grid cell
+#sum all grids to get total birds in all pops in each grid cell
+#divide Bird Island bird grids by total bird grids to get % of birds in each cell from south georgia, then take 60% of that to get % Bird Island birds in each grid cell
+```
+
+**BCPUE**
+Literature review: Klaer 2012 (and papers he cites), Tuck 2011 & 2015, Jimenez
+See literature cited in Carneiro et al. 2022 Biol Conserv (those above, and Bugoni, Moreno et el. 2008, Reid et al. 2004, Tamini et al. 2021 (trawl), Phillips 2013)
+```{r}
+#PELAGIC
+# mean BCPUE for now - per 1000 hooks
+# convert to per 1 hook rate
+# multiply by the % Bird Island grid to scale BPUE 1 to just a BI SG rate
+# multiply by overlap scores for the per cell BPUE 1 FOR EACH AGE CLASS
+# sum across cells for the population BPUE 1 FOR EACH AGE CLASS
+# divide by total pop in each age class for per capita bycatch probability for each age class
+
+#DEMERSAL
+# mean BCPUE for now - per 1000 hooks
+# convert to per 1 hook rate
+# multiply by the % Bird Island grid to scale BPUE 1 to just a BI SG rate
+# multiply by overlap scores for the per cell BPUE 1 FOR EACH AGE CLASS
+# sum across cells for the population BPUE 1 FOR EACH AGE CLASS
+# divide by total pop in each age class for per capita bycatch probability for each age class
+```
+
+**IUU**
+Welch et al (6%), Weimerskirch et al. (=< 33%), Carneiro et al. 2022 (low, need to calculate myself from her paoer)
+USE THESE RATES TO SET IUU scenarios, distributions as in previous code
+
+
+**partition mortality between natural and fishery mortality*, set efficacy rates***
+```{r}
+#surv = natural mortality - fishing mortality
+#surv - fishing mortality = natural mortality
+
+#fishing mortality = per capita calculations above
+dem_fm <- pc_dem_bycatch_total
+dem_fm_juv
+dem_fm_imm
+dem_fm_fb
+dem_fm_sb
+dem_fm_nb
+
+pel_fm <- pc_pel_bycatch_total
+pel_fm_juv
+pel_fm_imm
+pel_fm_fb
+pel_fm_sb
+pel_fm_nb
+
+#natural mortality no IUU
+nm_juv <- (1-s_Juv)-dem_fm_juv-pel_fm_juv
+nm_imm <- (1-s_Imm)-dem_fm_imm-pel_fm_imm
+nm_efb <- (1-s_EF)-dem_fm_fb-pel_fm_fb
+nm_esb <- (1-s_ES)-dem_fm_sb-pel_fm_sb
+nm_enb <- (1-s_ENB)-dem_fm_nb-pel_fm_nb
+nm_ifb <- (1-s_IF)-dem_fm_fb-pel_fm_fb
+nm_isb <- (1-s_IS)-dem_fm_sb-pel_fm_sb
+nm_pf  <- (1-s_PF)-dem_fm_nb-pel_fm_nb #not sure what to do here? Maybe take average of breeder classes instead? clay says observerable and nonobservable nb classes from pardo pooled for his analysis...
+
+```
+
+**loop through different bycatch reductions scenarios, find lambda for each**
+this assumes 80% reduction in bycatch through mitigation
+this assumes that demersal and pelagic LL are reduced at the same rate and efficacy
+FUTURE SCENARIOS need to be based on specific management scenarios (2/3 vs 3/3, reductions in specific RFMOs, etc, based on what % of hooks different management blocks account for, then I can modify bycatch on certain proportions of fishing effort) - 
+this (below) is just a very basic way to test as a starting point - continuous looking at % of fishing effort subject to mitigation vs different rates of efficacy
+```{r}
+mitigation_eff <- 0.8
+bycatch_reductions <- data.frame(reduction = seq(0, 1, by =0.01), lambda = NA)
+
+for(i in 1:nrow(bycatch_reductions)){
+
+  ns_Juv <- 1-(((dem_fm_juv+pel_fm_juv)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_juv))
+  #ns_Juv <- 1-(((dem_fm_juv)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(((pel_fm_juv)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_juv)) - this is baseline to start manipulating differences separately
+  # further partition by % of each fishery - ex: atlantic basin = 75% pel effort abd 40% demersal effort they are exposed to - further partition 75/25 pel and 40/60 dem and only modify the section changing (here, atlantic basin)
+  # another way - 2/3 and 3/3 (how effective are each from the literature?) - test blanket adoption of both AND TEST what management areas recommend which and test this 
+  ns_Imm <- 1-(((dem_fm_imm+pel_fm_imm)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_imm))
+  ns_EFB <- 1-(((dem_fm_fb+pel_fm_fb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_efb))
+  ns_ESB <- 1-(((dem_fm_sb+pel_fm_sb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_esb))
+  ns_ENB <- 1-(((dem_fm_nb+pel_fm_nb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_enb))
+  ns_IFB <- 1-(((dem_fm_fb+pel_fm_fb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_ifb))
+  ns_ISB <- 1-(((dem_fm_sb+pel_fm_sb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_isb))
+  ns_PF  <- 1-(((dem_fm_nb+pel_fm_nb)*(1-(mitigation_eff*bycatch_reductions$reduction[i])))+(nm_pf))
+  
+#Stages            #J2	  J3     Imm4   Imm5   PB	                                     IS                       IF    	                 ES	                      EF    	                 ENB	                        Sabb
+n_m<-matrix(data=c(0,     0,	   0,	    0,	   0,	                                     0.5*ns_Juv,              0,	                     0.5*ns_Juv,	            0,	                     0,	                          0,                       #J2
+                   ns_Juv,0,	   0,	    0,	   0,                                 	   0,	                      0,	                     0,	                      0,	                     0,	                          0,                       #J3
+	                 0,	    ns_Juv,0,	    0,	   0,	                                     0,	                      0,	                     0,	                      0,	                     0,	                          0,                       #Imm4
+	                 0,	    0,	   ns_Imm,0,	   0,	                                     0,	                      0,	                     0,	                      0,	                     0,                           0,                       #Imm5
+                   0,     0,	   0,	    ns_Imm,ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),0,	                      0,	                     0,                       0,	                     0,	                          0,                       #PB
+	                 0,	    0,	   0,	    0,	   ns_Imm*r_Imm*b_Imm*k_Imm,	             0,	                      0,	                     0,	                      0,	                     0,	                          0,                       #IS
+	                 0,     0,	   0,	    0,	   ns_Imm*r_Imm*b_Imm*(1-k_Imm),	         0,	                      0,	                     0,	                      0,	                     0,	                          0,                       #IF
+	                 0,	    0,	   0,	    0,	   0,	                                     ns_IS*r_IS*b_IS*k_IS,    ns_IF*r_IF*b_IF*k_IF,	   ns_ES*r_ES*b_ES*k_ES,	  ns_EF*r_EF*b_EF*k_EF,	   ns_ENB*r_ENB*b_ENB*k_ENB,	  ns_PF*r_PF*b_PF*k_PF,    #ES
+                   0,	    0,	   0,	    0,	   0,	                                     ns_IS*r_IS*b_IS*(1-k_IS),ns_IF*r_IF*b_IF*(1-k_IF),ns_ES*r_ES*b_ES*(1-k_ES),ns_EF*r_EF*b_EF*(1-k_EF),ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),#EF
+	                 0,	    0,	   0,	    0,	   0,	                                     ns_IS*r_IS*(1-b_IS),	    ns_IF*r_IF*(1-b_IF),	   ns_ES*r_ES*(1-b_ES),	    ns_EF*r_EF*(1-b_EF),	   ns_ENB*r_ENB*(1-b_ENB),	    ns_PF*r_PF*(1-b_PF),     #ENB
+	                 0,     0,	   0,	    0,	   0,	                                     ns_IS*(1-r_IS),	        ns_IF*(1-r_IF),	         ns_ES*(1-r_ES),	        ns_EF*(1-r_EF),	         ns_ENB*(1-r_ENB),	          ns_PF*(1-r_PF) ),        #Sabb
+	               nrow = 11, byrow = TRUE)
+n_m
+  
+  #extract eigenvalues and lambda from the matrix 
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1])
+  bycatch_reductions$lambda[i] <- lambda_n 
+
+}
+```
+
+NOTE TO SELF: If I can get this far in the next couple days, just focus on recreating old figures with updated matrix and bycatch mortatlity estimates assuming spatialy uniform (total or mean???) BCPUE. State next steps as: updating BPUE from literature to reflect differences across space. 
+
+IUU calculations - test
+```{r}
+# Step 1: Define base (legal) fishing mortality
+fm2 <- 0.5  # example observed legal fishing mortality
+
+# Step 2: Generate proportions
+non_IUU <- round(runif(1, min = 0.66, max = 0.94), 2)  # legal fishing effort
+IUU <- round(runif(1, min = 0.06, max = 0.34), 2)      # illegal fishing effort
+
+# Step 3: Calculate fishing mortality components
+fm2_nonIUU <- fm2  # keep legal fishing mortality fixed
+fm2_IUU <- fm2 * (IUU / non_IUU)  # scale illegal mortality relative to legal
+
+# Step 4: Total fishing mortality = legal + illegal
+fm2_total <- fm2_nonIUU + fm2_IUU
+
+```
+
+IUU calculations - for all demo rates
+```{r}
+# Example proportions (same for both fisheries, or define separately)
+non_IUU <- round(runif(1, min = 0.66, max = 0.94), 2)
+IUU <- round(runif(1, min = 0.06, max = 0.34), 2)
+
+# --- DEMERSAL ---
+# Observed legal mortality
+dem_fm_juv_leg <- dem_fm_juv
+dem_fm_imm_leg <- dem_fm_imm
+dem_fm_fb_leg  <- dem_fm_fb
+dem_fm_sb_leg  <- dem_fm_sb
+dem_fm_nb_leg  <- dem_fm_nb
+
+# Add illegal mortality based on ratio to legal
+dem_fm_juv_total <- dem_fm_juv_leg + dem_fm_juv_leg * (IUU / non_IUU)
+dem_fm_imm_total <- dem_fm_imm_leg + dem_fm_imm_leg * (IUU / non_IUU)
+dem_fm_fb_total  <- dem_fm_fb_leg  + dem_fm_fb_leg  * (IUU / non_IUU)
+dem_fm_sb_total  <- dem_fm_sb_leg  + dem_fm_sb_leg  * (IUU / non_IUU)
+dem_fm_nb_total  <- dem_fm_nb_leg  + dem_fm_nb_leg  * (IUU / non_IUU)
+
+# --- PELAGIC ---
+pel_fm_juv_leg <- pel_fm_juv
+pel_fm_imm_leg <- pel_fm_imm
+pel_fm_fb_leg  <- pel_fm_fb
+pel_fm_sb_leg  <- pel_fm_sb
+pel_fm_nb_leg  <- pel_fm_nb
+
+pel_fm_juv_total <- pel_fm_juv_leg + pel_fm_juv_leg * (IUU / non_IUU)
+pel_fm_imm_total <- pel_fm_imm_leg + pel_fm_imm_leg * (IUU / non_IUU)
+pel_fm_fb_total  <- pel_fm_fb_leg  + pel_fm_fb_leg  * (IUU / non_IUU)
+pel_fm_sb_total  <- pel_fm_sb_leg  + pel_fm_sb_leg  * (IUU / non_IUU)
+pel_fm_nb_total  <- pel_fm_nb_leg  + pel_fm_nb_leg  * (IUU / non_IUU)
+
+```
+
+NEED TO UPDATE HOW I CALCULATE NON FISHING MORTALITY. 
+Assuming:
+
+s_Juv is survival rate for juveniles
+
+dem_fm_juv and pel_fm_juv are legal fishing mortalities
+
+You already added illegal fishing mortality using IUU / non_IUU
+```{r}
+# Define proportions
+non_IUU <- round(runif(1, min = 0.66, max = 0.94), 2)
+IUU <- round(runif(1, min = 0.06, max = 0.34), 2)
+
+# Legal fishing mortality (already observed)
+dem_fm_juv_leg <- dem_fm_juv
+pel_fm_juv_leg <- pel_fm_juv
+
+# Add illegal mortality
+dem_fm_juv_total <- dem_fm_juv_leg * (1 + IUU / non_IUU)
+pel_fm_juv_total <- pel_fm_juv_leg * (1 + IUU / non_IUU)
+
+# Total fishing mortality
+fm_juv_total <- dem_fm_juv_total + pel_fm_juv_total
+
+# Now calculate non-fishing mortality
+nm_juv <- (1 - s_Juv) - fm_juv_total
+
+```
+This ensures that survival is consistent with the sum of all mortality sources.
+
+If nm_juv becomes negative, that would indicate an inconsistency — i.e., fishing mortality exceeds total allowed mortality based on survival (i.e., (1 - s_Juv)), which may warrant checking.
+
+
+

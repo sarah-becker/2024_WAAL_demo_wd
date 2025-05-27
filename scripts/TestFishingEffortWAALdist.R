@@ -48,9 +48,9 @@ r2 <- rasterize(points, r2, field = "Hooks", fun = function(x) mean(x, na.rm = T
 # Plot to check
 plot(r2)
 
-#Why This Works
-#Each grid cell extends ±2.5° around the center points, ensuring proper alignment.
-#Resolution = 5°, matching your grid's spacing.
+
+#Each grid cell extends ±2.5° around the center points
+#Resolution = 5°
 #Extent covers all data while keeping the 5° structure.
 
 

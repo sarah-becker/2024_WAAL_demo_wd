@@ -3,7 +3,7 @@ library(terra)
 library(here)
 library(viridis)
 
-test <- terra::rast("/Users/sarahbecker/Dropbox/CU_ENVS/WAAL_sim_2024/updates_2025/2025_WAAL_demo_wd_updatedR/WA_AllMonths_Female_1990-2009.tif")
+test <- terra::rast("/Users/sarahbecker/Dropbox/CU_ENVS/WAAL_sim_2024/updates_2025/2025_WAAL_demo_wd_updatedR/data/WA_AllMonths_Female_1990-2009.tif")
 
 # file.exists("/Users/sarahbecker/Dropbox/CU_ENVS/WAAL_sim_2024/updates_2025/2025_WAAL_demo_wd_updatedR/WA_AllMonths_Female_1990-2009.tif")
 # list.files("/Users/sarahbecker/Dropbox/CU_ENVS/WAAL_sim_2024/updates_2025/2025_WAAL_demo_wd_updatedR/")
@@ -56,5 +56,25 @@ plot(r2)
 
 min(r$Lat)
 
-
+writeRaster(r, "pelagic_effort.tiff")
+writeRaster(test, "waal_distributions.tiff")
   
+testcalculation <- r*test
+ext_r <- terra::ext(r)
+
+cropped_birds <- terra::crop(test,ext_r )
+
+plot(cropped_birds)
+
+testcalculation <- r*cropped_birds
+
+ext_birds <- terra::ext(test)
+ext_cropped_birds <- terra::ext(cropped_birds)
+
+ext <- c(-180, 180, -50, 0)
+
+cropped_birds2 <- terra::crop(test, ext)
+cropped_fishing2 <- terra::crop(r, ext)
+
+testcalc <- cropped_birds2*cropped_fishing2
+plot(testcalc)

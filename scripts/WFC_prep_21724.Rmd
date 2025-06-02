@@ -1746,8 +1746,8 @@ p8b<- ggplot(fulldat_IUU_none_prob1mit, aes(bycatch_reduction, mitigation_effica
   theme_bw()+
   coord_cartesian(expand=FALSE)+
   labs(x="% legal fisheries with bycatch mitigation", y="% mitigation efficacy", fill = "Probability \u03BB \u2265 1")+
-    scale_fill_gradientn(colors  = grad, limits = grad_lims)
-  #scale_fill_distiller(palette = "RdBu")
+  #  scale_fill_gradientn(colors  = grad, limits = grad_lims)
+  scale_fill_distiller(palette = "RdBu")
 
 ggsave(filename = "fulldat_IUU_none_prob1_heatmap_rb",
          plot = p8b, device = "png", width = 14, height = 9, units = "cm",

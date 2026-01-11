@@ -1,4 +1,6 @@
 
+library(tidyverse)
+
 tuck_bpue <- read.csv(here::here("data/Tuck2015_A1_bpue.csv"))
 
 

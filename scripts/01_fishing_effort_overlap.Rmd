@@ -1,0 +1,464 @@
+---
+title: "Fishing Effort and Albatross Distribution Overlap"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script calculates spatial overlap between wandering albatross (WAAL) distributions and longline fishing effort. The analysis:
+
+1. Loads WAAL distribution rasters by age class from Clay et al. 2019
+2. Processes pelagic and demersal longline fishing effort data
+3. Calculates overlap indices (bird density × fishing effort) for each age class
+4. Generates publication-quality maps of distributions and overlap
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(RColorBrewer)
+library(scales)
+```
+
+# Load WAAL Distributions
+
+WAAL distributions from Clay et al. 2019, representing mean annual distribution (1990-2009) for different age classes.
+
+```{r load-waal-distributions}
+# Age class abbreviations:
+# fb = failed breeders
+# sb = successful breeders
+# nb = non-breeders
+# imm = immatures
+# j1 = juveniles age 1
+# j2j3 = juveniles age 2-3
+
+# Load all age class distributions
+waal_fb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_FB_1990-2009.tif"))
+waal_sb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_SB_1990-2009.tif"))
+waal_nb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_NB_1990-2009.tif"))
+waal_imm <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
+waal_j1 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J1_1990-2009.tif"))
+waal_j2j3 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif"))
+waal_all <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_1990-2009.tif"))
+
+# Store in named list for easier processing
+bird_layers <- list(
+  all = waal_all,
+  fb = waal_fb,
+  sb = waal_sb,
+  nb = waal_nb,
+  imm = waal_imm,
+  j1 = waal_j1,
+  j2j3 = waal_j2j3
+)
+```
+
+# Process Fishing Effort Data
+
+## Pelagic Longline Effort
+
+```{r process-pelagic-effort}
+# Load pelagic longline data
+pll_data <- read_csv(here("data/Pel_LL_effort.csv"))
+
+# Calculate summary statistics
+total_pel_hooks <- sum(pll_data$Hooks, na.rm = TRUE)
+mean_annual_pel <- pll_data %>%
+  group_by(Year) %>%
+  summarize(total_hooks = sum(Hooks, na.rm = TRUE)) %>%
+  pull(total_hooks) %>%
+  mean()
+
+cat("Total pelagic hooks:", scales::comma(total_pel_hooks), "\n")
+cat("Mean annual pelagic hooks:", scales::comma(mean_annual_pel), "\n")
+
+# Aggregate to mean annual effort by location
+pll_annual <- pll_data %>%
+  group_by(Lon, Lat, Year) %>%
+  summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = 'drop')
+
+# Convert to spatial points
+pll_points <- vect(pll_annual, geom = c("Lon", "Lat"), crs = "EPSG:4326")
+
+# Create 5-degree resolution raster
+pll_extent <- ext(
+  min(pll_annual$Lon) - 2.5,
+  max(pll_annual$Lon) + 2.5,
+  min(pll_annual$Lat) - 2.5,
+  max(pll_annual$Lat) + 2.5
+)
+
+rast_pll <- rast(
+  xmin = pll_extent[1], xmax = pll_extent[2],
+  ymin = pll_extent[3], ymax = pll_extent[4],
+  resolution = 5,
+  crs = "EPSG:4326"
+)
+
+# Rasterize mean annual effort
+rast_pll <- rasterize(pll_points, rast_pll, field = "mean_effort", fun = mean)
+```
+
+## Demersal Longline Effort
+
+```{r process-demersal-effort}
+# Load demersal longline data from multiple sources
+ccamlr_data <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"))
+arg_data <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"))
+chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"))
+falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"))
+namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"))
+saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"))
+
+# Standardize column names for each dataset
+standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",
+                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month") {
+  data %>%
+    select(all_of(c(year_col, month_col, lat_col, lon_col, hooks_col))) %>%
+    rename(
+      Year = all_of(year_col),
+      Month = all_of(month_col),
+      Lat = all_of(lat_col),
+      Lon = all_of(lon_col),
+      Hooks = all_of(hooks_col)
+    ) %>%
+    mutate(dataset = dataset_name)
+}
+
+# Standardize each dataset
+ccamlr_std <- standardize_dem_data(
+  ccamlr_data, "CCAMLR",
+  lon_col = "longitude_5deg", lat_col = "latitude_5deg",
+  hooks_col = "hook_count", year_col = "year", month_col = "month"
+)
+
+arg_std <- standardize_dem_data(arg_data, "Argentina", lon_col = "Lng", hooks_col = "Effort")
+chile_std <- standardize_dem_data(chile_data, "Chile", lon_col = "Lng", hooks_col = "Effort")
+falk_std <- standardize_dem_data(falk_data, "Falklands", lon_col = "Lng", hooks_col = "Effort")
+namibia_std <- namibia_data %>% mutate(dataset = "Namibia")
+saf_std <- saf_data %>% rename(Hooks = Effort) %>% mutate(dataset = "South Africa")
+
+# Combine all demersal data
+dll_data <- bind_rows(
+  ccamlr_std, arg_std, chile_std,
+  falk_std, namibia_std, saf_std
+)
+
+# Filter to 1990-2009 to match WAAL distributions
+dll_data <- dll_data %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  mutate(Lon = ifelse(Lon > 180, Lon - 360, Lon))
+
+# Calculate summary statistics
+total_dem_hooks <- sum(dll_data$Hooks, na.rm = TRUE)
+mean_annual_dem <- dll_data %>%
+  group_by(Year) %>%
+  summarize(total_hooks = sum(Hooks, na.rm = TRUE)) %>%
+  pull(total_hooks) %>%
+  mean()
+
+cat("Total demersal hooks:", scales::comma(total_dem_hooks), "\n")
+cat("Mean annual demersal hooks:", scales::comma(mean_annual_dem), "\n")
+
+# Aggregate to mean annual effort by location
+dll_annual <- dll_data %>%
+  group_by(Lon, Lat, Year) %>%
+  summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = 'drop')
+
+# Convert to spatial points
+dll_points <- vect(dll_annual, geom = c("Lon", "Lat"), crs = "EPSG:4326")
+
+# Create 5-degree resolution raster
+dll_extent <- ext(
+  min(dll_annual$Lon) - 2.5,
+  max(dll_annual$Lon) + 2.5,
+  min(dll_annual$Lat) - 2.5,
+  max(dll_annual$Lat) + 2.5
+)
+
+rast_dll <- rast(
+  xmin = dll_extent[1], xmax = dll_extent[2],
+  ymin = dll_extent[3], ymax = dll_extent[4],
+  resolution = 5,
+  crs = "EPSG:4326"
+)
+
+# Rasterize mean annual effort
+rast_dll <- rasterize(dll_points, rast_dll, field = "mean_effort", fun = mean)
+```
+
+# Calculate Spatial Overlap
+
+Overlap is calculated as the product of bird density and fishing effort within each grid cell. We calculate separate overlaps for pelagic and demersal fisheries due to different spatial extents.
+
+```{r define-extents}
+# Define spatial extents for each fishery type
+# Extents chosen to match the range of each fishery and bird distributions
+ext_dem <- c(-180, 180, -80, 0)   # Demersal extent
+ext_pel <- c(-180, 180, -50, 0)   # Pelagic extent
+ext_bird <- c(-180, 180, -90, 0)  # Full bird distribution extent
+```
+
+```{r calculate-overlap-function}
+# Function to calculate overlap for all age classes with one fishery type
+calculate_overlap <- function(bird_layers, fishing_rast, extent) {
+  # Crop fishing effort to study extent
+  fishing_crop <- crop(fishing_rast, extent)
+
+  # Calculate overlap for each age class
+  overlaps <- map(bird_layers, function(bird_rast) {
+    bird_crop <- crop(bird_rast, extent)
+    bird_mask <- bird_crop > 0
+    overlap <- fishing_crop * bird_mask
+    return(overlap)
+  })
+
+  return(overlaps)
+}
+
+# Calculate overlaps for both fishery types
+dem_overlaps <- calculate_overlap(bird_layers, rast_dll, ext_dem)
+pel_overlaps <- calculate_overlap(bird_layers, rast_pll, ext_pel)
+```
+
+```{r summarize-total-hooks}
+# Function to sum total hooks in overlap areas
+sum_overlap_hooks <- function(overlap_list) {
+  map_dbl(overlap_list, ~global(.x, "sum", na.rm = TRUE)[1,1])
+}
+
+# Calculate total hooks overlapping with each age class
+hooks_summary <- tibble(
+  age_class = names(bird_layers),
+  demersal_hooks = sum_overlap_hooks(dem_overlaps),
+  pelagic_hooks = sum_overlap_hooks(pel_overlaps),
+  total_hooks = demersal_hooks + pelagic_hooks
+)
+
+print(hooks_summary)
+
+# Save summary table
+write_csv(hooks_summary, here("output/overlap_hooks_summary.csv"))
+```
+
+# Mapping
+
+## Load base map data
+
+```{r load-basemap}
+# Load Natural Earth land polygons for mapping
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+## Fishing Effort Maps
+
+```{r map-fishing-effort, fig.width=10, fig.height=6}
+# Function to create fishing effort map
+map_fishing_effort <- function(rast_obj, title, extent, transform = "sqrt") {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "effort"
+
+  # Apply transformation for better visualization
+  if (transform == "sqrt") {
+    df$effort_trans <- sqrt(df$effort)
+    legend_label <- "√(Hooks)"
+  } else if (transform == "log") {
+    df$effort_trans <- log(df$effort + 1)
+    legend_label <- "log(Hooks)"
+  } else {
+    df$effort_trans <- df$effort
+    legend_label <- "Hooks"
+  }
+
+  ggplot(df, aes(x = x, y = y, fill = effort_trans)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
+    scale_fill_gradientn(
+      name = legend_label,
+      colours = brewer.pal(9, "YlGnBu"),
+      na.value = "transparent"
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 14, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create maps
+p_dem <- map_fishing_effort(
+  rast_dll,
+  "Mean Annual Demersal Longline Effort (1990-2009)",
+  ext_dem
+)
+
+p_pel <- map_fishing_effort(
+  rast_pll,
+  "Mean Annual Pelagic Longline Effort (1990-2009)",
+  ext_pel
+)
+
+print(p_dem)
+print(p_pel)
+
+# Save maps
+ggsave(here("output/maps/fishing_effort_demersal.png"), p_dem,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/fishing_effort_pelagic.png"), p_pel,
+       width = 10, height = 6, dpi = 300)
+```
+
+## WAAL Distribution Maps
+
+```{r map-waal-distributions, fig.width=10, fig.height=12}
+# Function to create WAAL distribution map
+map_waal_distribution <- function(rast_obj, age_class, extent, zlim = NULL) {
+  # Convert to percent of population
+  r_norm <- rast_obj / global(rast_obj, fun = "sum", na.rm = TRUE)[1,1]
+  r_pct <- r_norm * 100
+
+  # Filter out very low densities (< 0.1%)
+  r_pct[r_pct < 0.1] <- NA
+
+  df <- as.data.frame(r_pct, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "pct"
+
+  p <- ggplot(df, aes(x = x, y = y, fill = pct)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
+    scale_fill_gradientn(
+      name = "% of Population",
+      colours = brewer.pal(9, "YlGnBu"),
+      na.value = "white",
+      limits = zlim,
+      oob = squish
+    ) +
+    labs(title = age_class) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 12, face = "bold"))
+
+  return(p)
+}
+
+# Create maps for all age classes
+dist_maps <- map2(bird_layers, names(bird_layers),
+                   ~map_waal_distribution(.x, .y, ext_bird))
+
+# Display in grid
+library(patchwork)
+wrap_plots(dist_maps, ncol = 2)
+
+# Save individual maps
+iwalk(dist_maps, function(p, age) {
+  ggsave(
+    here(paste0("output/maps/distribution_", age, ".png")),
+    p, width = 8, height = 6, dpi = 300
+  )
+})
+```
+
+## Overlap Maps
+
+```{r map-overlap, fig.width=12, fig.height=10}
+# Function to create overlap map with consistent color scale
+map_overlap <- function(overlap_list, fishery_name, extent) {
+  # Get global z-limits across all age classes for consistent coloring
+  zlims <- map(overlap_list, ~global(.x, c("min", "max"), na.rm = TRUE)) %>%
+    bind_rows() %>%
+    summarize(min = min(min, na.rm = TRUE), max = max(max, na.rm = TRUE))
+
+  # Create map for each age class
+  maps <- imap(overlap_list, function(rast_obj, age_class) {
+    df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+    names(df)[3] <- "overlap"
+
+    ggplot(df, aes(x = x, y = y, fill = overlap)) +
+      geom_raster() +
+      geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+      coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
+      scale_fill_viridis_c(
+        name = "Hooks × Density",
+        limits = c(zlims$min, zlims$max),
+        na.value = "transparent",
+        oob = squish
+      ) +
+      labs(title = age_class) +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 10, face = "bold"))
+  })
+
+  return(maps)
+}
+
+# Create overlap maps
+dem_overlap_maps <- map_overlap(dem_overlaps, "Demersal", ext_dem)
+pel_overlap_maps <- map_overlap(pel_overlaps, "Pelagic", ext_pel)
+
+# Display in grids
+wrap_plots(dem_overlap_maps, ncol = 3, guides = "collect") +
+  plot_annotation(title = "Demersal Longline Overlap by Age Class")
+
+wrap_plots(pel_overlap_maps, ncol = 3, guides = "collect") +
+  plot_annotation(title = "Pelagic Longline Overlap by Age Class")
+
+# Save individual maps
+iwalk(dem_overlap_maps, function(p, age) {
+  ggsave(
+    here(paste0("output/maps/overlap_demersal_", age, ".png")),
+    p, width = 8, height = 6, dpi = 300
+  )
+})
+
+iwalk(pel_overlap_maps, function(p, age) {
+  ggsave(
+    here(paste0("output/maps/overlap_pelagic_", age, ".png")),
+    p, width = 8, height = 6, dpi = 300
+  )
+})
+```
+
+# Save Processed Data
+
+```{r save-outputs}
+# Create output directories if they don't exist
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+
+# Save fishing effort rasters
+writeRaster(rast_dll, here("output/rasters/fishing_effort_demersal.tif"), overwrite = TRUE)
+writeRaster(rast_pll, here("output/rasters/fishing_effort_pelagic.tif"), overwrite = TRUE)
+
+# Save overlap rasters for each age class
+iwalk(dem_overlaps, function(r, age) {
+  writeRaster(r, here(paste0("output/rasters/overlap_demersal_", age, ".tif")), overwrite = TRUE)
+})
+
+iwalk(pel_overlaps, function(r, age) {
+  writeRaster(r, here(paste0("output/rasters/overlap_pelagic_", age, ".tif")), overwrite = TRUE)
+})
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

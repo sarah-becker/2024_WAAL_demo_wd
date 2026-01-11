@@ -169,15 +169,20 @@ southg_population_pct_clippedt_df_plot <- ggplot(data = southg_population_pct_cl
     ylim   = c(-90, 0),
     expand = FALSE
   ) +
-  scale_fill_viridis_c(
-    name     = " ",   # or leave blank if you want no legend title
+  # scale_fill_viridis_c(
+  #   name     = " ",   # or leave blank if you want no legend title
+  #   limits   = c(0, 1),        # since pct runs 0 → 1
+  #   labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%” )+
+  scale_fill_gradientn(
+    name = " ",
+    colours = brewer_palette,
     limits   = c(0, 1),        # since pct runs 0 → 1
-    labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
-  ) +
+     labels   = scales::percent_format(accuracy = 1) ) + # show as “0%–100%” )+
+  
   labs(
     title = "Percent wandering albatrosses from South Georgia"
   ) +
-  theme_minimal()
+  theme_minimal() 
 
 # 4. Print or save
 print(southg_population_pct_clippedt_df_plot)

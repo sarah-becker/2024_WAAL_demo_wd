@@ -1,0 +1,416 @@
+---
+title: "Compare Wandering Albatross Population Distributions"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script calculates the proportion of wandering albatrosses in each grid cell that originate from Bird Island, South Georgia. The analysis:
+
+1. Loads population-specific distributions from Carneiro et al. 2020
+2. Normalizes each distribution to sum to 1 (relative density)
+3. Weights distributions by breeding population size (using actual total = 5,947 pairs)
+4. Masks other populations to South Georgia cells ("clipped" method)
+5. Calculates the percentage of birds from South Georgia (and Bird Island) in each grid cell
+6. Generates publication-quality maps
+
+**Key assumptions:**
+- Marion Island and Prince Edward Island birds follow the same distribution as Crozet (Nel et al. 2002, cited in Tuck et al. 2015)
+- Bird Island represents ~60% of the South Georgia population
+- We use a "clipped" calculation approach that only estimates percentages in cells where South Georgia birds occur, avoiding spurious values in areas outside their range
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(RColorBrewer)
+library(scales)
+```
+
+# Load Population-Specific Distributions
+
+Distribution data from Carneiro et al. 2020 (BAS & CNRS tracking databases), representing year-round distributions for three breeding populations.
+
+```{r load-distributions}
+# Load population-specific distributions
+crozet <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Crozet_year-round.tif"))
+kerg <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Kerguelen_year-round.tif"))
+southg <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_South_Georgia_year-round.tif"))
+
+# Store in named list
+pop_dists <- list(
+  crozet = crozet,
+  kerguelen = kerg,
+  south_georgia = southg
+)
+```
+
+# Normalize Distributions
+
+Normalize each distribution so cells sum to 1, representing the proportion of each population in each grid cell.
+
+```{r normalize-distributions}
+# Replace NAs with 0 for consistent calculation
+pop_dists_zero <- map(pop_dists, ~subst(.x, NA, 0))
+
+# Calculate sum for each distribution
+pop_sums <- map_dbl(pop_dists_zero, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
+
+cat("Current calculated sums:\n")
+print(pop_sums)
+
+# Hardcoded values from original script
+hardcoded_sums <- c(crozet = 13135.49, kerguelen = 8601.457, south_georgia = 18769.6)
+
+cat("\nHardcoded sums from original script:\n")
+print(hardcoded_sums)
+
+# Compare calculated vs hardcoded
+comparison <- tibble(
+  population = names(pop_sums),
+  calculated = pop_sums,
+  hardcoded = hardcoded_sums,
+  difference = calculated - hardcoded,
+  percent_diff = 100 * (calculated - hardcoded) / hardcoded
+)
+
+cat("\nComparison of calculated vs hardcoded normalization values:\n")
+print(comparison)
+
+# Check if differences are negligible (< 0.1%)
+if (all(abs(comparison$percent_diff) < 0.1)) {
+  cat("\n✓ Values match within 0.1% - using calculated values\n")
+  norm_values <- pop_sums
+} else {
+  cat("\n⚠ WARNING: Values differ by >0.1%\n")
+  cat("This could explain why maps look different.\n")
+  cat("Using calculated values for correct normalization.\n")
+  norm_values <- pop_sums
+}
+
+# Normalize each distribution (sum = 1)
+pop_dists_norm <- map2(pop_dists_zero, norm_values, ~.x / .y)
+
+# Verify normalization
+norm_sums <- map_dbl(pop_dists_norm, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
+cat("\nNormalized distribution sums (should be ~1):\n")
+print(norm_sums)
+```
+
+# Define Population Proportions
+
+Breeding pair estimates from literature. The actual total is 5,947 pairs (excluding Macquarie's 4 pairs). Previous analyses used "~6,000" as a round number, but we use the precise total here to ensure proportions sum to 1.0.
+
+**Sources:**
+- South Georgia: 1,553 pairs (Poncet et al. 2006)
+- Prince Edward Island: 1,800 pairs (Ryan et al. 2009)
+- Marion Island: 1,900 pairs (ACAP 2009)
+- Crozet: 340 pairs (CNRS Chinzè Monitoring Database 2010)
+- Kerguelen: 354 pairs (CNRS Chinzè Monitoring Database 2011)
+- Macquarie: 4 pairs (DPIWPE 2010) - excluded from analysis due to small size
+
+**Note:** Using the actual sum (5,947) instead of the rounded approximation (6,000) produces slightly higher percentage values (~0.9% increase) but ensures mathematically correct proportions.
+
+```{r define-population-proportions}
+# Breeding pair estimates
+breeding_pairs <- tibble(
+  population = c("Crozet", "Kerguelen", "Prince Edward", "Marion", "South Georgia"),
+  pairs = c(340, 354, 1800, 1900, 1553)
+)
+
+# Calculate total and proportions
+total_pairs <- sum(breeding_pairs$pairs)
+breeding_pairs <- breeding_pairs %>%
+  mutate(
+    proportion = pairs / total_pairs,
+    percent = proportion * 100
+  )
+
+cat("Total breeding pairs:", total_pairs, "\n\n")
+print(breeding_pairs)
+
+# Extract individual proportions
+prop_crozet <- breeding_pairs$proportion[breeding_pairs$population == "Crozet"]
+prop_kerg <- breeding_pairs$proportion[breeding_pairs$population == "Kerguelen"]
+prop_southg <- breeding_pairs$proportion[breeding_pairs$population == "South Georgia"]
+
+# PEI = Prince Edward + Marion, using Crozet distribution as proxy
+prop_pei <- sum(breeding_pairs$proportion[breeding_pairs$population %in% c("Prince Edward", "Marion")])
+
+# Bird Island is approximately 60% of South Georgia population
+prop_bird_island <- prop_southg * 0.6
+
+cat("\nKey proportions:\n")
+cat("South Georgia:", round(prop_southg, 3), "\n")
+cat("Bird Island:", round(prop_bird_island, 3), "\n")
+```
+
+# Calculate Weighted Distributions and Percentages
+
+Weight each normalized distribution by its proportion of the global population, then calculate the percentage of birds from South Georgia (and Bird Island) in each grid cell.
+
+**Method: Clipped to South Georgia cells**
+
+We use a "clipped" approach where other population distributions are masked to only include cells where South Georgia birds occur. This prevents artifactual high percentages in cells where South Georgia has zero density but other populations are present (which would incorrectly show 0% or 100% SG birds).
+
+**Rationale:**
+- Alternative methods (one-step threshold, two-step masking) produce spurious values in areas outside South Georgia's range
+- The clipped method ensures percentages are only calculated where South Georgia birds actually occur
+- This matches the approach used in the original June 2025 analysis ("percentSG_bycatch_gg_clipped.png")
+
+```{r calculate-weighted-distributions}
+# Create SG mask: areas with SG birds (filter out very small values < 0.0001)
+sg_mask <- ifel(pop_dists_norm$south_georgia < 0.0001, NA, pop_dists_norm$south_georgia)
+
+# Clip other population distributions to only SG cells
+# This ensures we only calculate percentages where SG birds actually occur
+crozet_clipped <- mask(pop_dists_norm$crozet, sg_mask)
+kerg_clipped <- mask(pop_dists_norm$kerguelen, sg_mask)
+
+# Weight the clipped distributions by population proportion
+weighted_crozet_clipped <- crozet_clipped * prop_crozet
+weighted_kerg_clipped <- kerg_clipped * prop_kerg
+weighted_pei_clipped <- crozet_clipped * prop_pei  # PEI uses Crozet as proxy
+weighted_sg_nosmall <- sg_mask * prop_southg
+
+# Calculate total global population density in clipped areas
+total_global_clipped <- weighted_crozet_clipped +
+                        weighted_kerg_clipped +
+                        weighted_pei_clipped +
+                        weighted_sg_nosmall
+
+# Calculate percentage of birds from South Georgia and Bird Island
+pct_south_georgia <- weighted_sg_nosmall / total_global_clipped
+pct_bird_island <- pct_south_georgia * 0.6  # Bird Island is ~60% of SG population
+
+cat("Clipped calculation complete:\n")
+cat("  Cells with data:", nrow(as.data.frame(pct_south_georgia, na.rm = TRUE)), "\n")
+cat("  Max % from SG:", round(global(pct_south_georgia, "max", na.rm = TRUE)[1,1], 3), "\n")
+```
+
+# Calculate Total Bird Density (All Populations)
+
+For catchability calculations, we need the total density of wandering albatrosses across all populations in each grid cell (not clipped to South Georgia range).
+
+```{r calculate-total-bird-density}
+# Weight each distribution by population proportion (using full extent, not clipped)
+weighted_dists_full <- list(
+  crozet = pop_dists_norm$crozet * prop_crozet,
+  kerguelen = pop_dists_norm$kerguelen * prop_kerg,
+  pei = pop_dists_norm$crozet * prop_pei,  # Using Crozet as PEI proxy
+  south_georgia = pop_dists_norm$south_georgia * prop_southg
+)
+
+# Calculate total global bird density in each cell
+# This represents the proportion of the global WAAL population in each cell
+total_bird_density <- weighted_dists_full$crozet +
+                      weighted_dists_full$kerguelen +
+                      weighted_dists_full$pei +
+                      weighted_dists_full$south_georgia
+
+cat("\nTotal bird density (all populations):\n")
+cat("  Sum:", round(global(total_bird_density, "sum", na.rm = TRUE)[1,1], 3), "(should be ~1)\n")
+cat("  Max:", round(global(total_bird_density, "max", na.rm = TRUE)[1,1], 6), "\n")
+cat("  Cells with data:", nrow(as.data.frame(total_bird_density, na.rm = TRUE)), "\n")
+```
+
+# Mapping
+
+## Load base map data
+
+```{r load-basemap}
+# Load Natural Earth land polygons for mapping
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+
+# Define mapping extent (Southern Ocean)
+map_extent <- c(-180, 180, -90, 0)
+```
+
+## Population Distribution Maps
+
+```{r map-raw-distributions, fig.width=10, fig.height=10}
+# Function to map population distributions
+map_population_dist <- function(rast_obj, title, extent) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "density"
+
+  ggplot(df, aes(x = x, y = y, fill = density)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "Density",
+      na.value = "transparent"
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create maps for each population
+pop_dist_maps <- imap(pop_dists, function(r, name) {
+  map_population_dist(r, paste0("WAAL Distribution: ", str_to_title(gsub("_", " ", name))), map_extent)
+})
+
+# Display maps
+library(patchwork)
+wrap_plots(pop_dist_maps, ncol = 2)
+
+# Save individual maps
+iwalk(pop_dist_maps, function(p, pop) {
+  ggsave(
+    here(paste0("output/maps/population_dist_", pop, ".png")),
+    p, width = 8, height = 6, dpi = 300
+  )
+})
+```
+
+## Percentage from South Georgia and Bird Island
+
+```{r map-percentages, fig.width=10, fig.height=12}
+# Function to create percentage map
+map_percentage <- function(rast_obj, title, extent, color_palette = "YlGnBu") {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "pct"
+
+  ggplot(df, aes(x = x, y = y, fill = pct)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
+    scale_fill_gradientn(
+      name = "% of Total",
+      colours = brewer.pal(9, color_palette),
+      limits = c(0, 1),
+      labels = percent_format(accuracy = 1),
+      na.value = "white"
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create South Georgia percentage map
+p_south_georgia <- map_percentage(
+  pct_south_georgia,
+  "Percentage of Wandering Albatrosses from South Georgia",
+  map_extent
+)
+
+# Create Bird Island percentage map
+p_bird_island <- map_percentage(
+  pct_bird_island,
+  "Percentage of Wandering Albatrosses from Bird Island",
+  map_extent
+)
+
+# Display maps
+library(patchwork)
+p_south_georgia / p_bird_island
+
+# Save maps
+ggsave(here("output/maps/percentage_south_georgia.png"),
+       p_south_georgia, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/percentage_bird_island.png"),
+       p_bird_island, width = 10, height = 6, dpi = 300)
+```
+
+# Summary Statistics
+
+```{r summary-statistics}
+# Calculate summary statistics for percentage distributions
+summary_stats <- tibble(
+  metric = c("South Georgia %", "Bird Island %"),
+  min = c(
+    global(pct_south_georgia, "min", na.rm = TRUE)[1,1],
+    global(pct_bird_island, "min", na.rm = TRUE)[1,1]
+  ),
+  mean = c(
+    global(pct_south_georgia, "mean", na.rm = TRUE)[1,1],
+    global(pct_bird_island, "mean", na.rm = TRUE)[1,1]
+  ),
+  max = c(
+    global(pct_south_georgia, "max", na.rm = TRUE)[1,1],
+    global(pct_bird_island, "max", na.rm = TRUE)[1,1]
+  )
+) %>%
+  mutate(across(where(is.numeric), ~round(.x, 3)))
+
+print(summary_stats)
+
+# Calculate percentage of cells where South Georgia comprises >50% of birds
+sg_high_df <- as.data.frame(pct_south_georgia, na.rm = TRUE)
+names(sg_high_df) <- "pct"
+
+high_sg_cells <- sum(sg_high_df$pct > 0.5, na.rm = TRUE)
+total_cells <- nrow(sg_high_df)
+
+cat("\nGrid cells where South Georgia > 50% of birds:\n")
+cat(high_sg_cells, "out of", total_cells, "cells (",
+    round(100 * high_sg_cells / total_cells, 1), "%)\n")
+```
+
+# Save Processed Data
+
+```{r save-outputs}
+# Create output directories if they don't exist
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+
+# Save normalized distributions
+iwalk(pop_dists_norm, function(r, pop) {
+  writeRaster(r, here(paste0("output/rasters/normalized_dist_", pop, ".tif")),
+              overwrite = TRUE)
+})
+
+# Save percentage rasters (clipped version)
+writeRaster(pct_south_georgia,
+            here("output/rasters/percentage_south_georgia.tif"),
+            overwrite = TRUE)
+writeRaster(pct_bird_island,
+            here("output/rasters/percentage_bird_island.tif"),
+            overwrite = TRUE)
+
+# Save total global density in clipped areas
+writeRaster(total_global_clipped,
+            here("output/rasters/total_global_density_clipped.tif"),
+            overwrite = TRUE)
+
+# Save total bird density (all populations, full extent)
+writeRaster(total_bird_density,
+            here("output/rasters/total_bird_density_all_pops.tif"),
+            overwrite = TRUE)
+
+# Save summary statistics
+write_csv(breeding_pairs, here("output/breeding_pairs_summary.csv"))
+write_csv(summary_stats, here("output/percentage_summary_stats.csv"))
+
+cat("\nAll outputs saved successfully\n")
+cat("Percentage rasters saved (clipped to SG cells method)\n")
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

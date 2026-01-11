@@ -26,6 +26,8 @@ terra::plot(waal_b_j1)
 terra::plot(waal_b_j2j3)
 terra::plot(waal_b_i)
 
+
+
 #read in pelagic fishing effort data and map the mean annual effort
 # Read CSV
 PLLdata <- read.csv(here::here("data/Pel_LL_effort.csv"))
@@ -59,6 +61,29 @@ rastPLL <- rasterize(points, rastPLL, field = "mean_effort", fun = mean)
 # Plot the mean annual fishing effort
 plot(rastPLL)
 
+# Calculate the mean fishing effort for each year and location (lon, lat)
+library(dplyr)
+total_effort <- PLLdata %>%
+  group_by(Lon, Lat) %>%
+  summarise(total_effort = sum(Hooks, na.rm = TRUE), .groups = 'drop')
+
+# Convert to spatial object
+points <- terra::vect(total_effort, geom = c("Lon", "Lat"), crs = "EPSG:4326")
+
+# Define raster extent based on min/max lon/lat, ensuring correct alignment
+xmin <- min(total_effort$Lon) - 2.5
+xmax <- max(total_effort$Lon) + 2.5
+ymin <- min(total_effort$Lat) - 2.5
+ymax <- max(total_effort$Lat) + 2.5
+
+# Create raster with 5-degree resolution
+rastPLLtotal <- rast(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, resolution = 5, crs = "EPSG:4326")
+
+# Rasterize the mean annual fishing effort
+rastPLLtotal <- rasterize(points, rastPLLtotal, field = "total_effort")
+
+# Plot the mean annual fishing effort
+plot(rastPLLtotal)
 
 
 #read in demersal fishing effort data,and merge
@@ -137,17 +162,27 @@ summary(DLLdata_filtered)
 
 
 #summarize annual effort
-# annual_effort_DLL <- DLLdata_filtered %>%
-#   group_by(Lon, Lat, Year) %>%
-#   summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = 'drop')
+annual_effort_DLL <- DLLdata_filtered %>%
+  group_by(Lon, Lat, Year) %>%
+  summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = 'drop')
+
+
+#summarize annual effort
+total_effort_DLL <- DLLdata_filtered %>%
+  group_by(Lon, Lat) %>%
+  summarise(total_effort = sum(Hooks, na.rm = TRUE), .groups = 'drop')
+
+
 
 #total effort 
 total_dem <- sum(DLLdata_filtered$Hooks, na.rm = TRUE)
 meanl_dem <-DLLdata_filtered %>% group_by(Year) %>% summarize(totalhooks = sum(Hooks, na.rm = TRUE))
 meanl_dem_t <- mean(meanl_dem$totalhooks)
 
+
+
 # Convert to spatial object
-points2 <- terra::vect(annual_effort_DLL, geom = c("Lon", "Lat"), crs = "EPSG:4326")
+points2 <- terra::vect(total_effort_DLL, geom = c("Lon", "Lat"), crs = "EPSG:4326")
 
 # Define raster extent based on min/max lon/lat, ensuring correct alignment
 xmin <- min(annual_effort_DLL$Lon) - 2.5
@@ -156,13 +191,39 @@ ymin <- min(annual_effort_DLL$Lat) - 2.5
 ymax <- max(annual_effort_DLL$Lat) + 2.5
 
 # Create raster with 5-degree resolution
-rastDLL<- rast(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, resolution = 5, crs = "EPSG:4326")
+rastDLLtotal<- rast(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, resolution = 5, crs = "EPSG:4326")
 
 # Rasterize the mean annual fishing effort
-rastDLL <- rasterize(points2, rastDLL, field = "mean_effort", fun = mean)
+rastDLLtotal <- rasterize(points2, rastDLLtotal, field = "total_effort", fun = mean)
 
 # Plot the mean annual fishing effort
-plot(rastDLL)
+plot(rastDLLtotal)
+
+
+# Calculate the mean fishing effort for each year and location (lon, lat)
+library(dplyr)
+total_effort <- rastDLLtotal %>%
+  group_by(Lon, Lat) %>%
+  summarise(total_effort = sum(Hooks, na.rm = TRUE), .groups = 'drop')
+
+# Convert to spatial object
+points2 <- terra::vect(total_effort, geom = c("Lon", "Lat"), crs = "EPSG:4326")
+
+# Define raster extent based on min/max lon/lat, ensuring correct alignment
+xmin <- min(total_effort$Lon) - 2.5
+xmax <- max(total_effort$Lon) + 2.5
+ymin <- min(total_effort$Lat) - 2.5
+ymax <- max(total_effort$Lat) + 2.5
+
+# Create raster with 5-degree resolution
+rastDLLtotal <- rast(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, resolution = 5, crs = "EPSG:4326")
+
+# Rasterize the mean annual fishing effort
+rastDLLtotal <- rasterize(points2, rastDLLtotal, field = "total_effort")
+
+# Plot the mean annual fishing effort
+plot(rastDLLtotal)
+
 
 
 #check extent of bird files and dem and pel LL
@@ -1207,6 +1268,10 @@ library(terra)
 library(sf)
 library(ggplot2)
 library(viridis)
+library(RColorBrewer)
+
+# Choose a Brewer palette
+brewer_palette <- brewer.pal(9, "YlGnBu")
 
 # 1. Convert the SpatRaster to a data.frame
 #    include xy=TRUE so you get columns "x" and "y" automatically
@@ -1217,7 +1282,7 @@ rastDLL_df <- as.data.frame(rastDLL, xy = TRUE)
 names(rastDLL_df)[3] <- "effort"
 
 # 3. Now build the ggplot using pct_df
-testcalc_dem_df_plot <- ggplot(data = rastDLL_df, aes(x = x, y = y, fill = effort)) +
+testcalc_dem_df_plot <- ggplot(data = rastDLL_df, aes(x = x, y = y, fill = log(effort))) +
   geom_raster() +
   geom_sf(
     data = ne_land, 
@@ -1230,11 +1295,16 @@ testcalc_dem_df_plot <- ggplot(data = rastDLL_df, aes(x = x, y = y, fill = effor
     ylim   = c(-90, 0),
     expand = FALSE
   ) +
-  scale_fill_viridis_c(
-    name     = "# hooks ",   # or leave blank if you want no legend title
-  #  limits   = c(0, 1),        # since pct runs 0 → 1
-   # labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
-  ) +
+  # scale_fill_viridis_c(
+  #   name     = "# hooks ",   # or leave blank if you want no legend title
+  # #  limits   = c(0, 1),        # since pct runs 0 → 1
+  #  # labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
+  # ) +
+  scale_fill_gradientn(
+    name = " ",
+    colours = brewer_palette ) +#,
+   # limits   = c(0, 1),        # since pct runs 0 → 1
+    #labels   = scales::percent_format(accuracy = 1) ) + 
   labs(
     title = "Mean annual demersal fishing effort"
   ) +
@@ -1244,7 +1314,7 @@ testcalc_dem_df_plot <- ggplot(data = rastDLL_df, aes(x = x, y = y, fill = effor
 print(testcalc_dem_df_plot)
 # ggsave("pct_sg_plot.png", pct_sg_plot, width=8, height=6)
 
-ggsave("mean_annual_dem_effort_gg.png", testcalc_dem_df_plot, width = 8, height = 6)
+ggsave("mean_annual_dem_effort_gg_brewer_log.png", testcalc_dem_df_plot, width = 8, height = 6)
 
 
 
@@ -1258,7 +1328,7 @@ rastPLL_df <- as.data.frame(rastPLL, xy = TRUE)
 names(rastPLL_df)[3] <- "effort"
 
 # 3. Now build the ggplot using pct_df
-testcalc_pel_df_plot <- ggplot(data = rastPLL_df, aes(x = x, y = y, fill = effort)) +
+testcalc_pel_df_plot <- ggplot(data = rastPLL_df, aes(x = x, y = y, fill = sqrt(effort))) +
   geom_raster() +
   geom_sf(
     data = ne_land, 
@@ -1271,10 +1341,13 @@ testcalc_pel_df_plot <- ggplot(data = rastPLL_df, aes(x = x, y = y, fill = effor
     ylim   = c(-90, 0),
     expand = FALSE
   ) +
-  scale_fill_viridis_c(
-    name     = "# hooks ",   # or leave blank if you want no legend title
+  # scale_fill_viridis_c(
+  #   name     = "# hooks ",   # or leave blank if you want no legend title
     #  limits   = c(0, 1),        # since pct runs 0 → 1
     # labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
+  scale_fill_gradientn(
+    name = " ",
+    colours = brewer_palette 
   ) +
   labs(
     title = "Mean annual pelagic fishing effort"
@@ -1285,7 +1358,113 @@ testcalc_pel_df_plot <- ggplot(data = rastPLL_df, aes(x = x, y = y, fill = effor
 print(testcalc_pel_df_plot)
 # ggsave("pct_sg_plot.png", pct_sg_plot, width=8, height=6)
 
-ggsave("mean_annual_pel_effort_gg.png", testcalc_pel_df_plot, width = 8, height = 6)
+ggsave("mean_annual_pel_effort_gg_brewer_sqrt.png", testcalc_pel_df_plot, width = 8, height = 6)
+
+
+
+
+
+
+
+
+#total EFFORT MAPS FOR ALL STAGES
+#plot % SG
+library(terra)
+library(sf)
+library(ggplot2)
+library(viridis)
+library(RColorBrewer)
+
+# Choose a Brewer palette
+brewer_palette <- brewer.pal(9, "YlGnBu")
+
+# 1. Convert the SpatRaster to a data.frame
+#    include xy=TRUE so you get columns "x" and "y" automatically
+rastDLL_dftotal <- as.data.frame(rastDLLtotal, xy = TRUE)
+
+# 2. Rename the third column to something simple (e.g. "pct")
+#    The default name is taken from the raster's "varname"/"name", which is long.
+names(rastDLL_dftotal)[3] <- "effort"
+
+# 3. Now build the ggplot using pct_df
+testcalc_dem_df_plottotal <- ggplot(data = rastDLL_dftotal, aes(x = x, y = y, fill = sqrt(effort)))+
+  geom_raster() +
+  geom_sf(
+    data = ne_land, 
+    inherit.aes = FALSE,
+    fill = "grey80", 
+    color = NA
+  ) +
+  coord_sf(
+    xlim   = c(-180, 180),
+    ylim   = c(-90, 0),
+    expand = FALSE
+  ) +
+  # scale_fill_viridis_c(
+  #   name     = "# hooks ",   # or leave blank if you want no legend title
+  # #  limits   = c(0, 1),        # since pct runs 0 → 1
+  #  # labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
+  # ) +
+  scale_fill_gradientn(
+    name = " ",
+    colours = brewer_palette ) +#,
+  # limits   = c(0, 1),        # since pct runs 0 → 1
+  #labels   = scales::percent_format(accuracy = 1) ) + 
+  labs(
+    title = "Total annual demersal fishing effort"
+  ) +
+  theme_minimal()
+
+# 4. Print or save
+print(testcalc_dem_df_plottotal)
+# ggsave("pct_sg_plot.png", pct_sg_plot, width=8, height=6)
+
+ggsave("total_annual_dem_effort_gg_brewer_sqrt.png", testcalc_dem_df_plottotal, width = 8, height = 6)
+
+
+
+
+# 1. Convert the SpatRaster to a data.frame
+#    include xy=TRUE so you get columns "x" and "y" automatically
+rastPLL_dftotal <- as.data.frame(rastPLLtotal, xy = TRUE)
+
+# 2. Rename the third column to something simple (e.g. "pct")
+#    The default name is taken from the raster's "varname"/"name", which is long.
+names(rastPLL_dftotal)[3] <- "effort"
+
+# 3. Now build the ggplot using pct_df
+testcalc_pel_df_plottotal <- ggplot(data = rastPLL_dftotal, aes(x = x, y = y, fill = sqrt(effort)) ) +
+  geom_raster() +
+  geom_sf(
+    data = ne_land, 
+    inherit.aes = FALSE,
+    fill = "grey80", 
+    color = NA
+  ) +
+  coord_sf(
+    xlim   = c(-180, 180),
+    ylim   = c(-90, 0),
+    expand = FALSE
+  ) +
+  # scale_fill_viridis_c(
+  #   name     = "# hooks ",   # or leave blank if you want no legend title
+  #  limits   = c(0, 1),        # since pct runs 0 → 1
+  # labels   = scales::percent_format(accuracy = 1)  # show as “0%–100%”
+  scale_fill_gradientn(
+    name = " ",
+    colours = brewer_palette 
+  ) +
+  labs(
+    title = "Mean annual pelagic fishing effort"
+  ) +
+  theme_minimal()
+
+# 4. Print or save
+print(testcalc_pel_df_plottotal)
+# ggsave("pct_sg_plot.png", pct_sg_plot, width=8, height=6)
+
+ggsave("total_annual_pel_effort_gg_brewer_sqrt.png", testcalc_pel_df_plottotal, width = 8, height = 6)
+
 
 
 
@@ -1293,18 +1472,21 @@ ggsave("mean_annual_pel_effort_gg.png", testcalc_pel_df_plot, width = 8, height 
 
 #REMAKE JUST DIST MAPS
 #now with different ramps
-
+library(terra)
+library(sf)
 # load land
 ne_land <- st_read(here::here("data/ne_10m_land/ne_10m_land.shp")  )
 
 #remake maps with small values cropped out
-waal_b_a_small <- ifel(waal_b_a < 0.0001, NA, r)
+waal_b_a_small <- ifel(waal_b_a < 0.0001, NA, waal_b_a)
 waal_b_a_fb_small <- ifel(waal_b_a_fb < 0.0001, NA, r)
 waal_b_a_sb_small <- ifel(waal_b_a_sb < 0.0001, NA, r)
 waal_b_a_nb_small <- ifel(waal_b_a_nb < 0.0001, NA, r)
 waal_b_i_small <- ifel(waal_b_i < 0.0001, NA, r)
 waal_b_j1_small <- ifel(waal_b_j1 < 0.0001, NA, r)
 waal_b_j2j3_small <- ifel(waal_b_j2j3 < 0.0001, NA, r)
+
+plot(waal_b_a_small)
 
 # names and extents
 dens_names <- c("waal_b_a_small","waal_b_a_fb_small","waal_b_a_sb_small","waal_b_a_nb_small",
@@ -1334,4 +1516,109 @@ for(nm in dens_names) {
          p, width=8, height=6)
 }
 
+
+#renake with better maps
+
+library(terra)
+library(ggplot2)
+library(sf)
+library(dplyr)
+library(RColorBrewer)
+
+# names and extents
+dens_names <- c("waal_b_a","waal_b_a_fb","waal_b_a_sb","waal_b_a_nb",
+                "waal_b_i","waal_b_j1","waal_b_j2j3")
+# 
+# ext_den <- c(-180, 180, -90, 0)
+# 
+# # Ensure the directory exists
+# dir.create("ggmaps/density_clipped_nouni2", recursive=TRUE, showWarnings=FALSE)
+# 
+# # Breaks and labels for binning
+# breaks <- seq(0, 100, by = 10)
+# labels <- paste0(breaks[-length(breaks)], "-", breaks[-1], "%")
+# 
+# for (nm in dens_names) {
+#   # 1. Get and crop
+#   r <- crop(get(nm), ext_den)
+#   
+#   # 2. Normalize to sum to 1 (relative density)
+#   r_norm <- r / global(r, fun = "sum", na.rm = TRUE)[1,1]
+#   
+#   # 3. Convert to percent
+#   r_pct <- r_norm * 100
+#   
+#   # 4. Remove values below 1%
+#   r_filtered <- classify(r_pct, rcl = matrix(c(-Inf, 0.001, NA), ncol = 3, byrow = TRUE))
+#   
+#   # 5. Bin into 10% increments
+#   r_binned <- classify(r_filtered, cbind(breaks[-length(breaks)], breaks[-1], 1:(length(breaks)-1)))
+#   
+#   # 6. Convert to data frame
+#   df <- as.data.frame(r_binned, xy = TRUE, na.rm = TRUE)
+#   names(df)[3] <- "bin"
+#   
+#   # 7. Convert bin numbers to labeled factor
+#   df$bin <- factor(df$bin, levels = 1:(length(labels)), labels = labels)
+#   
+#   # 8. Plot
+#   p <- ggplot(df, aes(x = x, y = y, fill = bin)) +
+#     geom_raster() +
+#     geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+#     coord_sf(xlim = ext_den[1:2], ylim = ext_den[3:4], expand = FALSE) +
+#     scale_fill_brewer(name = "% of Population", palette = "YlOrRd", drop = FALSE) +
+#     ggtitle(nm) +
+#     theme_minimal()
+#   
+#   # 9. Save
+#   ggsave(file.path("ggmaps/density_clipped_nouni2", paste0(nm, ".png")),
+#          p, width = 8, height = 6)
+# }
+
+
+
+
+library(terra)
+library(ggplot2)
+library(sf)
+library(RColorBrewer)
+
+
+
+dir.create("ggmaps/density_clipped_nouni2", recursive = TRUE, showWarnings = FALSE)
+
+for (nm in dens_names) {
+  r <- crop(get(nm), ext_den)
+  
+  # Normalize and convert to percent
+  r_norm <- r / global(r, fun = "sum", na.rm = TRUE)[1,1]
+  r_pct <- r_norm * 100
+  
+  # Set values < 1% to NA (they will be plotted as white)
+  r_pct[r_pct < 0.1] <- NA
+  
+  # Convert to data frame
+  df <- as.data.frame(r_pct, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "value"
+  
+  # Choose a Brewer palette
+  brewer_palette <- brewer.pal(9, "YlGnBu")
+  
+  p <- ggplot(df, aes(x = x, y = y, fill = value)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = ext_den[1:2], ylim = ext_den[3:4], expand = FALSE) +
+    scale_fill_gradientn(
+      name = "% of Population",
+      colours = brewer_palette,
+      na.value = "white",  # white for NA
+      limits = c(0.1, max(df$value, na.rm = TRUE)),
+      oob = scales::squish
+    ) +
+    ggtitle(nm) +
+    theme_minimal()
+  
+  ggsave(file.path("ggmaps/density_clipped_nouni2", paste0(nm, ".png")),
+         p, width = 8, height = 6)
+}
 

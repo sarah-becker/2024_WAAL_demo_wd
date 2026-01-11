@@ -1,0 +1,625 @@
+---
+title: "Wandering Albatross Bycatch Estimates - Catchability Method"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script estimates wandering albatross bycatch using a catchability-based approach.
+
+**Method:**
+$$\text{Bycatch}^t = \sum_i (\text{hooks}^i \times \text{birds}^i \times \beta)$$
+
+Where:
+- $t$ = total bycatch
+- $i$ = grid cell (sub-block)
+- $\beta = \frac{\alpha \times \text{hooks}^t}{\sum_i (\text{hooks}^i \times \text{birds}^i_{\text{all pops}})}$
+
+**Key parameters:**
+- $\alpha$ (alpha) = BPUE in the traditional sense (birds per hook, from literature)
+- $\beta$ (beta) = Catchability (probability of being caught per hook per bird)
+- This is analogous to the interaction coefficient in Lotka-Volterra equations
+
+**Key features:**
+- **Catchability (β)** is derived from:
+  - BPUE (α) for ALL wandering albatross populations
+  - Total fishing effort across all cells
+  - Bird density across ALL populations (normalized to sum to 1.0)
+- **Bycatch** is calculated using:
+  - Bird Island age-class specific distributions
+  - Scaled to represent BI's proportion of the GLOBAL WAAL population (15.7%)
+  - Ensures bird densities are in the same units as those used for catchability
+- Separate calculations for pelagic and demersal fisheries (different catchabilities)
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(patchwork)
+```
+
+# Load Required Data
+
+## Load fishing effort data
+
+```{r load-fishing-effort}
+# Load fishing effort rasters (hooks per grid cell)
+fishing_pel <- rast(here("output/rasters/fishing_effort_pelagic.tif"))
+fishing_dem <- rast(here("output/rasters/fishing_effort_demersal.tif"))
+
+# Calculate total hooks across all cells
+total_hooks_pel <- global(fishing_pel, fun = "sum", na.rm = TRUE)[1,1]
+total_hooks_dem <- global(fishing_dem, fun = "sum", na.rm = TRUE)[1,1]
+
+cat("=== FISHING EFFORT ===\n")
+cat("Pelagic total hooks:  ", format(total_hooks_pel, big.mark = ","), "\n")
+cat("Demersal total hooks: ", format(total_hooks_dem, big.mark = ","), "\n")
+```
+
+## Load bird density data
+
+```{r load-bird-densities}
+# Load total bird density (all populations) - for catchability calculation
+total_bird_density <- rast(here("output/rasters/total_bird_density_all_pops.tif"))
+
+cat("\nTotal bird density (all populations):\n")
+cat("  Sum:", round(global(total_bird_density, "sum", na.rm = TRUE)[1,1], 3),
+    "(should be ~1)\n")
+
+# Load Bird Island age-class distributions - for bycatch calculation
+# These are from Clay et al. 2019, representing Bird Island birds (both sexes)
+bird_fb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_FB_1990-2009.tif"))
+bird_sb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_SB_1990-2009.tif"))
+bird_nb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_NB_1990-2009.tif"))
+bird_j2j3 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif"))
+bird_imm <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
+
+# Store in named list
+bird_dists_raw <- list(
+  fb = bird_fb,
+  sb = bird_sb,
+  nb = bird_nb,
+  j2j3 = bird_j2j3,
+  imm = bird_imm
+)
+
+cat("\nLoaded Bird Island age-class distributions\n")
+```
+
+## Load demographic proportions and BPUE data
+
+```{r load-demographic-data}
+# Load demographic proportions
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE)
+
+# Clean demographic class names (J2+3 -> J2J3 for consistency)
+dem_props <- dem_props %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+# Calculate mean proportions by demographic class
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(
+    mean_prop = mean(Prop),
+    mean_pop = mean(Pop)
+  )
+
+cat("\nDemographic proportions:\n")
+print(dem_props_summary)
+
+# Extract age class proportions (excluding J1)
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+cat("\nAge class proportions of Bird Island population:\n")
+print(round(age_class_props, 4))
+```
+
+## Scale Bird Island Distributions to Global Scale
+
+The BI age-class distributions need to be scaled to represent their proportion of the GLOBAL WAAL population, so they're in the same units as `total_bird_density`.
+
+```{r scale-bi-distributions}
+# Bird Island proportion of global population
+# BI is 60% of South Georgia (1,553 pairs), which is part of global total (5,947 pairs)
+prop_bird_island_global <- 0.6 * 1553 / 5947
+
+cat("Scaling Bird Island distributions to global scale:\n")
+cat("Bird Island proportion of global population:", round(prop_bird_island_global, 4), "\n\n")
+
+# Normalize and scale each BI age-class distribution
+# Step 1: Normalize to sum to 1 (proportion of that age class)
+# Step 2: Multiply by age class proportion of BI population
+# Step 3: Multiply by BI proportion of global population
+bird_dists_normalized <- map(bird_dists_raw, function(r) {
+  # Replace NA with 0 for normalization
+  r_zero <- subst(r, NA, 0)
+  # Calculate sum
+  r_sum <- global(r_zero, fun = "sum", na.rm = TRUE)[1,1]
+  # Normalize to sum to 1
+  r_norm <- r_zero / r_sum
+  return(r_norm)
+})
+
+# Scale by age class proportion and BI global proportion
+bird_dists_scaled <- map2(bird_dists_normalized, age_class_props, function(r, prop) {
+  r * prop * prop_bird_island_global
+})
+
+cat("Scaled distributions (should sum to BI proportion × age class proportion):\n")
+scaled_sums <- map_dbl(bird_dists_scaled, ~global(.x, "sum", na.rm = TRUE)[1,1])
+print(scaled_sums)
+cat("Total across all BI age classes:", round(sum(scaled_sums), 6), "\n")
+cat("Expected (BI proportion × sum of age props):",
+    round(prop_bird_island_global * sum(age_class_props), 6), "\n")
+```
+
+## Define BPUE rates
+
+```{r define-bpue}
+# BPUE rates per 1000 hooks (same as script 03)
+K_BPUE_1000_PEL <- 0.01    # Klaer 2012, South Atlantic
+T_BPUE_1000_PEL <- 0.007   # Tuck 2015, South Atlantic
+mean_BPUE_pel_1000 <- (K_BPUE_1000_PEL + T_BPUE_1000_PEL) / 2
+
+T_BPUE_1000_DEM_baseline <- 0.001837540  # Tuck 2015
+JIM_BPUE_1000_DEM_premit <- 0.029        # Jiménez et al. 2020
+mean_BPUE_dem_1000 <- (T_BPUE_1000_DEM_baseline + JIM_BPUE_1000_DEM_premit) / 2
+
+# Convert to per hook for catchability calculation
+mean_BPUE_pel_per_hook <- mean_BPUE_pel_1000 / 1000
+mean_BPUE_dem_per_hook <- mean_BPUE_dem_1000 / 1000
+
+cat("\n=== BPUE RATES ===\n")
+cat("Pelagic:  ", mean_BPUE_pel_1000, "birds per 1000 hooks\n")
+cat("          ", format(mean_BPUE_pel_per_hook, scientific = TRUE), "birds per hook\n")
+cat("Demersal: ", mean_BPUE_dem_1000, "birds per 1000 hooks\n")
+cat("          ", format(mean_BPUE_dem_per_hook, scientific = TRUE), "birds per hook\n")
+```
+
+## Load base map data
+
+```{r load-basemap}
+# Load Natural Earth land polygons for mapping
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+# Align Raster Grids
+
+Ensure all rasters have the same extent and resolution for cell-by-cell calculations.
+
+```{r align-rasters}
+# Use total_bird_density as the template (it has the full global extent)
+template <- total_bird_density
+
+# Resample fishing effort to match bird density grid
+fishing_pel_aligned <- resample(fishing_pel, template, method = "bilinear")
+fishing_dem_aligned <- resample(fishing_dem, template, method = "bilinear")
+
+# Resample Bird Island distributions to match template
+bird_dists_aligned <- map(bird_dists_scaled, function(r) {
+  resample(r, template, method = "bilinear")
+})
+
+cat("All rasters aligned to common grid\n")
+cat("Template dimensions:", dim(template), "\n")
+```
+
+# Calculate Catchability
+
+Catchability is calculated using **all wandering albatross populations** (not just Bird Island).
+
+## Pelagic catchability
+
+```{r calculate-catchability-pelagic}
+# Calculate hooks^i * birds^i for each cell (all populations)
+hooks_x_birds_pel <- fishing_pel_aligned * total_bird_density
+
+# Sum across all cells
+sum_hooks_x_birds_pel <- global(hooks_x_birds_pel, fun = "sum", na.rm = TRUE)[1,1]
+
+# Calculate catchability
+# catchability = BPUE_per_hook * total_hooks / sum(hooks * birds)
+# This is β (beta) in the equations
+catchability_pel <- mean_BPUE_pel_per_hook * total_hooks_pel / sum_hooks_x_birds_pel
+
+cat("\n=== PELAGIC CATCHABILITY ===\n")
+cat("BPUE (α):                ", format(mean_BPUE_pel_per_hook, scientific = TRUE),
+    "per hook\n")
+cat("Total hooks:             ", format(total_hooks_pel, big.mark = ","), "\n")
+cat("Sum(hooks × birds):      ", format(sum_hooks_x_birds_pel, big.mark = ",",
+                                         scientific = FALSE), "\n")
+cat("Catchability (β):        ", format(catchability_pel, scientific = TRUE), "\n")
+```
+
+## Demersal catchability
+
+```{r calculate-catchability-demersal}
+# Calculate hooks^i * birds^i for each cell (all populations)
+hooks_x_birds_dem <- fishing_dem_aligned * total_bird_density
+
+# Sum across all cells
+sum_hooks_x_birds_dem <- global(hooks_x_birds_dem, fun = "sum", na.rm = TRUE)[1,1]
+
+# Calculate catchability
+# catchability = BPUE_per_hook * total_hooks / sum(hooks * birds)
+# This is β (beta) in the equations
+catchability_dem <- mean_BPUE_dem_per_hook * total_hooks_dem / sum_hooks_x_birds_dem
+
+cat("\n=== DEMERSAL CATCHABILITY ===\n")
+cat("BPUE (α):                ", format(mean_BPUE_dem_per_hook, scientific = TRUE),
+    "per hook\n")
+cat("Total hooks:             ", format(total_hooks_dem, big.mark = ","), "\n")
+cat("Sum(hooks × birds):      ", format(sum_hooks_x_birds_dem, big.mark = ",",
+                                         scientific = FALSE), "\n")
+cat("Catchability (β):        ", format(catchability_dem, scientific = TRUE), "\n")
+```
+
+# Calculate Bycatch by Age Class
+
+Now calculate bycatch using **Bird Island age-class specific distributions**.
+
+## Pelagic bycatch
+
+```{r calculate-bycatch-pelagic}
+# For each age class: Bycatch = sum(hooks^i * birds^i * catchability)
+calc_bycatch_catchability <- function(hooks, birds, catchability) {
+  bycatch_map <- hooks * birds * catchability
+  bycatch_total <- global(bycatch_map, fun = "sum", na.rm = TRUE)[1,1]
+  return(list(map = bycatch_map, total = bycatch_total))
+}
+
+# Calculate for each age class
+byc_pel <- map(bird_dists_aligned, function(bird_dist) {
+  calc_bycatch_catchability(fishing_pel_aligned, bird_dist, catchability_pel)
+})
+
+# Extract totals
+byc_pel_totals <- map_dbl(byc_pel, "total")
+
+cat("\n=== PELAGIC BYCATCH BY AGE CLASS ===\n")
+print(round(byc_pel_totals, 2))
+cat("\nTotal pelagic bycatch:", round(sum(byc_pel_totals), 2), "birds\n")
+```
+
+## Demersal bycatch
+
+```{r calculate-bycatch-demersal}
+# Calculate for each age class
+byc_dem <- map(bird_dists_aligned, function(bird_dist) {
+  calc_bycatch_catchability(fishing_dem_aligned, bird_dist, catchability_dem)
+})
+
+# Extract totals
+byc_dem_totals <- map_dbl(byc_dem, "total")
+
+cat("\n=== DEMERSAL BYCATCH BY AGE CLASS ===\n")
+print(round(byc_dem_totals, 2))
+cat("\nTotal demersal bycatch:", round(sum(byc_dem_totals), 2), "birds\n")
+```
+
+## Total bycatch summary
+
+```{r bycatch-summary}
+# Create summary table
+bycatch_summary <- tibble(
+  age_class = names(byc_pel_totals),
+  pelagic = byc_pel_totals,
+  demersal = byc_dem_totals,
+  total = byc_pel_totals + byc_dem_totals
+) %>%
+  bind_rows(tibble(
+    age_class = "TOTAL",
+    pelagic = sum(byc_pel_totals),
+    demersal = sum(byc_dem_totals),
+    total = sum(byc_pel_totals) + sum(byc_dem_totals)
+  ))
+
+cat("\n=== TOTAL BYCATCH SUMMARY ===\n")
+print(bycatch_summary)
+```
+
+# Calculate Per Capita Bycatch Rates
+
+```{r per-capita-rates}
+# Population sizes for each age class
+pop_sizes <- c(
+  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
+)
+
+# Calculate per capita rates
+percap_pel <- byc_pel_totals / pop_sizes
+percap_dem <- byc_dem_totals / pop_sizes
+
+cat("\n=== PER CAPITA BYCATCH RATES ===\n")
+cat("\nPelagic (birds per individual per year):\n")
+print(round(percap_pel, 6))
+cat("\nDemersal (birds per individual per year):\n")
+print(round(percap_dem, 6))
+
+# Create per capita summary table
+percap_summary <- tibble(
+  age_class = names(pop_sizes),
+  population = pop_sizes,
+  byc_pel = byc_pel_totals,
+  byc_dem = byc_dem_totals,
+  percap_pel = percap_pel,
+  percap_dem = percap_dem,
+  percap_total = percap_pel + percap_dem
+)
+
+print(percap_summary)
+```
+
+# Create Bycatch Maps
+
+```{r create-total-maps}
+# Extract bycatch maps from results
+byc_pel_maps <- map(byc_pel, "map")
+byc_dem_maps <- map(byc_dem, "map")
+
+# Sum across all age classes
+pel_byc_total <- Reduce("+", byc_pel_maps)
+dem_byc_total <- Reduce("+", byc_dem_maps)
+
+cat("\nTotal bycatch map sums:\n")
+cat("Pelagic:  ", round(global(pel_byc_total, "sum", na.rm = TRUE)[1,1], 2), "\n")
+cat("Demersal: ", round(global(dem_byc_total, "sum", na.rm = TRUE)[1,1], 2), "\n")
+```
+
+## Map bycatch density
+
+```{r map-bycatch, fig.width=12, fig.height=6}
+# Function to map bycatch density
+map_bycatch <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bycatch"
+
+  ext_rast <- ext(rast_obj)
+
+  ggplot(df, aes(x = x, y = y, fill = bycatch)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "Bycatch\nDensity",
+      na.value = "white",
+      direction = -1  # Blue = high, yellow = low
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create bycatch maps
+p_byc_pel <- map_bycatch(pel_byc_total,
+                         "Total Pelagic Bycatch Density (Catchability Method)")
+p_byc_dem <- map_bycatch(dem_byc_total,
+                         "Total Demersal Bycatch Density (Catchability Method)")
+
+# Display side by side
+p_byc_pel | p_byc_dem
+
+# Save maps
+dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
+ggsave(here("output/maps/bycatch_pelagic_total_catchability.png"), p_byc_pel,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/bycatch_demersal_total_catchability.png"), p_byc_dem,
+       width = 10, height = 6, dpi = 300)
+```
+
+## Map by age class
+
+```{r map-by-age-class, fig.width=15, fig.height=10}
+# Create maps for each age class (pelagic)
+byc_pel_age_maps <- imap(byc_pel_maps, function(r, age) {
+  map_bycatch(r, paste0("Pelagic Bycatch: ", toupper(age), " (Catchability Method)"))
+})
+
+# Display all pelagic age class maps
+wrap_plots(byc_pel_age_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_pel_age_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_pelagic_", age, "_catchability.png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+
+# Create maps for each age class (demersal)
+byc_dem_age_maps <- imap(byc_dem_maps, function(r, age) {
+  map_bycatch(r, paste0("Demersal Bycatch: ", toupper(age), " (Catchability Method)"))
+})
+
+# Display all demersal age class maps
+wrap_plots(byc_dem_age_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_dem_age_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_demersal_", age, "_catchability.png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+```
+
+# Save Processed Data
+
+```{r save-outputs}
+# Create output directories if they don't exist
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+
+# Save total bycatch maps
+writeRaster(pel_byc_total,
+            here("output/rasters/bycatch_pelagic_total_catchability.tif"),
+            overwrite = TRUE)
+writeRaster(dem_byc_total,
+            here("output/rasters/bycatch_demersal_total_catchability.tif"),
+            overwrite = TRUE)
+
+# Save bycatch rasters by age class (pelagic)
+iwalk(byc_pel_maps, function(r, age) {
+  writeRaster(r,
+              here(paste0("output/rasters/bycatch_pelagic_", age, "_catchability.tif")),
+              overwrite = TRUE)
+})
+
+# Save bycatch rasters by age class (demersal)
+iwalk(byc_dem_maps, function(r, age) {
+  writeRaster(r,
+              here(paste0("output/rasters/bycatch_demersal_", age, "_catchability.tif")),
+              overwrite = TRUE)
+})
+
+# Save summary tables
+write_csv(bycatch_summary, here("output/bycatch_summary_catchability.csv"))
+write_csv(percap_summary, here("output/bycatch_percapita_summary_catchability.csv"))
+
+# Save catchability values for reference
+catchability_values <- tibble(
+  fishery = c("Pelagic", "Demersal"),
+  BPUE_per_1000_hooks = c(mean_BPUE_pel_1000, mean_BPUE_dem_1000),
+  BPUE_per_hook = c(mean_BPUE_pel_per_hook, mean_BPUE_dem_per_hook),
+  total_hooks = c(total_hooks_pel, total_hooks_dem),
+  sum_hooks_x_birds = c(sum_hooks_x_birds_pel, sum_hooks_x_birds_dem),
+  catchability_beta = c(catchability_pel, catchability_dem)
+)
+
+write_csv(catchability_values, here("output/catchability_values.csv"))
+
+cat("\nAll outputs saved successfully\n")
+```
+
+# Diagnostics
+
+Check key values to understand the calculations.
+
+```{r diagnostics}
+cat("\n=== DIAGNOSTIC VALUES ===\n\n")
+
+# Check bird distribution sums
+cat("Bird Island age-class distribution sums (scaled to global proportion):\n")
+bird_sums <- map_dbl(bird_dists_aligned, ~global(.x, "sum", na.rm = TRUE)[1,1])
+print(bird_sums)
+cat("Total across all BI age classes:", round(sum(bird_sums), 6), "\n")
+cat("Expected (BI global prop × sum age props):",
+    round(prop_bird_island_global * sum(age_class_props), 6), "\n\n")
+
+cat("Total bird density (all populations) sum:",
+    round(global(total_bird_density, "sum", na.rm = TRUE)[1,1], 6), "(should be 1.0)\n\n")
+
+# Check hooks × birds values
+cat("Sum(hooks × birds) values:\n")
+cat("Pelagic:  ", format(sum_hooks_x_birds_pel, scientific = TRUE), "\n")
+cat("Demersal: ", format(sum_hooks_x_birds_dem, scientific = TRUE), "\n\n")
+
+# Check BPUE values
+cat("BPUE values:\n")
+cat("Pelagic:  ", mean_BPUE_pel_1000, "per 1000 hooks =",
+    format(mean_BPUE_pel_per_hook, scientific = TRUE), "per hook\n")
+cat("Demersal: ", mean_BPUE_dem_1000, "per 1000 hooks =",
+    format(mean_BPUE_dem_per_hook, scientific = TRUE), "per hook\n\n")
+
+# Check catchability values
+cat("Catchability (β) values:\n")
+cat("Pelagic:  ", format(catchability_pel, scientific = TRUE), "\n")
+cat("Demersal: ", format(catchability_dem, scientific = TRUE), "\n\n")
+
+# What would simple BPUE × total hooks give (for all WAAL)?
+simple_byc_pel <- mean_BPUE_pel_1000 * (total_hooks_pel / 1000)
+simple_byc_dem <- mean_BPUE_dem_1000 * (total_hooks_dem / 1000)
+
+cat("Simple calculation (BPUE × total_hooks, all WAAL, no spatial component):\n")
+cat("Pelagic:  ", round(simple_byc_pel, 2), "birds\n")
+cat("Demersal: ", round(simple_byc_dem, 2), "birds\n")
+cat("Expected BI proportion of this:",
+    round(simple_byc_pel * prop_bird_island_global * sum(age_class_props), 2),
+    "(pel),",
+    round(simple_byc_dem * prop_bird_island_global * sum(age_class_props), 2),
+    "(dem)\n\n")
+
+# Population estimates
+cat("Bird Island population estimates by age class:\n")
+print(pop_sizes)
+cat("Total BI population:", sum(pop_sizes), "\n\n")
+
+# Proportions
+cat("Proportions:\n")
+cat("Total global breeding pairs: 5,947\n")
+cat("Bird Island proportion of global:",
+    round(prop_bird_island_global, 4), "\n")
+cat("BI proportion × sum(age class props):",
+    round(prop_bird_island_global * sum(age_class_props), 4), "\n")
+```
+
+# Comparison with Original Method
+
+```{r compare-methods}
+# Load results from original method (script 03) if available
+if (file.exists(here("output/bycatch_summary.csv"))) {
+  byc_original <- read_csv(here("output/bycatch_summary.csv"),
+                           show_col_types = FALSE)
+
+  # Compare totals
+  comparison <- tibble(
+    age_class = bycatch_summary$age_class,
+    pelagic_original = byc_original$pelagic,
+    pelagic_catchability = bycatch_summary$pelagic,
+    pelagic_ratio = bycatch_summary$pelagic / byc_original$pelagic,
+    demersal_original = byc_original$demersal,
+    demersal_catchability = bycatch_summary$demersal,
+    demersal_ratio = bycatch_summary$demersal / byc_original$demersal
+  )
+
+  cat("\n=== COMPARISON: ORIGINAL vs CATCHABILITY METHOD ===\n")
+  print(comparison)
+
+  cat("\n=== SUMMARY ===\n")
+  cat("Total pelagic (original):     ", round(byc_original$pelagic[nrow(byc_original)], 2), "\n")
+  cat("Total pelagic (catchability): ", round(sum(byc_pel_totals), 2), "\n")
+  cat("Ratio: ", round(sum(byc_pel_totals) / byc_original$pelagic[nrow(byc_original)], 2), "×\n\n")
+
+  cat("Total demersal (original):     ", round(byc_original$demersal[nrow(byc_original)], 2), "\n")
+  cat("Total demersal (catchability): ", round(sum(byc_dem_totals), 2), "\n")
+  cat("Ratio: ", round(sum(byc_dem_totals) / byc_original$demersal[nrow(byc_original)], 2), "×\n")
+
+  # Save comparison
+  write_csv(comparison, here("output/bycatch_method_comparison.csv"))
+} else {
+  cat("\nOriginal method results not found - run script 03 first for comparison\n")
+}
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

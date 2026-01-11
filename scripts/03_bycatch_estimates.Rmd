@@ -1,0 +1,529 @@
+---
+title: "Wandering Albatross Bycatch Estimates"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script estimates wandering albatross bycatch by combining:
+
+1. **Bycatch Per Unit Effort (BPUE)** rates from published literature
+2. **Fishing effort** overlap indices (from `01_fishing_effort_overlap.Rmd`)
+3. **Population composition** by age class (from Clay et al. 2019 distributions)
+4. **South Georgia proportion** of birds in each cell (from `02_compare_pop_distributions.Rmd`)
+
+The workflow:
+1. Define BPUE rates for pelagic and demersal longline fisheries
+2. Create spatial BPUE maps weighted by % South Georgia birds
+3. Multiply BPUE maps by overlap indices for each age class
+4. Calculate total bycatch and per capita rates
+5. Generate maps of bycatch density
+
+**Key assumption:** Bird Island population is 60% of South Georgia population.
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(RColorBrewer)
+library(patchwork)
+```
+
+# Load Required Data
+
+## Load percentage South Georgia/Bird Island rasters
+
+```{r load-sg-percentages}
+# Load percentage of birds from South Georgia (from script 02)
+pct_sg <- rast(here("output/rasters/percentage_south_georgia.tif"))
+pct_bi <- rast(here("output/rasters/percentage_bird_island.tif"))
+
+cat("Loaded South Georgia percentage raster\n")
+cat("  Cells:", nrow(as.data.frame(pct_sg, na.rm = TRUE)), "\n")
+cat("  Range:", round(global(pct_sg, "min", na.rm = TRUE)[1,1], 3),
+    "to", round(global(pct_sg, "max", na.rm = TRUE)[1,1], 3), "\n")
+```
+
+## Load overlap indices
+
+```{r load-overlap-indices}
+# Load pelagic overlap indices (from script 01)
+pel_fb <- rast(here("output/rasters/overlap_pelagic_fb.tif"))
+pel_sb <- rast(here("output/rasters/overlap_pelagic_sb.tif"))
+pel_nb <- rast(here("output/rasters/overlap_pelagic_nb.tif"))
+pel_j2j3 <- rast(here("output/rasters/overlap_pelagic_j2j3.tif"))
+pel_imm <- rast(here("output/rasters/overlap_pelagic_imm.tif"))
+
+# Load demersal overlap indices (from script 01)
+dem_fb <- rast(here("output/rasters/overlap_demersal_fb.tif"))
+dem_sb <- rast(here("output/rasters/overlap_demersal_sb.tif"))
+dem_nb <- rast(here("output/rasters/overlap_demersal_nb.tif"))
+dem_j2j3 <- rast(here("output/rasters/overlap_demersal_j2j3.tif"))
+dem_imm <- rast(here("output/rasters/overlap_demersal_imm.tif"))
+
+# Store in named lists
+overlap_pel <- list(
+  fb = pel_fb,
+  sb = pel_sb,
+  nb = pel_nb,
+  j2j3 = pel_j2j3,
+  imm = pel_imm
+)
+
+overlap_dem <- list(
+  fb = dem_fb,
+  sb = dem_sb,
+  nb = dem_nb,
+  j2j3 = dem_j2j3,
+  imm = dem_imm
+)
+
+cat("\nLoaded overlap indices for 5 age classes (pelagic and demersal)\n")
+```
+
+## Load base map data
+
+```{r load-basemap}
+# Load Natural Earth land polygons for mapping
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+# Define BPUE Rates
+
+Bycatch Per Unit Effort (BPUE) rates from published literature, expressed as birds per 1,000 hooks.
+
+## BPUE Data Sources
+
+```{r load-bpue-data}
+# Load Tuck et al. 2015 BPUE data (Appendix 1)
+tuck_bpue <- read_csv(here("data/Tuck2015_A1_bpue.csv"), show_col_types = FALSE)
+
+# Recode JapS (Japanese Southern) fleet as Pelagic
+tuck_bpue <- tuck_bpue %>%
+  mutate(Fleet = ifelse(Fleet == "JapS", "Pel", Fleet))
+
+# Calculate mean BPUE by fleet type
+mean_bpue <- tuck_bpue %>%
+  group_by(Fleet) %>%
+  summarise(
+    mean_bpue = mean(Byc),
+    n_obs = n()
+  )
+
+cat("Mean BPUE by fleet type (Tuck et al. 2015):\n")
+print(mean_bpue)
+```
+
+## Define BPUE rates for analysis
+
+```{r define-bpue-rates}
+# BPUE rates per 1000 hooks
+# Sources:
+# - Pelagic: Average of Klaer 2012 (0.01) and Tuck 2015 (0.007) South Atlantic estimates
+# - Demersal: Average of Tuck 2015 baseline (0.001837540) and
+#             Jiménez et al. 2020 pre-mitigation South Georgia (0.029 minimum)
+
+# Pelagic BPUE (birds per 1000 hooks)
+K_BPUE_1000_PEL <- 0.01    # Klaer 2012, South Atlantic
+T_BPUE_1000_PEL <- 0.007   # Tuck 2015, South Atlantic
+
+mean_BPUE_pel_1000 <- (K_BPUE_1000_PEL + T_BPUE_1000_PEL) / 2
+BPUE_pel_per_hook <- mean_BPUE_pel_1000 / 1000
+
+# Demersal BPUE (birds per 1000 hooks)
+T_BPUE_1000_DEM_baseline <- 0.001837540  # Tuck 2015
+JIM_BPUE_1000_DEM_premit <- 0.029        # Jiménez et al. 2020, pre-mitigation SG (minimum)
+
+mean_BPUE_dem_1000 <- (T_BPUE_1000_DEM_baseline + JIM_BPUE_1000_DEM_premit) / 2
+BPUE_dem_per_hook <- mean_BPUE_dem_1000 / 1000
+
+cat("\n=== FINAL BPUE RATES ===\n")
+cat("Pelagic:  ", mean_BPUE_pel_1000, "birds per 1000 hooks\n")
+cat("          ", BPUE_pel_per_hook, "birds per hook\n\n")
+cat("Demersal: ", mean_BPUE_dem_1000, "birds per 1000 hooks\n")
+cat("          ", BPUE_dem_per_hook, "birds per hook\n")
+```
+
+# Create BPUE Maps
+
+Create spatial maps of BPUE weighted by the proportion of birds from Bird Island in each cell. Crop to match the extent of overlap rasters.
+
+```{r create-bpue-maps}
+# Scale BPUE by % Bird Island birds in each cell
+# This gives the BPUE rate specifically for Bird Island birds
+BPUE_map_pel_full <- pct_bi * BPUE_pel_per_hook
+BPUE_map_dem_full <- pct_bi * BPUE_dem_per_hook
+
+# Crop BPUE maps to match extent of overlap rasters
+# Use first overlap raster as template
+BPUE_map_pel <- crop(BPUE_map_pel_full, pel_fb)
+BPUE_map_dem <- crop(BPUE_map_dem_full, dem_fb)
+
+# Resample to ensure exact alignment (if grids don't match perfectly)
+BPUE_map_pel <- resample(BPUE_map_pel, pel_fb, method = "bilinear")
+BPUE_map_dem <- resample(BPUE_map_dem, dem_fb, method = "bilinear")
+
+cat("Created BPUE maps weighted by % Bird Island birds\n")
+cat("\nPelagic BPUE map:\n")
+cat("  Range:", global(BPUE_map_pel, "min", na.rm = TRUE)[1,1],
+    "to", global(BPUE_map_pel, "max", na.rm = TRUE)[1,1], "\n")
+cat("\nDemersal BPUE map:\n")
+cat("  Range:", global(BPUE_map_dem, "min", na.rm = TRUE)[1,1],
+    "to", global(BPUE_map_dem, "max", na.rm = TRUE)[1,1], "\n")
+```
+
+# Define Age Class Population Proportions
+
+Population proportions by demographic class from Clay et al. 2019.
+
+**Note:** The J1 (Juvenile 1) class is excluded from bycatch calculations because we don't have a separate spatial distribution for J1 birds. The five age classes used are: FB (first breeders), SB (successful breeders), NB (non-breeders), J2J3 (juveniles 2-3), and IMM (immatures).
+
+```{r define-age-class-proportions}
+# Proportion of Bird Island population in each demographic class
+# Source: Clay et al. 2019, WAAL distribution data
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE)
+
+# Clean demographic class names (J2+3 -> j2j3 for consistency)
+dem_props <- dem_props %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+# Calculate mean proportions by demographic class
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(
+    mean_prop = mean(Prop),
+    mean_pop = mean(Pop)
+  )
+
+cat("Population proportions by age class:\n")
+print(dem_props_summary)
+
+# Extract individual proportions
+prop_fb <- dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"]
+prop_sb <- dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"]
+prop_nb <- dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"]
+prop_j2j3 <- dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"]
+prop_imm <- dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+
+# Store in named vector (order matches overlap rasters: fb, sb, nb, j2j3, imm)
+age_class_props <- c(
+  fb = prop_fb,
+  sb = prop_sb,
+  nb = prop_nb,
+  j2j3 = prop_j2j3,
+  imm = prop_imm
+)
+
+cat("\nAge class proportions:\n")
+print(round(age_class_props, 4))
+cat("Sum:", round(sum(age_class_props), 4), "\n")
+cat("Note: Sum < 1 because J1 class is excluded (no overlap raster available)\n")
+```
+
+# Calculate Bycatch Estimates by Age Class
+
+Multiply BPUE maps by overlap indices and scale by age class proportions.
+
+## Pelagic bycatch
+
+```{r calculate-pelagic-bycatch}
+# Function to calculate bycatch for one age class
+calc_bycatch <- function(bpue_map, overlap_rast, age_prop) {
+  # Scale BPUE map by age class proportion
+  bpue_scaled <- bpue_map * age_prop
+  # Multiply by overlap index
+  bycatch <- bpue_scaled * overlap_rast
+  return(bycatch)
+}
+
+# Calculate pelagic bycatch for each age class
+byc_pel <- map2(overlap_pel, age_class_props,
+                ~calc_bycatch(BPUE_map_pel, .x, .y))
+
+# Calculate sum for each age class
+byc_pel_sums <- map_dbl(byc_pel, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
+
+cat("\n=== PELAGIC BYCATCH BY AGE CLASS ===\n")
+print(round(byc_pel_sums, 2))
+cat("Total pelagic:", round(sum(byc_pel_sums), 2), "\n")
+```
+
+## Demersal bycatch
+
+```{r calculate-demersal-bycatch}
+# Calculate demersal bycatch for each age class
+byc_dem <- map2(overlap_dem, age_class_props,
+                ~calc_bycatch(BPUE_map_dem, .x, .y))
+
+# Calculate sum for each age class
+byc_dem_sums <- map_dbl(byc_dem, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
+
+cat("\n=== DEMERSAL BYCATCH BY AGE CLASS ===\n")
+print(round(byc_dem_sums, 2))
+cat("Total demersal:", round(sum(byc_dem_sums), 2), "\n")
+```
+
+## Total bycatch (pelagic + demersal)
+
+```{r calculate-total-bycatch}
+# Sum across all age classes and fishery types
+total_pel_byc <- sum(byc_pel_sums)
+total_dem_byc <- sum(byc_dem_sums)
+total_byc <- total_pel_byc + total_dem_byc
+
+cat("\n=== TOTAL BYCATCH SUMMARY ===\n")
+cat("Pelagic:  ", round(total_pel_byc, 2), "birds\n")
+cat("Demersal: ", round(total_dem_byc, 2), "birds\n")
+cat("TOTAL:    ", round(total_byc, 2), "birds\n")
+
+# Create summary table
+bycatch_summary <- tibble(
+  age_class = names(byc_pel_sums),
+  pelagic = byc_pel_sums,
+  demersal = byc_dem_sums,
+  total = byc_pel_sums + byc_dem_sums
+) %>%
+  bind_rows(tibble(
+    age_class = "TOTAL",
+    pelagic = total_pel_byc,
+    demersal = total_dem_byc,
+    total = total_byc
+  ))
+
+print(bycatch_summary)
+```
+
+# Calculate Per Capita Bycatch Rates
+
+Calculate bycatch per individual for each age class using population estimates.
+
+```{r per-capita-rates}
+# Population sizes for each age class (from dem_props_summary)
+# Extract only the 5 classes we use (excluding J1)
+pop_sizes <- c(
+  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
+)
+
+# Calculate per capita rates
+percap_pel <- byc_pel_sums / pop_sizes
+percap_dem <- byc_dem_sums / pop_sizes
+
+cat("\n=== PER CAPITA BYCATCH RATES ===\n")
+cat("\nPelagic (birds per individual per year):\n")
+print(round(percap_pel, 6))
+cat("\nDemersal (birds per individual per year):\n")
+print(round(percap_dem, 6))
+
+# Create per capita summary table
+percap_summary <- tibble(
+  age_class = names(pop_sizes),
+  population = pop_sizes,
+  byc_pel = byc_pel_sums,
+  byc_dem = byc_dem_sums,
+  percap_pel = percap_pel,
+  percap_dem = percap_dem,
+  percap_total = percap_pel + percap_dem
+)
+
+print(percap_summary)
+```
+
+# Create Total Bycatch Maps
+
+Combine age classes to create total bycatch density maps.
+
+```{r create-total-bycatch-maps}
+# Sum bycatch across all age classes
+pel_byc_total <- Reduce("+", byc_pel)
+dem_byc_total <- Reduce("+", byc_dem)
+
+cat("\nTotal pelagic bycatch map sum:",
+    round(global(pel_byc_total, "sum", na.rm = TRUE)[1,1], 2), "\n")
+cat("Total demersal bycatch map sum:",
+    round(global(dem_byc_total, "sum", na.rm = TRUE)[1,1], 2), "\n")
+```
+
+# Mapping
+
+## BPUE Maps
+
+```{r map-bpue, fig.width=12, fig.height=6}
+# Function to map BPUE
+map_bpue <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bpue"
+
+  ext_rast <- ext(rast_obj)
+
+  ggplot(df, aes(x = x, y = y, fill = bpue)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "BPUE\n(birds/hook)",
+      na.value = "white",
+      direction = -1  # Reverse scale: blue = high, yellow = low
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create BPUE maps
+p_bpue_pel <- map_bpue(BPUE_map_pel, "Pelagic BPUE (weighted by % Bird Island)")
+p_bpue_dem <- map_bpue(BPUE_map_dem, "Demersal BPUE (weighted by % Bird Island)")
+
+# Display side by side
+p_bpue_pel | p_bpue_dem
+
+# Save maps
+dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
+ggsave(here("output/maps/bpue_pelagic.png"), p_bpue_pel,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/bpue_demersal.png"), p_bpue_dem,
+       width = 10, height = 6, dpi = 300)
+```
+
+## Total Bycatch Density Maps
+
+```{r map-total-bycatch, fig.width=12, fig.height=6}
+# Function to map bycatch density
+map_bycatch <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bycatch"
+
+  ext_rast <- ext(rast_obj)
+
+  ggplot(df, aes(x = x, y = y, fill = bycatch)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "Bycatch\nDensity",
+      na.value = "white",
+      direction = -1  # Reverse scale: blue = high, yellow = low
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create bycatch maps
+p_byc_pel <- map_bycatch(pel_byc_total, "Total Pelagic Bycatch Density")
+p_byc_dem <- map_bycatch(dem_byc_total, "Total Demersal Bycatch Density")
+
+# Display side by side
+p_byc_pel | p_byc_dem
+
+# Save maps
+ggsave(here("output/maps/bycatch_pelagic_total.png"), p_byc_pel,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/bycatch_demersal_total.png"), p_byc_dem,
+       width = 10, height = 6, dpi = 300)
+```
+
+## Bycatch by Age Class Maps
+
+```{r map-bycatch-by-age, fig.width=15, fig.height=10}
+# Create maps for each age class (pelagic)
+byc_pel_maps <- imap(byc_pel, function(r, age) {
+  map_bycatch(r, paste0("Pelagic Bycatch: ", toupper(age)))
+})
+
+# Display all pelagic age class maps
+wrap_plots(byc_pel_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_pel_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_pelagic_", age, ".png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+
+# Create maps for each age class (demersal)
+byc_dem_maps <- imap(byc_dem, function(r, age) {
+  map_bycatch(r, paste0("Demersal Bycatch: ", toupper(age)))
+})
+
+# Display all demersal age class maps
+wrap_plots(byc_dem_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_dem_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_demersal_", age, ".png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+```
+
+# Save Processed Data
+
+```{r save-outputs}
+# Create output directories if they don't exist
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+
+# Save BPUE maps
+writeRaster(BPUE_map_pel, here("output/rasters/bpue_pelagic.tif"),
+            overwrite = TRUE)
+writeRaster(BPUE_map_dem, here("output/rasters/bpue_demersal.tif"),
+            overwrite = TRUE)
+
+# Save total bycatch maps
+writeRaster(pel_byc_total, here("output/rasters/bycatch_pelagic_total.tif"),
+            overwrite = TRUE)
+writeRaster(dem_byc_total, here("output/rasters/bycatch_demersal_total.tif"),
+            overwrite = TRUE)
+
+# Save bycatch rasters by age class (pelagic)
+iwalk(byc_pel, function(r, age) {
+  writeRaster(r, here(paste0("output/rasters/bycatch_pelagic_", age, ".tif")),
+              overwrite = TRUE)
+})
+
+# Save bycatch rasters by age class (demersal)
+iwalk(byc_dem, function(r, age) {
+  writeRaster(r, here(paste0("output/rasters/bycatch_demersal_", age, ".tif")),
+              overwrite = TRUE)
+})
+
+# Save summary tables
+write_csv(bycatch_summary, here("output/bycatch_summary.csv"))
+write_csv(percap_summary, here("output/bycatch_percapita_summary.csv"))
+
+cat("\nAll outputs saved successfully\n")
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

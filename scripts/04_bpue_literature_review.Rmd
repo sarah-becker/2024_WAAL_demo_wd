@@ -1,0 +1,365 @@
+---
+title: "BPUE Literature Review - Data Compilation"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script works with the BPUE and bycatch mitigation literature review Excel file to:
+
+1. Read and explore all sheets in the workbook
+2. Identify missing data fields
+3. Extract BPUE values from PDFs
+4. Create spatial bounding boxes for each study
+5. Eventually build a spatially-referenced BPUE surface for use in script 03b
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(readxl)
+library(here)
+library(sf)
+library(terra)
+library(knitr)
+library(DT)
+```
+
+# Read Excel File
+
+```{r read-excel}
+# Path to the literature review Excel file
+excel_path <- "/Users/sarahbecker/Dropbox/Professional/CU_ENVS/WAAL_sim_2024/updates_2025/BPUE and bycatch mitigation literature reviews.xlsx"
+
+# Get all sheet names
+sheet_names <- excel_sheets(excel_path)
+
+cat("=== SHEETS IN WORKBOOK ===\n")
+cat(paste0(seq_along(sheet_names), ". ", sheet_names, "\n"))
+```
+
+# Read All Sheets
+
+```{r read-all-sheets}
+# Read all sheets into a named list
+all_sheets <- map(sheet_names, function(sheet) {
+  read_excel(excel_path, sheet = sheet)
+})
+names(all_sheets) <- sheet_names
+
+cat("\n=== SHEET DIMENSIONS ===\n")
+sheet_dims <- map_dfr(sheet_names, function(sheet) {
+  tibble(
+    sheet = sheet,
+    rows = nrow(all_sheets[[sheet]]),
+    cols = ncol(all_sheets[[sheet]])
+  )
+})
+print(sheet_dims)
+```
+
+# Explore Each Sheet
+
+```{r explore-sheets}
+# Function to summarize a sheet
+summarize_sheet <- function(df, sheet_name) {
+  cat("\n", strrep("=", 80), "\n")
+  cat("SHEET:", sheet_name, "\n")
+  cat(strrep("=", 80), "\n\n")
+
+  cat("Columns (", ncol(df), "):\n")
+  cat(paste0("  - ", names(df), "\n"))
+
+  cat("\nFirst few rows:\n")
+  print(head(df, 3))
+
+  # Check for missing values
+  cat("\nMissing values by column:\n")
+  missing_counts <- map_int(df, ~sum(is.na(.x)))
+  missing_df <- tibble(
+    column = names(missing_counts),
+    n_missing = missing_counts,
+    pct_missing = round(100 * missing_counts / nrow(df), 1)
+  ) %>%
+    filter(n_missing > 0) %>%
+    arrange(desc(n_missing))
+
+  if (nrow(missing_df) > 0) {
+    print(missing_df)
+  } else {
+    cat("  No missing values!\n")
+  }
+
+  cat("\n")
+}
+
+# Summarize each sheet
+iwalk(all_sheets, summarize_sheet)
+```
+
+# Interactive Tables
+
+Display each sheet as an interactive table for easier viewing.
+
+```{r interactive-tables, results='asis'}
+for (i in seq_along(sheet_names)) {
+  cat("\n##", sheet_names[i], "\n\n")
+
+  # Create interactive table
+  dt <- datatable(
+    all_sheets[[i]],
+    options = list(
+      pageLength = 10,
+      scrollX = TRUE,
+      autoWidth = TRUE
+    ),
+    filter = "top",
+    rownames = FALSE
+  )
+
+  print(htmltools::tagList(dt))
+  cat("\n\n")
+}
+```
+
+# Identify Key Data Gaps
+
+```{r identify-gaps}
+# Function to identify key gaps in BPUE data
+identify_bpue_gaps <- function(df, sheet_name) {
+  # Look for BPUE-related columns (flexible matching)
+  bpue_cols <- names(df)[str_detect(names(df), regex("bpue|rate|mortality", ignore_case = TRUE))]
+
+  if (length(bpue_cols) == 0) {
+    return(NULL)
+  }
+
+  # Check for geographic columns
+  geo_cols <- names(df)[str_detect(names(df), regex("lat|lon|region|area|box", ignore_case = TRUE))]
+
+  # Check for study info columns
+  study_cols <- names(df)[str_detect(names(df), regex("author|year|source|citation|study", ignore_case = TRUE))]
+
+  # Identify rows with BPUE but missing geographic info
+  if (length(geo_cols) > 0 && length(bpue_cols) > 0) {
+    # Check which rows have BPUE data
+    has_bpue <- rowSums(!is.na(select(df, all_of(bpue_cols)))) > 0
+    # Check which rows have geographic data
+    has_geo <- rowSums(!is.na(select(df, all_of(geo_cols)))) > 0
+
+    n_missing_geo <- sum(has_bpue & !has_geo)
+    n_complete <- sum(has_bpue & has_geo)
+
+    return(tibble(
+      sheet = sheet_name,
+      bpue_columns = paste(bpue_cols, collapse = ", "),
+      geo_columns = paste(geo_cols, collapse = ", "),
+      n_with_bpue = sum(has_bpue),
+      n_complete_records = n_complete,
+      n_missing_geography = n_missing_geo
+    ))
+  }
+
+  return(NULL)
+}
+
+# Analyze gaps across all sheets
+gaps <- map2_dfr(all_sheets, sheet_names, identify_bpue_gaps)
+
+if (!is.null(gaps) && nrow(gaps) > 0) {
+  cat("\n=== DATA COMPLETENESS SUMMARY ===\n\n")
+  print(gaps)
+} else {
+  cat("\nNo BPUE columns detected in sheets.\n")
+}
+```
+
+# Extract Study Metadata
+
+Create a master list of all studies with their current data status.
+
+```{r extract-metadata}
+# Function to extract study metadata from a sheet
+extract_study_metadata <- function(df, sheet_name) {
+  # Try to find key columns (flexible)
+  author_col <- names(df)[str_detect(names(df), regex("author", ignore_case = TRUE))][1]
+  year_col <- names(df)[str_detect(names(df), regex("year", ignore_case = TRUE))][1]
+  region_col <- names(df)[str_detect(names(df), regex("region|area", ignore_case = TRUE))][1]
+  fishery_col <- names(df)[str_detect(names(df), regex("fishery|fleet|gear", ignore_case = TRUE))][1]
+  bpue_col <- names(df)[str_detect(names(df), regex("bpue", ignore_case = TRUE))][1]
+
+  # Build metadata table
+  metadata <- df %>%
+    mutate(
+      sheet = sheet_name,
+      row_num = row_number()
+    )
+
+  # Select available columns
+  available_cols <- c("sheet", "row_num")
+  if (!is.na(author_col)) available_cols <- c(available_cols, author_col)
+  if (!is.na(year_col)) available_cols <- c(available_cols, year_col)
+  if (!is.na(region_col)) available_cols <- c(available_cols, region_col)
+  if (!is.na(fishery_col)) available_cols <- c(available_cols, fishery_col)
+  if (!is.na(bpue_col)) available_cols <- c(available_cols, bpue_col)
+
+  metadata <- metadata %>%
+    select(all_of(available_cols))
+
+  return(metadata)
+}
+
+# Extract metadata from all sheets
+study_metadata <- map2_dfr(all_sheets, sheet_names, possibly(extract_study_metadata, otherwise = NULL))
+
+if (!is.null(study_metadata) && nrow(study_metadata) > 0) {
+  cat("\n=== MASTER STUDY LIST ===\n")
+  cat("Total records:", nrow(study_metadata), "\n\n")
+
+  # Display interactive table
+  datatable(
+    study_metadata,
+    options = list(
+      pageLength = 20,
+      scrollX = TRUE
+    ),
+    filter = "top"
+  )
+}
+```
+
+# Framework for Adding Geographic Bounding Boxes
+
+```{r bounding-box-template}
+# Template function for creating bounding boxes
+create_bounding_box <- function(lat_min, lat_max, lon_min, lon_max, study_id) {
+  # Create polygon for bounding box
+  coords <- matrix(c(
+    lon_min, lat_min,
+    lon_max, lat_min,
+    lon_max, lat_max,
+    lon_min, lat_max,
+    lon_min, lat_min
+  ), ncol = 2, byrow = TRUE)
+
+  poly <- st_polygon(list(coords))
+
+  # Create sf object
+  bbox_sf <- st_sf(
+    study_id = study_id,
+    lat_min = lat_min,
+    lat_max = lat_max,
+    lon_min = lon_min,
+    lon_max = lon_max,
+    geometry = st_sfc(poly, crs = 4326)
+  )
+
+  return(bbox_sf)
+}
+
+# Example: Create a bounding box for a hypothetical study
+# Uncomment and modify to add real studies
+# example_box <- create_bounding_box(
+#   lat_min = -60,
+#   lat_max = -30,
+#   lon_min = -70,
+#   lon_max = -40,
+#   study_id = "Smith2010_SouthAtlantic"
+# )
+#
+# # Save as shapefile or GeoJSON
+# st_write(example_box, here("data/bpue_bounding_boxes/smith2010.geojson"))
+
+cat("\nBounding box template function created: create_bounding_box()\n")
+cat("Use this to add geographic extent for each study.\n")
+```
+
+# Framework for PDF Data Extraction
+
+```{r pdf-extraction-template}
+# Template for extracting BPUE from a PDF
+extract_bpue_from_pdf <- function(pdf_path) {
+  # This is a template - actual implementation depends on PDF structure
+
+  cat("\nTo extract BPUE from a PDF:\n")
+  cat("1. Provide the PDF path\n")
+  cat("2. I'll read the PDF and search for:\n")
+  cat("   - BPUE values (birds per 1000 hooks, or other units)\n")
+  cat("   - Geographic region\n")
+  cat("   - Sample size (hooks observed)\n")
+  cat("   - Fishery type (pelagic/demersal)\n")
+  cat("   - Mitigation measures\n")
+  cat("   - Confidence intervals\n")
+  cat("3. I'll format the data to add to your Excel file\n")
+
+  # Example structure for returned data
+  example_data <- tibble(
+    author = "Smith et al.",
+    year = 2010,
+    region = "South Atlantic",
+    fishery_type = "Pelagic longline",
+    bpue_per_1000_hooks = 0.015,
+    ci_lower = 0.010,
+    ci_upper = 0.020,
+    hooks_observed = 500000,
+    mitigation = "Tori lines",
+    lat_min = -60,
+    lat_max = -30,
+    lon_min = -70,
+    lon_max = -40
+  )
+
+  cat("\nExample extracted data structure:\n")
+  print(example_data)
+
+  return(example_data)
+}
+
+# Show template
+extract_bpue_from_pdf("path/to/paper.pdf")
+```
+
+# Next Steps
+
+This script provides the framework. To complete the literature review:
+
+1. **Identify papers to extract**: Which studies in the Excel file need data filled in?
+2. **Extract from PDFs**: Provide PDF paths and I'll extract BPUE values
+3. **Add geographic bounds**: Use `create_bounding_box()` for each study
+4. **Create spatial BPUE surface**: Once data is complete, create raster surface
+5. **Update script 03b**: Use spatially-referenced BPUE instead of mean values
+
+# Save Updated Data
+
+When ready to save updates back to Excel or CSV:
+
+```{r save-template, eval=FALSE}
+# Save individual sheets as CSV for easier editing
+iwalk(all_sheets, function(df, name) {
+  # Clean sheet name for filename
+  clean_name <- str_replace_all(tolower(name), "[^a-z0-9]+", "_")
+  write_csv(df, here(paste0("output/lit_review_", clean_name, ".csv")))
+})
+
+# Or update the master Excel file (requires writexl package)
+# library(writexl)
+# write_xlsx(all_sheets, here("output/bpue_literature_review_updated.xlsx"))
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

@@ -1,0 +1,1151 @@
+---
+title: "Wandering Albatross Bycatch - Spatial Catchability Method"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script implements a **spatially-varying catchability approach** based on supervisor feedback:
+
+1. ✓ BPUE is NOT scaled by % BI (it's a fishery property)
+2. ✓ Uses local % BI (0-60%) for allocation (from script 02)
+3. ✓ **NEW**: Each 5×5 cell gets its own catchability (β) based on which BPUE studies cover it
+4. ✓ Where multiple studies overlap, average their catchabilities
+
+## Method
+
+For each cell:
+```
+Step 1: Identify which BPUE studies cover this cell (via bounding boxes)
+Step 2: Calculate β for each study's BPUE
+Step 3: Average them → β_cell
+Step 4: Apply β_cell to calculate bycatch using local % BI
+```
+
+This creates a **catchability map** where each cell reflects local fishing practices based on empirical BPUE data.
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(patchwork)
+```
+
+# Load Required Data
+
+## Load fishing effort and bird data
+
+```{r load-base-data}
+# Fishing effort
+fishing_pel <- rast(here("output/rasters/fishing_effort_pelagic.tif"))
+fishing_dem <- rast(here("output/rasters/fishing_effort_demersal.tif"))
+
+# Bird densities
+total_bird_density <- rast(here("output/rasters/total_bird_density_all_pops.tif"))
+pct_bird_island <- rast(here("output/rasters/percentage_bird_island.tif"))
+
+# Clay age-class distributions
+bird_fb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_FB_1990-2009.tif"))
+bird_sb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_SB_1990-2009.tif"))
+bird_nb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_NB_1990-2009.tif"))
+bird_j2j3 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif"))
+bird_imm <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
+
+bird_dists_raw <- list(fb = bird_fb, sb = bird_sb, nb = bird_nb,
+                       j2j3 = bird_j2j3, imm = bird_imm)
+
+cat("Base data loaded\n")
+```
+
+## Load demographic proportions
+
+```{r load-demographics}
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
+
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+cat("\nAge class proportions loaded\n")
+```
+
+# Define BPUE Studies with Bounding Boxes
+
+Here we define each BPUE study from the literature with its spatial extent. This will eventually come from your literature review (script 04).
+
+```{r define-bpue-studies}
+# BPUE studies for PELAGIC longline
+# Each study has BPUE value and geographic bounding box
+bpue_studies_pel <- tibble(
+  study_id = c(
+    "Klaer2012_SAtl",
+    "Tuck2015_SAtl"
+  ),
+  bpue_per_1000 = c(
+    0.010,   # Klaer 2012
+    0.007    # Tuck 2015
+  ),
+  # Bounding boxes (lat/lon)
+  lat_min = c(-60, -60),
+  lat_max = c(-30, -35),
+  lon_min = c(-70, -65),
+  lon_max = c(-20, -25),
+  # Metadata
+  hooks_observed = c(500000, 750000),
+  year_collected = c(2008, 2012),
+  notes = c("South Atlantic", "South Atlantic")
+)
+
+# BPUE studies for DEMERSAL longline
+bpue_studies_dem <- tibble(
+  study_id = c(
+    "Tuck2015_baseline",
+    "Jimenez2020_premit"
+  ),
+  bpue_per_1000 = c(
+    0.001837540,  # Tuck 2015 baseline
+    0.029         # Jiménez 2020 pre-mitigation
+  ),
+  # Bounding boxes
+  lat_min = c(-60, -55),
+  lat_max = c(-35, -40),
+  lon_min = c(-70, -65),
+  lon_max = c(-25, -50),
+  # Metadata
+  hooks_observed = c(300000, 150000),
+  year_collected = c(2010, 2018),
+  notes = c("Baseline", "Uruguay pre-mitigation")
+)
+
+cat("\n=== BPUE STUDIES DEFINED ===\n")
+cat("Pelagic:", nrow(bpue_studies_pel), "studies\n")
+cat("Demersal:", nrow(bpue_studies_dem), "studies\n")
+
+print(bpue_studies_pel)
+print(bpue_studies_dem)
+```
+
+**NOTE:** These are placeholder values. When you complete your literature review (script 04), you'll replace this with the full compilation of studies with their actual bounding boxes.
+
+# Align Raster Grids
+
+```{r align-rasters}
+# Use total_bird_density as template
+template <- total_bird_density
+
+# Resample all to common grid
+fishing_pel_aligned <- resample(fishing_pel, template, method = "bilinear")
+fishing_dem_aligned <- resample(fishing_dem, template, method = "bilinear")
+pct_BI_aligned <- resample(pct_bird_island, template, method = "bilinear")
+
+bird_dists_aligned <- map(bird_dists_raw, function(r) {
+  resample(r, template, method = "bilinear")
+})
+
+cat("All rasters aligned to common grid\n")
+cat("Grid dimensions:", dim(template), "\n")
+```
+
+# Create Spatial Catchability Maps
+
+This is the key innovation: each cell gets its own catchability based on which BPUE studies cover it.
+
+## Helper function: Calculate catchability from BPUE
+
+```{r catchability-function}
+# Function to calculate catchability (β) from BPUE
+# β = (BPUE × H_total) / Σ(H × B)
+calculate_catchability <- function(bpue_per_1000, total_hooks, sum_hooks_x_birds) {
+  bpue_per_hook <- bpue_per_1000 / 1000
+  beta <- (bpue_per_hook * total_hooks) / sum_hooks_x_birds
+  return(beta)
+}
+```
+
+## Helper function: Determine study coverage
+
+```{r coverage-function}
+# Function to check if a cell (lat/lon) is covered by a study's bounding box
+cell_covered_by_study <- function(cell_lat, cell_lon, study_bbox) {
+  covered <- (cell_lat >= study_bbox$lat_min &
+              cell_lat <= study_bbox$lat_max &
+              cell_lon >= study_bbox$lon_min &
+              cell_lon <= study_bbox$lon_max)
+  return(covered)
+}
+
+# Function to get all studies covering a cell
+get_studies_for_cell <- function(cell_lat, cell_lon, bpue_studies) {
+  # Check each study
+  covered <- map_lgl(1:nrow(bpue_studies), function(i) {
+    cell_covered_by_study(cell_lat, cell_lon, bpue_studies[i, ])
+  })
+
+  # Return studies that cover this cell
+  return(bpue_studies[covered, ])
+}
+```
+
+## Calculate global parameters (for catchability calculation)
+
+```{r global-parameters}
+# Total hooks
+total_hooks_pel <- global(fishing_pel_aligned, "sum", na.rm = TRUE)[1,1]
+total_hooks_dem <- global(fishing_dem_aligned, "sum", na.rm = TRUE)[1,1]
+
+# Sum of hooks × birds (for denominator of catchability)
+hooks_x_birds_pel <- fishing_pel_aligned * total_bird_density
+sum_hooks_x_birds_pel <- global(hooks_x_birds_pel, "sum", na.rm = TRUE)[1,1]
+
+hooks_x_birds_dem <- fishing_dem_aligned * total_bird_density
+sum_hooks_x_birds_dem <- global(hooks_x_birds_dem, "sum", na.rm = TRUE)[1,1]
+
+cat("\n=== GLOBAL PARAMETERS ===\n")
+cat("Total pelagic hooks:  ", format(total_hooks_pel, big.mark = ","), "\n")
+cat("Sum(hooks × birds):   ", format(sum_hooks_x_birds_pel, big.mark = ","), "\n")
+cat("Total demersal hooks: ", format(total_hooks_dem, big.mark = ","), "\n")
+cat("Sum(hooks × birds):   ", format(sum_hooks_x_birds_dem, big.mark = ","), "\n")
+```
+
+## Build catchability maps
+
+This is the computationally intensive part - for each cell, we determine which studies cover it and average their catchabilities.
+
+```{r build-catchability-maps}
+cat("\n=== BUILDING SPATIAL CATCHABILITY MAPS ===\n")
+cat("This may take a few minutes...\n\n")
+
+# Get cell coordinates
+coords <- as.data.frame(template, xy = TRUE, cells = TRUE, na.rm = TRUE)  # na.rm = TRUE to only get cells with data
+
+cat("Processing", nrow(coords), "cells\n")
+
+# Initialize vectors to store catchability values
+catchability_pel_values <- numeric(nrow(coords))
+catchability_dem_values <- numeric(nrow(coords))
+n_studies_pel <- integer(nrow(coords))
+n_studies_dem <- integer(nrow(coords))
+
+# For each cell, calculate catchability
+for (i in 1:nrow(coords)) {
+  if (i %% 100 == 0) cat("  Processed", i, "of", nrow(coords), "cells\n")
+
+  cell_lat <- coords$y[i]
+  cell_lon <- coords$x[i]
+
+  # PELAGIC
+  studies_pel <- get_studies_for_cell(cell_lat, cell_lon, bpue_studies_pel)
+
+  if (nrow(studies_pel) > 0) {
+    # Calculate β for each study covering this cell
+    betas_pel <- map_dbl(1:nrow(studies_pel), function(j) {
+      calculate_catchability(
+        studies_pel$bpue_per_1000[j],
+        total_hooks_pel,
+        sum_hooks_x_birds_pel
+      )
+    })
+    # Weighted average by sample size (hooks observed)
+    catchability_pel_values[i] <- weighted.mean(betas_pel,
+                                                 w = studies_pel$hooks_observed)
+    n_studies_pel[i] <- nrow(studies_pel)
+  } else {
+    catchability_pel_values[i] <- NA
+    n_studies_pel[i] <- 0
+  }
+
+  # DEMERSAL
+  studies_dem <- get_studies_for_cell(cell_lat, cell_lon, bpue_studies_dem)
+
+  if (nrow(studies_dem) > 0) {
+    betas_dem <- map_dbl(1:nrow(studies_dem), function(j) {
+      calculate_catchability(
+        studies_dem$bpue_per_1000[j],
+        total_hooks_dem,
+        sum_hooks_x_birds_dem
+      )
+    })
+    # Weighted average by sample size (hooks observed)
+    catchability_dem_values[i] <- weighted.mean(betas_dem,
+                                                 w = studies_dem$hooks_observed)
+    n_studies_dem[i] <- nrow(studies_dem)
+  } else {
+    catchability_dem_values[i] <- NA
+    n_studies_dem[i] <- 0
+  }
+}
+
+# Add to coords dataframe
+coords <- coords %>%
+  mutate(
+    catchability_pel = catchability_pel_values,
+    catchability_dem = catchability_dem_values,
+    n_studies_pel = n_studies_pel,
+    n_studies_dem = n_studies_dem
+  )
+
+cat("\n=== COVERAGE STATISTICS ===\n")
+cat("Pelagic:\n")
+cat("  Cells covered:", sum(coords$n_studies_pel > 0), "/", nrow(coords), "\n")
+cat("  Cells with >1 study:", sum(coords$n_studies_pel > 1), "\n")
+cat("  Max studies per cell:", max(coords$n_studies_pel), "\n")
+
+cat("\nDemersal:\n")
+cat("  Cells covered:", sum(coords$n_studies_dem > 0), "/", nrow(coords), "\n")
+cat("  Cells with >1 study:", sum(coords$n_studies_dem > 1), "\n")
+cat("  Max studies per cell:", max(coords$n_studies_dem), "\n")
+```
+
+## Fill gaps using expert elicitation
+
+For cells not covered by any study, we use expert elicitation to assign appropriate BPUE values based on similarity in fishing operations and mitigation practices.
+
+```{r fill-gaps-expert}
+# EXPERT ELICITATION FRAMEWORK
+# Define gap-filling rules based on fishing characteristics
+# This will be populated based on expert consultation
+
+# Example structure for expert-assigned BPUE values
+# Each row defines a spatial region and the BPUE to use for gaps there
+expert_gap_fill <- tibble(
+  region_name = c(
+    "South_Atlantic_EEZ",      # Well-regulated areas
+    "High_Seas_South_Atlantic", # Less regulated
+    "Indian_Ocean_North",       # Different fishing practices
+    "Pacific_Areas"             # Distant regions
+  ),
+  # Geographic extent
+  lat_min = c(-60, -60, -45, -50),
+  lat_max = c(-30, -30, -20, -20),
+  lon_min = c(-70, -70, 20, -180),
+  lon_max = c(-20, -20, 100, -100),
+  # Expert-assigned BPUE for gaps (based on similar fisheries)
+  bpue_pel_expert = c(0.007, 0.010, 0.012, 0.008),
+  bpue_dem_expert = c(0.002, 0.015, 0.020, 0.005),
+  # Rationale
+  justification = c(
+    "Similar to South Georgia - good mitigation",
+    "High seas - variable mitigation",
+    "Similar to Indian Ocean studies - limited mitigation",
+    "Pacific baseline - moderate practices"
+  )
+)
+
+cat("\n=== EXPERT ELICITATION FRAMEWORK ===\n")
+cat("Gap-filling regions defined:", nrow(expert_gap_fill), "\n")
+print(expert_gap_fill)
+
+# Function to assign expert BPUE to a cell based on location
+assign_expert_bpue <- function(cell_lat, cell_lon, expert_table) {
+  # Find which expert region this cell falls in
+  in_region <- map_lgl(1:nrow(expert_table), function(i) {
+    cell_lat >= expert_table$lat_min[i] &
+    cell_lat <= expert_table$lat_max[i] &
+    cell_lon >= expert_table$lon_min[i] &
+    cell_lon <= expert_table$lon_max[i]
+  })
+
+  if (any(in_region)) {
+    # Use first matching region (could refine with priority rules)
+    idx <- which(in_region)[1]
+    return(expert_table[idx, ])
+  } else {
+    # Default to global mean if outside all expert regions
+    return(NULL)
+  }
+}
+
+# Calculate global mean catchability (fallback for cells outside expert regions)
+global_mean_bpue_pel <- weighted.mean(bpue_studies_pel$bpue_per_1000,
+                                      w = bpue_studies_pel$hooks_observed)
+global_catchability_pel <- calculate_catchability(
+  global_mean_bpue_pel, total_hooks_pel, sum_hooks_x_birds_pel
+)
+
+global_mean_bpue_dem <- weighted.mean(bpue_studies_dem$bpue_per_1000,
+                                      w = bpue_studies_dem$hooks_observed)
+global_catchability_dem <- calculate_catchability(
+  global_mean_bpue_dem, total_hooks_dem, sum_hooks_x_birds_dem
+)
+
+cat("\n=== FALLBACK (GLOBAL WEIGHTED MEAN) ===\n")
+cat("Pelagic:  ", format(global_catchability_pel, scientific = TRUE), "\n")
+cat("Demersal: ", format(global_catchability_dem, scientific = TRUE), "\n")
+
+# Fill gaps using expert assignments
+n_gaps_filled_pel <- 0
+n_gaps_filled_dem <- 0
+
+for (i in 1:nrow(coords)) {
+  # PELAGIC gaps
+  if (is.na(coords$catchability_pel[i])) {
+    expert_assignment <- assign_expert_bpue(coords$y[i], coords$x[i], expert_gap_fill)
+    if (!is.null(expert_assignment)) {
+      coords$catchability_pel[i] <- calculate_catchability(
+        expert_assignment$bpue_pel_expert,
+        total_hooks_pel,
+        sum_hooks_x_birds_pel
+      )
+      n_gaps_filled_pel <- n_gaps_filled_pel + 1
+    } else {
+      coords$catchability_pel[i] <- global_catchability_pel
+    }
+  }
+
+  # DEMERSAL gaps
+  if (is.na(coords$catchability_dem[i])) {
+    expert_assignment <- assign_expert_bpue(coords$y[i], coords$x[i], expert_gap_fill)
+    if (!is.null(expert_assignment)) {
+      coords$catchability_dem[i] <- calculate_catchability(
+        expert_assignment$bpue_dem_expert,
+        total_hooks_dem,
+        sum_hooks_x_birds_dem
+      )
+      n_gaps_filled_dem <- n_gaps_filled_dem + 1
+    } else {
+      coords$catchability_dem[i] <- global_catchability_dem
+    }
+  }
+}
+
+cat("\n=== GAP FILLING COMPLETE ===\n")
+cat("Pelagic gaps filled with expert values:  ", n_gaps_filled_pel, "\n")
+cat("Pelagic gaps filled with global mean:    ",
+    sum(is.na(catchability_pel_values)) - n_gaps_filled_pel, "\n")
+cat("Demersal gaps filled with expert values: ", n_gaps_filled_dem, "\n")
+cat("Demersal gaps filled with global mean:   ",
+    sum(is.na(catchability_dem_values)) - n_gaps_filled_dem, "\n")
+```
+
+## Convert to rasters
+
+```{r create-catchability-rasters}
+# Create catchability rasters
+# Need to match template structure
+
+# Create empty rasters
+catchability_pel_rast <- template
+catchability_dem_rast <- template
+
+# Fill with values using cell indices
+catchability_pel_rast[coords$cell] <- coords$catchability_pel
+catchability_dem_rast[coords$cell] <- coords$catchability_dem
+
+# Create coverage maps (number of studies)
+n_studies_pel_rast <- template
+n_studies_dem_rast <- template
+n_studies_pel_rast[coords$cell] <- coords$n_studies_pel
+n_studies_dem_rast[coords$cell] <- coords$n_studies_dem
+
+cat("\nCatchability rasters created\n")
+```
+
+# Visualize Catchability Maps
+
+```{r map-catchability, fig.width=12, fig.height=10}
+# Load basemap
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+map_extent <- c(-180, 180, -90, 0)
+
+# Function to map catchability
+map_catchability <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "catchability"
+
+  ggplot(df, aes(x = x, y = y, fill = catchability)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "Catchability (β)",
+      na.value = "white",
+      option = "magma"
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 11, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Map pelagic catchability
+p_catch_pel <- map_catchability(catchability_pel_rast,
+                                "Pelagic Catchability (β) - Spatially Varying")
+
+# Map demersal catchability
+p_catch_dem <- map_catchability(catchability_dem_rast,
+                                "Demersal Catchability (β) - Spatially Varying")
+
+# Display
+p_catch_pel / p_catch_dem
+
+# Save
+dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
+ggsave(here("output/maps/catchability_pelagic_spatial_03d.png"),
+       p_catch_pel, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/catchability_demersal_spatial_03d.png"),
+       p_catch_dem, width = 10, height = 6, dpi = 300)
+```
+
+## Map study coverage
+
+```{r map-coverage, fig.width=12, fig.height=6}
+# Function to map number of studies
+map_coverage <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "n_studies"
+
+  ggplot(df, aes(x = x, y = y, fill = factor(n_studies))) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    scale_fill_viridis_d(
+      name = "# Studies",
+      na.value = "white",
+      option = "plasma"
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 11, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+p_cov_pel <- map_coverage(n_studies_pel_rast, "Pelagic: Number of Studies per Cell")
+p_cov_dem <- map_coverage(n_studies_dem_rast, "Demersal: Number of Studies per Cell")
+
+p_cov_pel | p_cov_dem
+```
+
+# Calculate Bycatch Using Spatial Catchability
+
+Now we apply the spatially-varying catchability to calculate bycatch, using the same allocation framework as script 03c.
+
+## Calculate total WAAL bycatch
+
+```{r calculate-total-waal-bycatch}
+# For each cell: bycatch = hooks × birds × catchability (cell-specific!)
+total_waal_bycatch_pel <- fishing_pel_aligned * total_bird_density * catchability_pel_rast
+total_waal_bycatch_dem <- fishing_dem_aligned * total_bird_density * catchability_dem_rast
+
+# Verify totals
+actual_pel <- global(total_waal_bycatch_pel, "sum", na.rm = TRUE)[1,1]
+actual_dem <- global(total_waal_bycatch_dem, "sum", na.rm = TRUE)[1,1]
+
+# Expected (using global mean BPUE)
+expected_pel <- (global_mean_bpue_pel / 1000) * total_hooks_pel
+expected_dem <- (global_mean_bpue_dem / 1000) * total_hooks_dem
+
+cat("\n=== TOTAL WAAL BYCATCH (ALL POPULATIONS) ===\n")
+cat("Pelagic:\n")
+cat("  Expected (mean BPUE):  ", round(expected_pel, 2), "birds\n")
+cat("  Calculated (spatial β):", round(actual_pel, 2), "birds\n")
+cat("  Ratio:", round(actual_pel / expected_pel, 3), "\n\n")
+
+cat("Demersal:\n")
+cat("  Expected (mean BPUE):  ", round(expected_dem, 2), "birds\n")
+cat("  Calculated (spatial β):", round(actual_dem, 2), "birds\n")
+cat("  Ratio:", round(actual_dem / expected_dem, 3), "\n")
+```
+
+## Allocate to Bird Island
+
+```{r allocate-to-bird-island}
+# Allocate using local % BI (same as 03c)
+BI_total_bycatch_pel <- total_waal_bycatch_pel * pct_BI_aligned
+BI_total_bycatch_dem <- total_waal_bycatch_dem * pct_BI_aligned
+
+# Sum to get BI totals
+BI_total_pel <- global(BI_total_bycatch_pel, "sum", na.rm = TRUE)[1,1]
+BI_total_dem <- global(BI_total_bycatch_dem, "sum", na.rm = TRUE)[1,1]
+
+cat("\n=== BIRD ISLAND TOTAL BYCATCH ===\n")
+cat("Pelagic:  ", round(BI_total_pel, 2), "birds/year\n")
+cat("Demersal: ", round(BI_total_dem, 2), "birds/year\n")
+cat("TOTAL:    ", round(BI_total_pel + BI_total_dem, 2), "birds/year\n")
+
+# As % of total WAAL
+cat("\nBI as % of total WAAL bycatch:\n")
+cat("Pelagic:  ", round(100 * BI_total_pel / actual_pel, 1), "%\n")
+cat("Demersal: ", round(100 * BI_total_dem / actual_dem, 1), "%\n")
+```
+
+## Partition by age class
+
+```{r partition-by-age}
+# Prepare age weights (same as 03c)
+bird_dists_norm <- map(bird_dists_aligned, function(r) {
+  r_zero <- subst(r, NA, 0)
+  r_sum <- global(r_zero, "sum", na.rm = TRUE)[1,1]
+  return(r_zero / r_sum)
+})
+
+bird_dists_weighted <- map2(bird_dists_norm, age_class_props, function(r, prop) {
+  r * prop
+})
+
+all_ages_sum <- Reduce("+", bird_dists_weighted)
+age_weights <- map(bird_dists_weighted, function(r) r / all_ages_sum)
+
+# Calculate bycatch by age class
+byc_pel_by_age <- map(age_weights, function(age_wt) {
+  bycatch_map <- BI_total_bycatch_pel * age_wt
+  bycatch_total <- global(bycatch_map, "sum", na.rm = TRUE)[1,1]
+  return(list(map = bycatch_map, total = bycatch_total))
+})
+
+byc_dem_by_age <- map(age_weights, function(age_wt) {
+  bycatch_map <- BI_total_bycatch_dem * age_wt
+  bycatch_total <- global(bycatch_map, "sum", na.rm = TRUE)[1,1]
+  return(list(map = bycatch_map, total = bycatch_total))
+})
+
+# Extract totals
+byc_pel_totals <- map_dbl(byc_pel_by_age, "total")
+byc_dem_totals <- map_dbl(byc_dem_by_age, "total")
+
+cat("\n=== BYCATCH BY AGE CLASS ===\n")
+cat("Pelagic:\n")
+print(round(byc_pel_totals, 2))
+
+cat("\nDemersal:\n")
+print(round(byc_dem_totals, 2))
+```
+
+## Summary table
+
+```{r summary-table}
+bycatch_summary <- tibble(
+  age_class = names(byc_pel_totals),
+  pelagic = byc_pel_totals,
+  demersal = byc_dem_totals,
+  total = byc_pel_totals + byc_dem_totals
+) %>%
+  bind_rows(tibble(
+    age_class = "TOTAL",
+    pelagic = sum(byc_pel_totals),
+    demersal = sum(byc_dem_totals),
+    total = sum(byc_pel_totals) + sum(byc_dem_totals)
+  ))
+
+cat("\n=== TOTAL BYCATCH SUMMARY ===\n")
+print(bycatch_summary)
+```
+
+# Visualize Bycatch Maps
+
+## Basemap reference
+
+```{r basemap-reference, fig.width=12, fig.height=8}
+# Create a blank basemap for reference
+ext_rast <- ext(template)
+
+p_basemap <- ggplot() +
+  geom_sf(data = ne_land, fill = "grey80", color = "grey40", linewidth = 0.3) +
+  coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+           ylim = c(ext_rast[3], ext_rast[4]),
+           expand = FALSE) +
+  labs(title = "Study Area - Southern Ocean") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    panel.grid.major = element_line(color = "grey90", linewidth = 0.5),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+
+print(p_basemap)
+
+# Save basemap
+ggsave(here("output/maps/basemap_reference.png"), p_basemap,
+       width = 12, height = 8, dpi = 300)
+```
+
+## Map fishing effort
+
+```{r map-fishing-effort, fig.width=14, fig.height=12}
+# Function to map fishing effort with different transformations
+map_fishing_effort <- function(rast_obj, title, transform = "sqrt") {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "effort"
+
+  # Apply transformation
+  if (transform == "sqrt") {
+    df$effort_trans <- sqrt(df$effort)
+    legend_title <- "Hooks\n(sqrt)"
+  } else if (transform == "log10") {
+    df$effort_trans <- log10(df$effort + 1)  # +1 to handle zeros
+    legend_title <- "Hooks\n(log10)"
+  } else if (transform == "log") {
+    df$effort_trans <- log(df$effort + 1)  # natural log
+    legend_title <- "Hooks\n(ln)"
+  } else if (transform == "asinh") {
+    df$effort_trans <- asinh(df$effort)  # inverse hyperbolic sine - handles zeros well
+    legend_title <- "Hooks\n(asinh)"
+  } else if (transform == "cuberoot") {
+    df$effort_trans <- sign(df$effort) * abs(df$effort)^(1/3)
+    legend_title <- "Hooks\n(cube root)"
+  } else if (transform == "quantile") {
+    # Quantile transformation - equal number of observations per color bin
+    df$effort_trans <- df$effort
+    legend_title <- "Hooks\n(quantile)"
+  } else {
+    df$effort_trans <- df$effort
+    legend_title <- "Hooks\n(raw)"
+  }
+
+  p <- ggplot(df, aes(x = x, y = y, fill = effort_trans)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 11, face = "bold"),
+      legend.position = "right"
+    )
+
+  # Use quantile breaks for quantile transform, continuous otherwise
+  if (transform == "quantile") {
+    p <- p + scale_fill_viridis_c(
+      name = legend_title,
+      na.value = "white",
+      option = "plasma",
+      trans = "pseudo_log",
+      breaks = scales::breaks_pretty(n = 5)
+    )
+  } else {
+    p <- p + scale_fill_viridis_c(
+      name = legend_title,
+      na.value = "white",
+      option = "plasma"
+    )
+  }
+
+  return(p)
+}
+
+# Try different transformations for pelagic
+p_pel_sqrt <- map_fishing_effort(fishing_pel_aligned, "Pelagic: sqrt", "sqrt")
+p_pel_log10 <- map_fishing_effort(fishing_pel_aligned, "Pelagic: log10", "log10")
+p_pel_asinh <- map_fishing_effort(fishing_pel_aligned, "Pelagic: asinh", "asinh")
+p_pel_cuberoot <- map_fishing_effort(fishing_pel_aligned, "Pelagic: cube root", "cuberoot")
+
+# Display pelagic comparisons
+(p_pel_sqrt | p_pel_log10) / (p_pel_asinh | p_pel_cuberoot)
+
+# Try different transformations for demersal
+p_dem_sqrt <- map_fishing_effort(fishing_dem_aligned, "Demersal: sqrt", "sqrt")
+p_dem_log10 <- map_fishing_effort(fishing_dem_aligned, "Demersal: log10", "log10")
+p_dem_asinh <- map_fishing_effort(fishing_dem_aligned, "Demersal: asinh", "asinh")
+p_dem_cuberoot <- map_fishing_effort(fishing_dem_aligned, "Demersal: cube root", "cuberoot")
+
+# Display demersal comparisons
+(p_dem_sqrt | p_dem_log10) / (p_dem_asinh | p_dem_cuberoot)
+
+# Save recommended versions (asinh often works best for skewed data with zeros)
+ggsave(here("output/maps/fishing_effort_pelagic_asinh.png"), p_pel_asinh,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/fishing_effort_demersal_asinh.png"), p_dem_asinh,
+       width = 10, height = 6, dpi = 300)
+
+# Also save cube root versions
+ggsave(here("output/maps/fishing_effort_pelagic_cuberoot.png"), p_pel_cuberoot,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/fishing_effort_demersal_cuberoot.png"), p_dem_cuberoot,
+       width = 10, height = 6, dpi = 300)
+```
+
+## Publication-style fishing effort maps (×10⁶ hooks)
+
+Recreating the style from Carneiro et al. with effort in millions of hooks:
+
+```{r map-fishing-effort-publication, fig.width=12, fig.height=6}
+# Function for publication-style maps (effort in millions of hooks)
+map_fishing_effort_pub <- function(rast_obj, title, scale_type = "linear") {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "effort"
+
+  # Convert to millions of hooks
+  df$effort_millions <- df$effort / 1e6
+
+  # Apply scaling transformation if requested
+  if (scale_type == "sqrt") {
+    df$effort_plot <- sqrt(df$effort_millions)
+    legend_title <- expression(paste("Hooks (×10"^"6", ", sqrt scale)"))
+  } else if (scale_type == "log") {
+    df$effort_plot <- log10(df$effort_millions + 0.001)  # small offset for zeros
+    legend_title <- expression(paste("log"[10], " Hooks (×10"^"6", ")"))
+  } else {
+    df$effort_plot <- df$effort_millions
+    legend_title <- expression(paste("Hooks (×10"^"6", ")"))
+  }
+
+  ggplot(df, aes(x = x, y = y, fill = effort_plot)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = "grey40", linewidth = 0.2) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    scale_fill_viridis_c(
+      name = legend_title,
+      na.value = "white",
+      option = "plasma",
+      labels = scales::comma_format(accuracy = 0.1)
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right",
+      panel.grid.major = element_line(color = "grey90", linewidth = 0.3),
+      axis.title = element_blank()
+    )
+}
+
+# Create publication-style maps with linear scale
+p_pel_pub_linear <- map_fishing_effort_pub(fishing_pel_aligned,
+                                            "Pelagic Longline Fishing Effort",
+                                            scale_type = "linear")
+
+p_dem_pub_linear <- map_fishing_effort_pub(fishing_dem_aligned,
+                                            "Demersal Longline Fishing Effort",
+                                            scale_type = "linear")
+
+# Display side by side
+p_pel_pub_linear | p_dem_pub_linear
+
+# Save publication versions
+ggsave(here("output/maps/fishing_effort_pelagic_millions.png"),
+       p_pel_pub_linear, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/fishing_effort_demersal_millions.png"),
+       p_dem_pub_linear, width = 10, height = 6, dpi = 300)
+
+# Also create sqrt versions if linear is too dominated by hotspots
+p_pel_pub_sqrt <- map_fishing_effort_pub(fishing_pel_aligned,
+                                          "Pelagic Longline Fishing Effort (sqrt scale)",
+                                          scale_type = "sqrt")
+
+p_dem_pub_sqrt <- map_fishing_effort_pub(fishing_dem_aligned,
+                                          "Demersal Longline Fishing Effort (sqrt scale)",
+                                          scale_type = "sqrt")
+
+# Display sqrt versions
+p_pel_pub_sqrt | p_dem_pub_sqrt
+
+# Save sqrt versions
+ggsave(here("output/maps/fishing_effort_pelagic_millions_sqrt.png"),
+       p_pel_pub_sqrt, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/fishing_effort_demersal_millions_sqrt.png"),
+       p_dem_pub_sqrt, width = 10, height = 6, dpi = 300)
+```
+
+## Map total bird density (Carneiro)
+
+```{r map-bird-density, fig.width=12, fig.height=8}
+# Map total WAAL bird density from Carneiro et al.
+# Set values below 0.001 to NA so they appear as white/blank
+bird_density_masked <- total_bird_density
+bird_density_masked[bird_density_masked < 0.001] <- NA
+
+df_birds <- as.data.frame(bird_density_masked, xy = TRUE, na.rm = TRUE)
+names(df_birds)[3] <- "density"
+
+p_bird_density <- ggplot(df_birds, aes(x = x, y = y, fill = density)) +
+  geom_raster() +
+  geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+  coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+           ylim = c(ext_rast[3], ext_rast[4]),
+           expand = FALSE) +
+  scale_fill_viridis_c(
+    name = "Bird Density\n(birds/cell)",
+    na.value = "white",
+    option = "viridis",
+    direction = -1  # Reverse color ramp like Clay maps
+  ) +
+  labs(title = "Total WAAL Bird Density - All Populations (Carneiro et al. 2020)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    legend.position = "right"
+  )
+
+print(p_bird_density)
+
+# Save map
+ggsave(here("output/maps/bird_density_total_carneiro.png"), p_bird_density,
+       width = 12, height = 8, dpi = 300)
+```
+
+## Map total bycatch density
+
+```{r map-bycatch-total, fig.width=12, fig.height=6}
+# Function to map bycatch density
+map_bycatch <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bycatch"
+
+  ext_rast <- ext(rast_obj)
+
+  ggplot(df, aes(x = x, y = y, fill = bycatch)) +
+    geom_raster() +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = c(ext_rast[1], ext_rast[2]),
+             ylim = c(ext_rast[3], ext_rast[4]),
+             expand = FALSE) +
+    scale_fill_viridis_c(
+      name = "Bycatch\nDensity",
+      na.value = "white",
+      direction = -1
+    ) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "right"
+    )
+}
+
+# Create total bycatch maps
+p_byc_pel <- map_bycatch(BI_total_bycatch_pel,
+                         "Total Pelagic Bycatch Density (Spatial Catchability)")
+p_byc_dem <- map_bycatch(BI_total_bycatch_dem,
+                         "Total Demersal Bycatch Density (Spatial Catchability)")
+
+# Display side by side
+p_byc_pel | p_byc_dem
+
+# Save maps
+ggsave(here("output/maps/bycatch_pelagic_total_03d.png"), p_byc_pel,
+       width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/bycatch_demersal_total_03d.png"), p_byc_dem,
+       width = 10, height = 6, dpi = 300)
+```
+
+## Map by age class
+
+```{r map-by-age-class, fig.width=15, fig.height=10}
+# Extract map objects from the lists
+byc_pel_maps <- map(byc_pel_by_age, "map")
+byc_dem_maps <- map(byc_dem_by_age, "map")
+
+# Create maps for each age class (pelagic)
+byc_pel_age_maps <- imap(byc_pel_maps, function(r, age) {
+  map_bycatch(r, paste0("Pelagic Bycatch: ", toupper(age), " (Spatial Catchability)"))
+})
+
+# Display all pelagic age class maps
+wrap_plots(byc_pel_age_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_pel_age_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_pelagic_", age, "_03d.png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+
+# Create maps for each age class (demersal)
+byc_dem_age_maps <- imap(byc_dem_maps, function(r, age) {
+  map_bycatch(r, paste0("Demersal Bycatch: ", toupper(age), " (Spatial Catchability)"))
+})
+
+# Display all demersal age class maps
+wrap_plots(byc_dem_age_maps, ncol = 3)
+
+# Save individual age class maps
+iwalk(byc_dem_age_maps, function(p, age) {
+  ggsave(here(paste0("output/maps/bycatch_demersal_", age, "_03d.png")),
+         p, width = 8, height = 6, dpi = 300)
+})
+```
+
+## Per capita rates
+
+```{r per-capita-rates}
+pop_sizes <- c(
+  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
+)
+
+percap_pel <- byc_pel_totals / pop_sizes
+percap_dem <- byc_dem_totals / pop_sizes
+
+percap_summary <- tibble(
+  age_class = names(pop_sizes),
+  population = pop_sizes,
+  byc_pel = byc_pel_totals,
+  byc_dem = byc_dem_totals,
+  percap_pel = percap_pel,
+  percap_dem = percap_dem,
+  percap_total = percap_pel + percap_dem
+)
+
+cat("\n=== PER CAPITA RATES ===\n")
+print(percap_summary)
+```
+
+# Compare with Script 03c
+
+```{r compare-03c}
+if (file.exists(here("output/bycatch_summary_03c.csv"))) {
+  byc_03c <- read_csv(here("output/bycatch_summary_03c.csv"),
+                      show_col_types = FALSE)
+
+  comparison <- tibble(
+    age_class = bycatch_summary$age_class,
+    pelagic_03c = byc_03c$pelagic,
+    pelagic_03d = bycatch_summary$pelagic,
+    pelagic_ratio = bycatch_summary$pelagic / byc_03c$pelagic,
+    demersal_03c = byc_03c$demersal,
+    demersal_03d = bycatch_summary$demersal,
+    demersal_ratio = bycatch_summary$demersal / byc_03c$demersal
+  )
+
+  cat("\n=== COMPARISON: SCRIPT 03c vs 03d ===\n")
+  print(comparison)
+
+  cat("\n=== SUMMARY ===\n")
+  cat("Total pelagic (03c):   ", round(byc_03c$pelagic[nrow(byc_03c)], 2), "\n")
+  cat("Total pelagic (03d):   ", round(sum(byc_pel_totals), 2), "\n")
+  cat("Ratio (03d/03c):       ", round(sum(byc_pel_totals) / byc_03c$pelagic[nrow(byc_03c)], 3), "×\n\n")
+
+  cat("Total demersal (03c):  ", round(byc_03c$demersal[nrow(byc_03c)], 2), "\n")
+  cat("Total demersal (03d):  ", round(sum(byc_dem_totals), 2), "\n")
+  cat("Ratio (03d/03d):       ", round(sum(byc_dem_totals) / byc_03c$demersal[nrow(byc_03c)], 3), "×\n")
+
+  write_csv(comparison, here("output/bycatch_comparison_03c_vs_03d.csv"))
+} else {
+  cat("\nScript 03c results not found for comparison\n")
+}
+```
+
+# Save Outputs
+
+```{r save-outputs}
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+
+# Save catchability rasters
+writeRaster(catchability_pel_rast,
+            here("output/rasters/catchability_pelagic_spatial_03d.tif"),
+            overwrite = TRUE)
+writeRaster(catchability_dem_rast,
+            here("output/rasters/catchability_demersal_spatial_03d.tif"),
+            overwrite = TRUE)
+
+# Save coverage rasters
+writeRaster(n_studies_pel_rast,
+            here("output/rasters/n_studies_pelagic_03d.tif"),
+            overwrite = TRUE)
+writeRaster(n_studies_dem_rast,
+            here("output/rasters/n_studies_demersal_03d.tif"),
+            overwrite = TRUE)
+
+# Save bycatch summaries
+write_csv(bycatch_summary, here("output/bycatch_summary_03d.csv"))
+write_csv(percap_summary, here("output/bycatch_percapita_summary_03d.csv"))
+
+# Save study metadata
+write_csv(bpue_studies_pel, here("output/bpue_studies_pelagic_03d.csv"))
+write_csv(bpue_studies_dem, here("output/bpue_studies_demersal_03d.csv"))
+
+# Save expert elicitation framework
+write_csv(expert_gap_fill, here("output/expert_gap_fill_03d.csv"))
+
+cat("\nAll outputs saved successfully\n")
+```
+
+# Diagnostics
+
+```{r diagnostics}
+cat("\n=== DIAGNOSTIC VALUES ===\n\n")
+
+cat("Catchability spatial variation:\n")
+cat("Pelagic β:\n")
+cat("  Min:  ", format(global(catchability_pel_rast, "min", na.rm = TRUE)[1,1], scientific = TRUE), "\n")
+cat("  Mean: ", format(global(catchability_pel_rast, "mean", na.rm = TRUE)[1,1], scientific = TRUE), "\n")
+cat("  Max:  ", format(global(catchability_pel_rast, "max", na.rm = TRUE)[1,1], scientific = TRUE), "\n\n")
+
+cat("Demersal β:\n")
+cat("  Min:  ", format(global(catchability_dem_rast, "min", na.rm = TRUE)[1,1], scientific = TRUE), "\n")
+cat("  Mean: ", format(global(catchability_dem_rast, "mean", na.rm = TRUE)[1,1], scientific = TRUE), "\n")
+cat("  Max:  ", format(global(catchability_dem_rast, "max", na.rm = TRUE)[1,1], scientific = TRUE), "\n\n")
+
+cat("Study coverage:\n")
+cat("Pelagic: ", sum(coords$n_studies_pel > 0), "cells covered (",
+    round(100 * sum(coords$n_studies_pel > 0) / nrow(coords), 1), "%)\n")
+cat("Demersal:", sum(coords$n_studies_dem > 0), "cells covered (",
+    round(100 * sum(coords$n_studies_dem > 0) / nrow(coords), 1), "%)\n\n")
+
+cat("Cells with multiple studies:\n")
+cat("Pelagic: ", sum(coords$n_studies_pel > 1), "cells\n")
+cat("Demersal:", sum(coords$n_studies_dem > 1), "cells\n")
+```
+
+# Notes
+
+**Implementation Notes:**
+
+1. **Study definitions**: The BPUE studies defined here are placeholders. When you complete your literature review (script 04), you'll replace this section with the actual compiled studies (~20-30 studies with bounding boxes).
+
+2. **Averaging method**: When multiple studies overlap a cell, we use **weighted mean by sample size** (hooks observed). This gives more weight to studies with larger sample sizes, which are generally more reliable.
+
+3. **Gap filling**: Cells not covered by any literature study use **expert elicitation** to assign appropriate BPUE values based on similarity in:
+   - Fishing operations (fleet type, gear)
+   - Mitigation practices (tori lines, night setting, etc.)
+   - Regulatory environment (RFMO requirements)
+   - Geographic/oceanographic characteristics
+
+   The `expert_gap_fill` table defines regions with their assigned BPUE values and justification. This table will be populated through consultation with fisheries experts familiar with different regional practices.
+
+4. **Fallback**: For cells outside all literature coverage AND expert regions, we use the **global weighted mean catchability** as a conservative default.
+
+5. **Computational efficiency**: For large grids or many studies, consider:
+   - Spatial indexing (use sf package for faster intersection)
+   - Parallel processing (map operations can be parallelized)
+   - Pre-compute study overlaps and save as lookup table
+
+6. **Supervisor feedback implemented**:
+   - ✓ BPUE is NOT scaled by % BI (correct - it's a fishery property)
+   - ✓ Each cell gets its own β based on literature coverage
+   - ✓ Multiple studies averaged using **weighted mean by sample size**
+   - ✓ Gaps filled using **expert elicitation** based on fishing similarity
+   - ✓ Maintains catchability framework throughout
+   - ✓ Uses local % BI (0-60%) for allocation (from script 02/03c)
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

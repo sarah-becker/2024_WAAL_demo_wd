@@ -1,0 +1,406 @@
+---
+title: "Method Comparison: Global Catchability + Unclipped Clay"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Overview
+
+This script tests if 03d and 03e methods are mathematically equivalent when using:
+- **Global catchability** (single β value per fishery, no spatial variation)
+- **Unclipped approach** (BI calculated everywhere birds exist, not just SG range)
+- **Clay for BI** (age-class data from Clay et al. 2019)
+- **Carneiro for other populations** (Crozet, Kerguelen, PEI)
+
+**Methods to compare:**
+- **Method 03d**: Calculate total WAAL bycatch, then allocate to BI using local %
+- **Method 03e**: Calculate BI bycatch directly using Clay age-class densities
+
+**These should give identical results if mathematically equivalent!**
+
+**Note:** Using global BPUE values for now (lit review incomplete). Spatial catchability can be added later once literature review provides regional BPUE estimates.
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(here)
+```
+
+# Load Data
+
+```{r load-data}
+# Fishing effort
+fishing_pel <- rast(here("output/rasters/fishing_effort_pelagic.tif"))
+fishing_dem <- rast(here("output/rasters/fishing_effort_demersal.tif"))
+
+# Clay distributions (for BI)
+bird_fb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_FB_1990-2009.tif"))
+bird_sb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_SB_1990-2009.tif"))
+bird_nb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_NB_1990-2009.tif"))
+bird_j2j3 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif"))
+bird_imm <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
+
+clay_dists <- list(fb = bird_fb, sb = bird_sb, nb = bird_nb,
+                   j2j3 = bird_j2j3, imm = bird_imm)
+
+# Carneiro distributions (for other populations)
+crozet_dist <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Crozet_year-round.tif"))
+kerguelen_dist <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Kerguelen_year-round.tif"))
+
+# Demographics
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
+
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+cat("Data loaded\n")
+```
+
+# Define Population Structure
+
+```{r define-populations}
+# Population proportions (breeding pairs)
+prop_BI <- 931.8 / 5325.8     # Bird Island as fraction of global
+prop_crozet <- 340 / 5325.8   # Crozet
+prop_kerg <- 354 / 5325.8     # Kerguelen
+prop_pei <- 3700 / 5325.8     # Prince Edward Islands
+
+cat("Population proportions:\n")
+cat("Bird Island:", round(prop_BI, 4), "\n")
+cat("Crozet:", round(prop_crozet, 4), "\n")
+cat("Kerguelen:", round(prop_kerg, 4), "\n")
+cat("PEI:", round(prop_pei, 4), "\n")
+```
+
+# Define BPUE Values
+
+Using global mean BPUE (lit review incomplete, so no spatial variation for now)
+
+```{r define-bpue}
+# Global BPUE values (birds per 1000 hooks)
+bpue_pel <- 0.008547      # Pelagic longline
+bpue_dem <- 0.001837540   # Demersal longline
+
+cat("=== GLOBAL BPUE VALUES ===\n")
+cat("Pelagic:  ", bpue_pel, "birds per 1000 hooks\n")
+cat("Demersal: ", bpue_dem, "birds per 1000 hooks\n")
+cat("\nNOTE: Using global values everywhere (no spatial variation)\n")
+cat("      Lit review will enable spatial catchability later\n")
+```
+
+# Align Rasters
+
+```{r align-rasters}
+template <- fishing_pel
+
+# Align everything to common grid
+crozet_aligned <- resample(crozet_dist, template, method = "bilinear")
+kerguelen_aligned <- resample(kerguelen_dist, template, method = "bilinear")
+clay_aligned <- map(clay_dists, ~resample(.x, template, method = "bilinear"))
+fishing_pel_aligned <- fishing_pel
+fishing_dem_aligned <- resample(fishing_dem, template, method = "bilinear")
+
+cat("Rasters aligned\n")
+```
+
+# Build Bird Densities
+
+## Normalize and weight Clay distributions
+
+```{r build-clay-densities}
+# Normalize Clay distributions (sum to 1)
+clay_norm <- map(clay_aligned, function(r) {
+  r_zero <- subst(r, NA, 0)
+  r_sum <- global(r_zero, "sum", na.rm = TRUE)[1,1]
+  return(r_zero / r_sum)
+})
+
+# Weight by age class proportions
+clay_weighted <- map2(clay_norm, age_class_props, ~.x * .y)
+
+# Sum to get combined BI distribution
+BI_clay_combined <- Reduce("+", clay_weighted)
+
+# Normalize to ensure it sums to 1 (age proportions only sum to 0.93, missing J1/adults)
+BI_clay_norm <- BI_clay_combined / global(BI_clay_combined, "sum", na.rm = TRUE)[1,1]
+
+# Scale by BI proportion of global population
+# This accounts for BI = 60% of SG, since 931.8 / 5325.8 includes that
+BI_density <- BI_clay_norm * prop_BI
+
+cat("\n=== BIRD ISLAND DENSITY (Clay) ===\n")
+cat("Age class proportions sum to:", round(sum(age_class_props), 4), "\n")
+cat("After normalization, BI density sums to:", round(global(BI_density, "sum", na.rm = TRUE)[1,1], 4), "\n")
+cat("Expected (prop_BI):", round(prop_BI, 4), "\n")
+cat("BI = 60% of SG = 931.8 / 1553 =", round(931.8/1553, 4), "\n")
+```
+
+## Build Carneiro densities for other populations
+
+```{r build-carneiro-densities}
+# Normalize Carneiro distributions
+crozet_norm <- crozet_aligned / global(crozet_aligned, "sum", na.rm = TRUE)[1,1]
+kerguelen_norm <- kerguelen_aligned / global(kerguelen_aligned, "sum", na.rm = TRUE)[1,1]
+
+# Weight by population proportions
+crozet_density <- crozet_norm * prop_crozet
+kerguelen_density <- kerguelen_norm * prop_kerg
+pei_density <- crozet_norm * prop_pei  # Using Crozet as proxy for PEI
+
+cat("\n=== OTHER POPULATION DENSITIES (Carneiro) ===\n")
+cat("Crozet sums to:", round(global(crozet_density, "sum", na.rm = TRUE)[1,1], 4), "\n")
+cat("Kerguelen sums to:", round(global(kerguelen_density, "sum", na.rm = TRUE)[1,1], 4), "\n")
+cat("PEI sums to:", round(global(pei_density, "sum", na.rm = TRUE)[1,1], 4), "\n")
+```
+
+## Build total WAAL density
+
+```{r build-total-density}
+# Total = BI (Clay) + others (Carneiro)
+total_bird_density <- BI_density + crozet_density + kerguelen_density + pei_density
+
+cat("\n=== TOTAL WAAL DENSITY ===\n")
+cat("Total density sums to:", round(global(total_bird_density, "sum", na.rm = TRUE)[1,1], 4), "\n")
+
+# Calculate local % BI (for 03d method)
+local_pct_BI <- BI_density / total_bird_density
+
+cat("Local % BI calculated (unclipped)\n")
+```
+
+# Calculate Global Catchability
+
+Calculate single β value for each fishery using BPUE
+
+```{r calculate-catchability}
+# Total hooks
+total_hooks_pel <- global(fishing_pel_aligned, "sum", na.rm = TRUE)[1,1]
+total_hooks_dem <- global(fishing_dem_aligned, "sum", na.rm = TRUE)[1,1]
+
+# Sum of hooks × birds (denominator for catchability)
+hooks_x_birds_pel <- fishing_pel_aligned * total_bird_density
+sum_hooks_x_birds_pel <- global(hooks_x_birds_pel, "sum", na.rm = TRUE)[1,1]
+
+hooks_x_birds_dem <- fishing_dem_aligned * total_bird_density
+sum_hooks_x_birds_dem <- global(hooks_x_birds_dem, "sum", na.rm = TRUE)[1,1]
+
+# Calculate catchability: β = (BPUE × H_total) / Σ(H × B)
+beta_pel <- (bpue_pel / 1000 * total_hooks_pel) / sum_hooks_x_birds_pel
+beta_dem <- (bpue_dem / 1000 * total_hooks_dem) / sum_hooks_x_birds_dem
+
+cat("\n=== CATCHABILITY CALCULATION ===\n")
+cat("Total hooks:\n")
+cat("  Pelagic: ", format(total_hooks_pel, big.mark = ","), "\n")
+cat("  Demersal:", format(total_hooks_dem, big.mark = ","), "\n")
+cat("\nSum(hooks × birds):\n")
+cat("  Pelagic: ", format(sum_hooks_x_birds_pel, scientific = TRUE), "\n")
+cat("  Demersal:", format(sum_hooks_x_birds_dem, scientific = TRUE), "\n")
+cat("\nCatchability (β):\n")
+cat("  Pelagic: ", format(beta_pel, scientific = TRUE), "\n")
+cat("  Demersal:", format(beta_dem, scientific = TRUE), "\n")
+```
+
+# Method 03d: Total Then Allocate
+
+Calculate total WAAL bycatch, then allocate to BI using local %
+
+```{r method-03d}
+cat("\n=== METHOD 03d: TOTAL THEN ALLOCATE ===\n")
+
+# Calculate total WAAL bycatch in each cell
+total_byc_pel <- fishing_pel_aligned * total_bird_density * beta_pel
+total_byc_dem <- fishing_dem_aligned * total_bird_density * beta_dem
+
+# Allocate to BI using local % BI
+BI_byc_pel_03d <- total_byc_pel * local_pct_BI
+BI_byc_dem_03d <- total_byc_dem * local_pct_BI
+
+# Sum to get totals
+BI_pel_03d <- global(BI_byc_pel_03d, "sum", na.rm = TRUE)[1,1]
+BI_dem_03d <- global(BI_byc_dem_03d, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_03d, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_03d, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_03d + BI_dem_03d, 2), "\n")
+```
+
+# Method 03e: Direct Calculation
+
+Calculate BI bycatch directly using BI density
+
+```{r method-03e}
+cat("\n=== METHOD 03e: DIRECT CALCULATION ===\n")
+
+# Direct calculation: hooks × BI_birds × catchability
+BI_byc_pel_03e <- fishing_pel_aligned * BI_density * beta_pel
+BI_byc_dem_03e <- fishing_dem_aligned * BI_density * beta_dem
+
+# Sum to get totals
+BI_pel_03e <- global(BI_byc_pel_03e, "sum", na.rm = TRUE)[1,1]
+BI_dem_03e <- global(BI_byc_dem_03e, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_03e, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_03e, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_03e + BI_dem_03e, 2), "\n")
+```
+
+# Comparison
+
+```{r comparison}
+cat("\n=== COMPARISON ===\n")
+cat("Pelagic  - 03d:", round(BI_pel_03d, 2), "  03e:", round(BI_pel_03e, 2),
+    "  Diff:", round(BI_pel_03e - BI_pel_03d, 2), "\n")
+cat("Demersal - 03d:", round(BI_dem_03d, 2), "  03e:", round(BI_dem_03e, 2),
+    "  Diff:", round(BI_dem_03e - BI_dem_03d, 2), "\n")
+cat("TOTAL    - 03d:", round(BI_pel_03d + BI_dem_03d, 2), "  03e:",
+    round(BI_pel_03e + BI_dem_03e, 2),
+    "  Diff:", round((BI_pel_03e + BI_dem_03e) - (BI_pel_03d + BI_dem_03d), 2), "\n")
+
+comparison <- tibble(
+  Method = c("03d: Total then Allocate", "03e: Direct Calculation"),
+  Pelagic = c(BI_pel_03d, BI_pel_03e),
+  Demersal = c(BI_dem_03d, BI_dem_03e),
+  Total = c(BI_pel_03d + BI_dem_03d, BI_pel_03e + BI_dem_03e)
+)
+
+print(comparison)
+
+write_csv(comparison, here("output/method_comparison_spatial_unclipped.csv"))
+
+cat("\n=== MATHEMATICAL EQUIVALENCE TEST ===\n")
+if (abs(BI_pel_03d - BI_pel_03e) < 0.01 & abs(BI_dem_03d - BI_dem_03e) < 0.01) {
+  cat("✓ PASS: Methods are mathematically equivalent!\n")
+} else {
+  cat("✗ FAIL: Methods differ - there's a bug somewhere!\n")
+}
+```
+
+# Visualization Maps
+
+```{r load-mapping-packages}
+library(sf)
+library(viridis)
+library(patchwork)
+
+# Load land polygon
+land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+
+# Map extent
+map_extent <- c(-180, 180, -90, 0)
+```
+
+## Map bird densities
+
+```{r map-bird-densities, fig.width=14, fig.height=10}
+# Helper function to map densities
+map_density <- function(rast_obj, title, transform = "asinh") {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "density"
+
+  if (transform == "asinh") {
+    df$density_trans <- asinh(df$density)
+    legend_label <- "Density\n(asinh)"
+  } else {
+    df$density_trans <- df$density
+    legend_label <- "Density"
+  }
+
+  ggplot() +
+    geom_raster(data = df, aes(x = x, y = y, fill = density_trans)) +
+    geom_sf(data = land, fill = "gray30", color = "gray20", linewidth = 0.3) +
+    scale_fill_viridis(name = legend_label, option = "viridis") +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_line(color = "gray80", linewidth = 0.2),
+      panel.background = element_rect(fill = "aliceblue"),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 11)
+    )
+}
+
+# Create density maps
+map_bi <- map_density(BI_density, "Bird Island Density (Clay)")
+map_total <- map_density(total_bird_density, "Total WAAL Density (Clay BI + Carneiro Others)")
+map_pct_bi <- map_density(local_pct_BI, "Local % Bird Island", transform = "none")
+
+# Map fishing effort
+map_effort_pel <- map_density(fishing_pel_aligned, "Pelagic Fishing Effort")
+map_effort_dem <- map_density(fishing_dem_aligned, "Demersal Fishing Effort")
+
+# Combine
+(map_bi + map_total) / (map_pct_bi + map_effort_dem)
+
+ggsave(here("output/maps/comparison_densities_effort.png"),
+       width = 14, height = 10, dpi = 300)
+```
+
+## Display catchability values
+
+```{r display-catchability}
+cat("\n=== GLOBAL CATCHABILITY VALUES ===\n")
+cat("Pelagic β: ", format(beta_pel, scientific = TRUE), "\n")
+cat("Demersal β:", format(beta_dem, scientific = TRUE), "\n")
+cat("\nNote: Using global values (no spatial variation)\n")
+```
+
+## Map bycatch
+
+```{r map-bycatch, fig.width=14, fig.height=10}
+# Helper for bycatch maps
+map_bycatch <- function(rast_obj, title) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bycatch"
+  df$bycatch_trans <- asinh(df$bycatch)
+
+  ggplot() +
+    geom_raster(data = df, aes(x = x, y = y, fill = bycatch_trans)) +
+    geom_sf(data = land, fill = "gray30", color = "gray20", linewidth = 0.3) +
+    scale_fill_viridis(name = "Bycatch\n(asinh)", option = "plasma") +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    labs(title = title) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_line(color = "gray80", linewidth = 0.2),
+      panel.background = element_rect(fill = "aliceblue"),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 11)
+    )
+}
+
+# Create bycatch maps
+map_byc_pel_03d <- map_bycatch(BI_byc_pel_03d, "03d Pelagic Bycatch")
+map_byc_dem_03d <- map_bycatch(BI_byc_dem_03d, "03d Demersal Bycatch")
+map_byc_pel_03e <- map_bycatch(BI_byc_pel_03e, "03e Pelagic Bycatch")
+map_byc_dem_03e <- map_bycatch(BI_byc_dem_03e, "03e Demersal Bycatch")
+
+(map_byc_pel_03d + map_byc_dem_03d) / (map_byc_pel_03e + map_byc_dem_03e)
+
+ggsave(here("output/maps/comparison_bycatch_all.png"),
+       width = 14, height = 10, dpi = 300)
+
+cat("\nMaps saved\n")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

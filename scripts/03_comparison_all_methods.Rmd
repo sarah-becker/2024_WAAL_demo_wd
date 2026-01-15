@@ -1,0 +1,443 @@
+---
+title: "Systematic Comparison: All Methods × Data Sources"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Overview
+
+This script tests if 03d and 03e methods are mathematically equivalent when using:
+- **Spatial catchability** (different β values by region based on BPUE studies)
+- **Unclipped approach** (BI calculated everywhere birds exist, not just SG range)
+- **Clay for BI** (age-class data from Clay et al. 2019)
+
+**Methods to compare:**
+- **03d approach**: Calculate total WAAL bycatch, then allocate to BI using local %
+- **03e approach**: Calculate BI bycatch directly
+
+**These should give identical results if mathematically equivalent!**
+
+# Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(here)
+```
+
+# Load Data
+
+```{r load-data}
+# Fishing effort
+fishing_pel <- rast(here("output/rasters/fishing_effort_pelagic.tif"))
+fishing_dem <- rast(here("output/rasters/fishing_effort_demersal.tif"))
+
+# Clay distributions (for BI)
+bird_fb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_FB_1990-2009.tif"))
+bird_sb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_SB_1990-2009.tif"))
+bird_nb <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_NB_1990-2009.tif"))
+bird_j2j3 <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif"))
+bird_imm <- rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
+
+clay_dists <- list(fb = bird_fb, sb = bird_sb, nb = bird_nb,
+                   j2j3 = bird_j2j3, imm = bird_imm)
+
+# Carneiro distributions (for other populations)
+crozet_dist <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Crozet_year-round.tif"))
+kerguelen_dist <- rast(here("data/WAAL_dist_Carneiro/Wandering_Albatross_Kerguelen_year-round.tif"))
+
+# Demographics
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
+
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+cat("Data loaded\n")
+```
+
+# Define Population Structure
+
+```{r define-populations}
+# Population proportions
+prop_BI <- 931.8 / 5325.8  # BI as fraction of global
+prop_southg <- 1553 / 5947  # SG as fraction (for Carneiro version)
+prop_crozet <- 340 / 5325.8
+prop_kerg <- 354 / 5325.8
+prop_pei <- 3700 / 5325.8
+
+cat("Population proportions:\n")
+cat("Bird Island:", round(prop_BI, 4), "\n")
+cat("South Georgia:", round(prop_southg, 4), "\n")
+cat("Crozet:", round(prop_crozet, 4), "\n")
+cat("Kerguelen:", round(prop_kerg, 4), "\n")
+cat("PEI:", round(prop_pei, 4), "\n")
+```
+
+# Align Rasters
+
+```{r align-rasters}
+template <- fishing_pel
+
+# Align everything
+crozet_aligned <- resample(crozet_dist, template, method = "bilinear")
+kerguelen_aligned <- resample(kerguelen_dist, template, method = "bilinear")
+southg_aligned <- resample(southg_dist, template, method = "bilinear")
+
+clay_aligned <- map(clay_dists, ~resample(.x, template, method = "bilinear"))
+
+fishing_pel_aligned <- fishing_pel
+fishing_dem_aligned <- resample(fishing_dem, template, method = "bilinear")
+
+cat("Rasters aligned\n")
+```
+
+# Build Total WAAL Densities
+
+## Version A: Carneiro for all (original 03d)
+
+```{r build-carneiro-total}
+# Normalize
+crozet_norm <- crozet_aligned / global(crozet_aligned, "sum", na.rm = TRUE)[1,1]
+kerguelen_norm <- kerguelen_aligned / global(kerguelen_aligned, "sum", na.rm = TRUE)[1,1]
+southg_norm <- southg_aligned / global(southg_aligned, "sum", na.rm = TRUE)[1,1]
+
+# Build total WAAL density (Carneiro for all populations)
+total_carneiro <- (southg_norm * prop_southg +
+                   crozet_norm * prop_crozet +
+                   kerguelen_norm * prop_kerg +
+                   crozet_norm * prop_pei)
+
+# BI portion (60% of SG)
+BI_carneiro <- southg_norm * prop_southg * 0.6
+
+cat("\n=== CARNEIRO TOTAL (Version A) ===\n")
+cat("Total sum:", round(global(total_carneiro, "sum", na.rm = TRUE)[1,1], 4), "\n")
+cat("BI sum:", round(global(BI_carneiro, "sum", na.rm = TRUE)[1,1], 4), "\n")
+```
+
+## Version B: Clay for BI + Carneiro for others
+
+```{r build-clay-total}
+# Normalize Clay
+clay_norm <- map(clay_aligned, function(r) {
+  r_zero <- subst(r, NA, 0)
+  r_sum <- global(r_zero, "sum", na.rm = TRUE)[1,1]
+  return(r_zero / r_sum)
+})
+
+# Weight by age proportions
+clay_weighted <- map2(clay_norm, age_class_props, ~.x * .y)
+
+# Sum to get BI total
+BI_clay_norm <- Reduce("+", clay_weighted)
+BI_clay <- BI_clay_norm * prop_BI
+
+# Build total (Clay BI + Carneiro others)
+total_clay <- (BI_clay +
+               crozet_norm * prop_crozet +
+               kerguelen_norm * prop_kerg +
+               crozet_norm * prop_pei)
+
+cat("\n=== CLAY TOTAL (Version B) ===\n")
+cat("Total sum:", round(global(total_clay, "sum", na.rm = TRUE)[1,1], 4), "\n")
+cat("BI sum:", round(global(BI_clay, "sum", na.rm = TRUE)[1,1], 4), "\n")
+```
+
+# Calculate Catchabilities
+
+```{r calculate-catchabilities}
+# Global parameters
+total_hooks_pel <- global(fishing_pel_aligned, "sum", na.rm = TRUE)[1,1]
+total_hooks_dem <- global(fishing_dem_aligned, "sum", na.rm = TRUE)[1,1]
+
+# BPUE (placeholders)
+bpue_pel <- 0.008547
+bpue_dem <- 0.001837540
+
+# Version A: Catchability from Carneiro total
+sum_hb_pel_A <- global(fishing_pel_aligned * total_carneiro, "sum", na.rm = TRUE)[1,1]
+sum_hb_dem_A <- global(fishing_dem_aligned * total_carneiro, "sum", na.rm = TRUE)[1,1]
+
+beta_pel_A <- (bpue_pel / 1000 * total_hooks_pel) / sum_hb_pel_A
+beta_dem_A <- (bpue_dem / 1000 * total_hooks_dem) / sum_hb_dem_A
+
+# Version B: Catchability from Clay total
+sum_hb_pel_B <- global(fishing_pel_aligned * total_clay, "sum", na.rm = TRUE)[1,1]
+sum_hb_dem_B <- global(fishing_dem_aligned * total_clay, "sum", na.rm = TRUE)[1,1]
+
+beta_pel_B <- (bpue_pel / 1000 * total_hooks_pel) / sum_hb_pel_B
+beta_dem_B <- (bpue_dem / 1000 * total_hooks_dem) / sum_hb_dem_B
+
+cat("\n=== CATCHABILITIES ===\n")
+cat("Version A (Carneiro):\n")
+cat("  Pelagic:  ", format(beta_pel_A, scientific = TRUE), "\n")
+cat("  Demersal: ", format(beta_dem_A, scientific = TRUE), "\n")
+
+cat("\nVersion B (Clay):\n")
+cat("  Pelagic:  ", format(beta_pel_B, scientific = TRUE), "\n")
+cat("  Demersal: ", format(beta_dem_B, scientific = TRUE), "\n")
+```
+
+# Method 1: 03d + Carneiro
+
+Allocate using local % BI
+
+```{r method-1}
+cat("\n=== METHOD 1: 03d approach + Carneiro SG ===\n")
+
+# Total WAAL bycatch
+total_byc_pel_1 <- fishing_pel_aligned * total_carneiro * beta_pel_A
+total_byc_dem_1 <- fishing_dem_aligned * total_carneiro * beta_dem_A
+
+# Calculate local % BI
+local_pct_BI_1 <- BI_carneiro / total_carneiro
+
+# Allocate to BI
+BI_byc_pel_1 <- total_byc_pel_1 * local_pct_BI_1
+BI_byc_dem_1 <- total_byc_dem_1 * local_pct_BI_1
+
+# Sum
+BI_pel_1 <- global(BI_byc_pel_1, "sum", na.rm = TRUE)[1,1]
+BI_dem_1 <- global(BI_byc_dem_1, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_1, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_1, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_1 + BI_dem_1, 2), "\n")
+```
+
+# Method 2: 03d + Clay
+
+Allocate using local % BI (Clay-based)
+
+```{r method-2}
+cat("\n=== METHOD 2: 03d approach + Clay BI ===\n")
+
+# Total WAAL bycatch
+total_byc_pel_2 <- fishing_pel_aligned * total_clay * beta_pel_B
+total_byc_dem_2 <- fishing_dem_aligned * total_clay * beta_dem_B
+
+# Calculate local % BI
+local_pct_BI_2 <- BI_clay / total_clay
+
+# Allocate to BI
+BI_byc_pel_2 <- total_byc_pel_2 * local_pct_BI_2
+BI_byc_dem_2 <- total_byc_dem_2 * local_pct_BI_2
+
+# Sum
+BI_pel_2 <- global(BI_byc_pel_2, "sum", na.rm = TRUE)[1,1]
+BI_dem_2 <- global(BI_byc_dem_2, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_2, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_2, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_2 + BI_dem_2, 2), "\n")
+```
+
+# Method 3: 03e + Carneiro
+
+Direct calculation
+
+```{r method-3}
+cat("\n=== METHOD 3: 03e approach + Carneiro SG ===\n")
+
+# Direct calculation
+BI_byc_pel_3 <- fishing_pel_aligned * BI_carneiro * beta_pel_A
+BI_byc_dem_3 <- fishing_dem_aligned * BI_carneiro * beta_dem_A
+
+# Sum
+BI_pel_3 <- global(BI_byc_pel_3, "sum", na.rm = TRUE)[1,1]
+BI_dem_3 <- global(BI_byc_dem_3, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_3, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_3, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_3 + BI_dem_3, 2), "\n")
+```
+
+# Method 4: 03e + Clay
+
+Direct calculation (what final script does)
+
+```{r method-4}
+cat("\n=== METHOD 4: 03e approach + Clay BI ===\n")
+
+# Direct calculation
+BI_byc_pel_4 <- fishing_pel_aligned * BI_clay * beta_pel_B
+BI_byc_dem_4 <- fishing_dem_aligned * BI_clay * beta_dem_B
+
+# Sum
+BI_pel_4 <- global(BI_byc_pel_4, "sum", na.rm = TRUE)[1,1]
+BI_dem_4 <- global(BI_byc_dem_4, "sum", na.rm = TRUE)[1,1]
+
+cat("BI Pelagic:  ", round(BI_pel_4, 2), "\n")
+cat("BI Demersal: ", round(BI_dem_4, 2), "\n")
+cat("BI TOTAL:    ", round(BI_pel_4 + BI_dem_4, 2), "\n")
+```
+
+# Comparison Summary
+
+```{r comparison-summary}
+comparison <- tibble(
+  Method = c("1: 03d + Carneiro",
+             "2: 03d + Clay",
+             "3: 03e + Carneiro",
+             "4: 03e + Clay"),
+  Pelagic = c(BI_pel_1, BI_pel_2, BI_pel_3, BI_pel_4),
+  Demersal = c(BI_dem_1, BI_dem_2, BI_dem_3, BI_dem_4),
+  Total = c(BI_pel_1 + BI_dem_1,
+            BI_pel_2 + BI_dem_2,
+            BI_pel_3 + BI_dem_3,
+            BI_pel_4 + BI_dem_4)
+) %>%
+  mutate(
+    Ratio_to_Method1_Pel = Pelagic / Pelagic[1],
+    Ratio_to_Method1_Total = Total / Total[1]
+  )
+
+cat("\n=== COMPARISON SUMMARY ===\n\n")
+print(comparison)
+
+write_csv(comparison, here("output/method_comparison_summary.csv"))
+
+cat("\n=== KEY QUESTIONS ===\n")
+cat("1. Methods 1 vs 3 should be identical (same data, math equivalent)\n")
+cat("2. Methods 2 vs 4 should be identical (same data, math equivalent)\n")
+cat("3. Methods 1 vs 2 shows effect of Clay vs Carneiro data\n")
+cat("4. Methods 1 vs 4 shows combined effect\n")
+```
+
+# Visualization Maps
+
+```{r load-mapping-libraries}
+library(sf)
+library(viridis)
+library(patchwork)
+
+# Load land polygon for mapping
+land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+
+# Define map extent to show full Southern Ocean
+map_extent <- c(-180, 180, -90, 0)
+```
+
+```{r create-bycatch-maps, fig.width=14, fig.height=10}
+# Helper function to create bycatch map
+map_bycatch <- function(rast_obj, title, fishery) {
+  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "bycatch"
+
+  # Apply transformation for visualization
+  df <- df %>%
+    mutate(bycatch_trans = asinh(bycatch))
+
+  ggplot() +
+    geom_raster(data = df, aes(x = x, y = y, fill = bycatch_trans)) +
+    geom_sf(data = land, fill = "gray30", color = "gray20", linewidth = 0.3) +
+    scale_fill_viridis(
+      name = "Bycatch\n(asinh)",
+      option = "plasma",
+      na.value = "transparent"
+    ) +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    labs(title = paste0(title, " - ", fishery)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_line(color = "gray80", linewidth = 0.2),
+      panel.background = element_rect(fill = "aliceblue"),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 11)
+    )
+}
+
+# Create maps for all methods
+map1_pel <- map_bycatch(BI_byc_pel_1, "Method 1: 03d + Carneiro", "Pelagic")
+map1_dem <- map_bycatch(BI_byc_dem_1, "Method 1: 03d + Carneiro", "Demersal")
+
+map2_pel <- map_bycatch(BI_byc_pel_2, "Method 2: 03d + Clay", "Pelagic")
+map2_dem <- map_bycatch(BI_byc_dem_2, "Method 2: 03d + Clay", "Demersal")
+
+map3_pel <- map_bycatch(BI_byc_pel_3, "Method 3: 03e + Carneiro", "Pelagic")
+map3_dem <- map_bycatch(BI_byc_dem_3, "Method 3: 03e + Carneiro", "Demersal")
+
+map4_pel <- map_bycatch(BI_byc_pel_4, "Method 4: 03e + Clay", "Pelagic")
+map4_dem <- map_bycatch(BI_byc_dem_4, "Method 4: 03e + Clay", "Demersal")
+
+# Combine into panels
+cat("\n## Pelagic Bycatch Comparison\n")
+(map1_pel + map2_pel) / (map3_pel + map4_pel)
+
+cat("\n## Demersal Bycatch Comparison\n")
+(map1_dem + map2_dem) / (map3_dem + map4_dem)
+```
+
+```{r save-comparison-maps}
+# Save individual maps
+ggsave(here("output/maps/comparison_method1_pelagic.png"),
+       map1_pel, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/comparison_method1_demersal.png"),
+       map1_dem, width = 10, height = 6, dpi = 300)
+
+ggsave(here("output/maps/comparison_method2_pelagic.png"),
+       map2_pel, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/comparison_method2_demersal.png"),
+       map2_dem, width = 10, height = 6, dpi = 300)
+
+ggsave(here("output/maps/comparison_method3_pelagic.png"),
+       map3_pel, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/comparison_method3_demersal.png"),
+       map3_dem, width = 10, height = 6, dpi = 300)
+
+ggsave(here("output/maps/comparison_method4_pelagic.png"),
+       map4_pel, width = 10, height = 6, dpi = 300)
+ggsave(here("output/maps/comparison_method4_demersal.png"),
+       map4_dem, width = 10, height = 6, dpi = 300)
+
+# Save combined panels
+pelagic_panel <- (map1_pel + map2_pel) / (map3_pel + map4_pel)
+demersal_panel <- (map1_dem + map2_dem) / (map3_dem + map4_dem)
+
+ggsave(here("output/maps/comparison_all_methods_pelagic.png"),
+       pelagic_panel, width = 14, height = 10, dpi = 300)
+ggsave(here("output/maps/comparison_all_methods_demersal.png"),
+       demersal_panel, width = 14, height = 10, dpi = 300)
+
+cat("Maps saved\n")
+```
+
+# Diagnostics
+
+```{r diagnostics}
+cat("\n=== DIAGNOSTIC: Correlation between BI densities ===\n")
+
+# Extract values for correlation
+vals_carneiro <- values(BI_carneiro, na.rm = TRUE)
+vals_clay <- values(BI_clay, na.rm = TRUE)
+
+# Match by removing NAs
+valid <- !is.na(vals_carneiro) & !is.na(vals_clay)
+cor_pearson <- cor(vals_carneiro[valid], vals_clay[valid], method = "pearson")
+cor_spearman <- cor(vals_carneiro[valid], vals_clay[valid], method = "spearman")
+
+cat("Pearson correlation:  ", round(cor_pearson, 4), "\n")
+cat("Spearman correlation: ", round(cor_spearman, 4), "\n")
+cat("(Should be ~0.98 based on script 02)\n")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

@@ -181,8 +181,8 @@ dll_mean_annual <- dll_data %>%
 # Create raster directly from gridded data (data is already in 5x5 cells)
 rast_dll <- rast(dll_mean_annual, type = "xyz", crs = "EPSG:4326")
 
-# Create scaled mean annual effort (in units of 10^3 hooks)
-rast_dll_mean_scaled <- rast_dll / 1e3
+# Create scaled mean annual effort (in units of 10^6 hooks)
+rast_dll_mean_scaled <- rast_dll / 1e6
 
 # Calculate cumulative effort (sum across all years) by location
 dll_cumulative <- dll_data %>%
@@ -192,8 +192,8 @@ dll_cumulative <- dll_data %>%
 # Create raster directly from gridded data
 rast_dll_cumulative <- rast(dll_cumulative, type = "xyz", crs = "EPSG:4326")
 
-# Create scaled cumulative effort (in units of 10^3 hooks)
-rast_dll_cumulative_scaled <- rast_dll_cumulative / 1e3
+# Create scaled cumulative effort (in units of 10^6 hooks)
+rast_dll_cumulative_scaled <- rast_dll_cumulative / 1e6
 ```
 
 # Calculate Spatial Overlap
@@ -266,7 +266,8 @@ ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
 ```{r map-fishing-effort, fig.width=10, fig.height=6}
 # Function to create fishing effort map
 map_fishing_effort <- function(rast_obj, title, extent, transform = "sqrt",
-                                discrete_bins = FALSE) {
+                                discrete_bins = FALSE,
+                                bin_breaks = c(0, 5, 10, 25, 50, 100, 500, Inf)) {
   df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
   names(df)[3] <- "effort"
 
@@ -290,9 +291,12 @@ map_fishing_effort <- function(rast_obj, title, extent, transform = "sqrt",
 
   # Add appropriate fill scale
   if (discrete_bins) {
-    # Define original bin values (in units of 10^3 or 10^6 hooks)
-    original_breaks <- c(0, 5, 10, 25, 50, 100, 500, Inf)
-    labels <- c("0", "5", "10", "25", "50", "100", "500", ">500")
+    # Use provided bin breaks (in units of 10^3 or 10^6 hooks)
+    original_breaks <- bin_breaks
+
+    # Create labels from breaks
+    labels <- as.character(original_breaks)
+    labels[length(labels)] <- paste0(">", original_breaks[length(original_breaks) - 1])
 
     # Transform breaks to match the data transformation
     if (transform == "sqrt") {
@@ -314,9 +318,17 @@ map_fishing_effort <- function(rast_obj, title, extent, transform = "sqrt",
       breaks = breaks,
       labels = labels,
       na.value = "transparent",
-      limits = c(0, max(df$effort_trans, na.rm = TRUE)),
-      guide = guide_colorsteps(even.steps = FALSE, show.limits = TRUE)
-    )
+      limits = c(0, max(df$effort_trans, na.rm = TRUE))
+    ) +
+    guides(fill = guide_colorbar(
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = unit(15, "cm"),
+      barheight = unit(0.8, "cm"),
+      frame.colour = "black",
+      ticks.colour = "black",
+      direction = "horizontal"
+    ))
   } else {
     # Continuous gradient
     p <- p + scale_fill_gradientn(
@@ -330,7 +342,9 @@ map_fishing_effort <- function(rast_obj, title, extent, transform = "sqrt",
     theme_minimal() +
     theme(
       plot.title = element_text(size = 14, face = "bold"),
-      legend.position = "right"
+      legend.position = "bottom",
+      legend.title = element_text(size = 11, face = "bold"),
+      legend.text = element_text(size = 10)
     )
 
   return(p)
@@ -365,7 +379,7 @@ ggsave(here("output/maps/fishing_effort_pelagic.png"), p_pel,
 # Create maps for scaled mean effort - UNTRANSFORMED with discrete bins
 p_dem_mean_scaled_raw <- map_fishing_effort(
   rast_dll_mean_scaled,
-  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks",
+  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks",
   ext_dem,
   transform = "none",
   discrete_bins = TRUE
@@ -382,7 +396,7 @@ p_pel_mean_scaled_raw <- map_fishing_effort(
 # Create maps for scaled mean effort - SQUARE ROOT with discrete bins
 p_dem_mean_scaled_sqrt <- map_fishing_effort(
   rast_dll_mean_scaled,
-  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks (sqrt transformed)",
+  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks (sqrt transformed)",
   ext_dem,
   transform = "sqrt",
   discrete_bins = TRUE
@@ -397,12 +411,14 @@ p_pel_mean_scaled_sqrt <- map_fishing_effort(
 )
 
 # Create maps for scaled mean effort - LOG with discrete bins
+# Demersal and pelagic both use same bins and scaling (10^6)
 p_dem_mean_scaled_log <- map_fishing_effort(
   rast_dll_mean_scaled,
-  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks (log transformed)",
+  "Mean Annual Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks (log transformed)",
   ext_dem,
   transform = "log",
-  discrete_bins = TRUE
+  discrete_bins = TRUE,
+  bin_breaks = c(0, 5, 10, 25, 50, 100, 500, Inf)
 )
 
 p_pel_mean_scaled_log <- map_fishing_effort(
@@ -416,7 +432,7 @@ p_pel_mean_scaled_log <- map_fishing_effort(
 # Create maps for scaled cumulative effort - UNTRANSFORMED with discrete bins
 p_dem_cumulative_scaled_raw <- map_fishing_effort(
   rast_dll_cumulative_scaled,
-  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks",
+  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks",
   ext_dem,
   transform = "none",
   discrete_bins = TRUE
@@ -433,7 +449,7 @@ p_pel_cumulative_scaled_raw <- map_fishing_effort(
 # Create maps for scaled cumulative effort - SQUARE ROOT with discrete bins
 p_dem_cumulative_scaled_sqrt <- map_fishing_effort(
   rast_dll_cumulative_scaled,
-  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks (sqrt transformed)",
+  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks (sqrt transformed)",
   ext_dem,
   transform = "sqrt",
   discrete_bins = TRUE
@@ -448,12 +464,14 @@ p_pel_cumulative_scaled_sqrt <- map_fishing_effort(
 )
 
 # Create maps for scaled cumulative effort - LOG with discrete bins
+# Demersal and pelagic both use same bins and scaling (10^6)
 p_dem_cumulative_scaled_log <- map_fishing_effort(
   rast_dll_cumulative_scaled,
-  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^3 hooks (log transformed)",
+  "Cumulative Demersal Longline Effort (1990-2009)\nScaled: 10^6 hooks (log transformed)",
   ext_dem,
   transform = "log",
-  discrete_bins = TRUE
+  discrete_bins = TRUE,
+  bin_breaks = c(0, 5, 10, 25, 50, 100, 500, Inf)
 )
 
 p_pel_cumulative_scaled_log <- map_fishing_effort(
@@ -625,11 +643,11 @@ iwalk(pel_overlap_maps, function(p, age) {
 # Create output directories if they don't exist
 dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
 
-# Save fishing effort rasters
+# Save fishing effort rasters (unscaled)
 writeRaster(rast_dll, here("output/rasters/fishing_effort_demersal.tif"), overwrite = TRUE)
 writeRaster(rast_pll, here("output/rasters/fishing_effort_pelagic.tif"), overwrite = TRUE)
 
-# Save scaled mean effort rasters
+# Save scaled mean effort rasters (both scaled to 10^6 hooks)
 writeRaster(rast_dll_mean_scaled, here("output/rasters/fishing_effort_demersal_mean_scaled.tif"), overwrite = TRUE)
 writeRaster(rast_pll_mean_scaled, here("output/rasters/fishing_effort_pelagic_mean_scaled.tif"), overwrite = TRUE)
 
@@ -637,7 +655,7 @@ writeRaster(rast_pll_mean_scaled, here("output/rasters/fishing_effort_pelagic_me
 writeRaster(rast_dll_cumulative, here("output/rasters/fishing_effort_demersal_cumulative.tif"), overwrite = TRUE)
 writeRaster(rast_pll_cumulative, here("output/rasters/fishing_effort_pelagic_cumulative.tif"), overwrite = TRUE)
 
-# Save scaled cumulative effort rasters
+# Save scaled cumulative effort rasters (both scaled to 10^6 hooks)
 writeRaster(rast_dll_cumulative_scaled, here("output/rasters/fishing_effort_demersal_cumulative_scaled.tif"), overwrite = TRUE)
 writeRaster(rast_pll_cumulative_scaled, here("output/rasters/fishing_effort_pelagic_cumulative_scaled.tif"), overwrite = TRUE)
 

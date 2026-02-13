@@ -1,5 +1,5 @@
 ---
-title: "BPUE Literature Review - Data Compilation"
+title: "BPUE Literature Review - Bounding Box Standardization & Gap Analysis"
 author: "WAAL Bycatch Project"
 date: "`r Sys.Date()`"
 output: html_document
@@ -10,352 +10,1165 @@ knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
   message = FALSE,
-  fig.width = 10,
-  fig.height = 8
+  fig.width = 14,
+  fig.height = 10
 )
 ```
 
 # Overview
 
-This script works with the BPUE and bycatch mitigation literature review Excel file to:
+This script:
 
-1. Read and explore all sheets in the workbook
-2. Identify missing data fields
-3. Extract BPUE values from PDFs
-4. Create spatial bounding boxes for each study
-5. Eventually build a spatially-referenced BPUE surface for use in script 03b
+1. Reads the BPUE literature review CSV and standardizes bounding box coordinates
+2. Loads fleet-specific fishing effort data (PLL and DLL) by time period
+3. Creates faceted maps for each fleet showing effort + BPUE study bounding boxes
+4. Identifies spatial gaps: where we have fishing effort but no BPUE estimates
+
+The blank rows in the BPUE spreadsheet represent **temporal gaps** (periods where
+we need BPUE estimates for a given fleet). The maps reveal **spatial gaps** (areas
+where we have fishing effort but no BPUE study coverage).
 
 # Setup
 
 ```{r libraries}
 library(tidyverse)
-library(readxl)
-library(here)
-library(sf)
 library(terra)
-library(knitr)
-library(DT)
+library(sf)
+library(here)
+library(viridis)
+library(patchwork)
+library(RColorBrewer)
 ```
 
-# Read Excel File
+# Part 1: Load and Standardize BPUE Data
 
-```{r read-excel}
-# Path to the literature review Excel file
-excel_path <- "/Users/sarahbecker/Dropbox/Professional/CU_ENVS/WAAL_sim_2024/updates_2025/BPUE and bycatch mitigation literature reviews.xlsx"
+## Read raw BPUE CSV
 
-# Get all sheet names
-sheet_names <- excel_sheets(excel_path)
+```{r load-bpue}
+bpue_raw <- read_csv(here("data/BPUE_2926.csv"), show_col_types = FALSE)
 
-cat("=== SHEETS IN WORKBOOK ===\n")
-cat(paste0(seq_along(sheet_names), ". ", sheet_names, "\n"))
-```
+# Clean column names (original names have spaces and special characters)
+names(bpue_raw) <- c("fishery_type", "fleet", "superfleet", "year_group",
+                      "years_listed", "region", "mitigation_category",
+                      "mitigation_used", "bbox_raw", "bpue", "bpue_source",
+                      "bpue_calculation", "citation", "title",
+                      "notes_sarah", "notes_tommy")
 
-# Read All Sheets
-
-```{r read-all-sheets}
-# Read all sheets into a named list
-all_sheets <- map(sheet_names, function(sheet) {
-  read_excel(excel_path, sheet = sheet)
-})
-names(all_sheets) <- sheet_names
-
-cat("\n=== SHEET DIMENSIONS ===\n")
-sheet_dims <- map_dfr(sheet_names, function(sheet) {
-  tibble(
-    sheet = sheet,
-    rows = nrow(all_sheets[[sheet]]),
-    cols = ncol(all_sheets[[sheet]])
-  )
-})
-print(sheet_dims)
-```
-
-# Explore Each Sheet
-
-```{r explore-sheets}
-# Function to summarize a sheet
-summarize_sheet <- function(df, sheet_name) {
-  cat("\n", strrep("=", 80), "\n")
-  cat("SHEET:", sheet_name, "\n")
-  cat(strrep("=", 80), "\n\n")
-
-  cat("Columns (", ncol(df), "):\n")
-  cat(paste0("  - ", names(df), "\n"))
-
-  cat("\nFirst few rows:\n")
-  print(head(df, 3))
-
-  # Check for missing values
-  cat("\nMissing values by column:\n")
-  missing_counts <- map_int(df, ~sum(is.na(.x)))
-  missing_df <- tibble(
-    column = names(missing_counts),
-    n_missing = missing_counts,
-    pct_missing = round(100 * missing_counts / nrow(df), 1)
-  ) %>%
-    filter(n_missing > 0) %>%
-    arrange(desc(n_missing))
-
-  if (nrow(missing_df) > 0) {
-    print(missing_df)
-  } else {
-    cat("  No missing values!\n")
-  }
-
-  cat("\n")
-}
-
-# Summarize each sheet
-iwalk(all_sheets, summarize_sheet)
-```
-
-# Interactive Tables
-
-Display each sheet as an interactive table for easier viewing.
-
-```{r interactive-tables, results='asis'}
-for (i in seq_along(sheet_names)) {
-  cat("\n##", sheet_names[i], "\n\n")
-
-  # Create interactive table
-  dt <- datatable(
-    all_sheets[[i]],
-    options = list(
-      pageLength = 10,
-      scrollX = TRUE,
-      autoWidth = TRUE
-    ),
-    filter = "top",
-    rownames = FALSE
+# Remove header/instruction rows and keep only PLL/DLL data rows
+bpue_raw <- bpue_raw %>%
+  filter(fishery_type %in% c("PLL", "DLL")) %>%
+  mutate(
+    year_group = str_trim(year_group),
+    bbox_raw = str_trim(bbox_raw),
+    fleet = str_trim(fleet),
+    fishery_type = str_trim(fishery_type),
+    bpue = as.numeric(bpue),
+    row_id = row_number()
   )
 
-  print(htmltools::tagList(dt))
-  cat("\n\n")
-}
+# Summary of what we have
+bpue_raw %>%
+  count(fishery_type, fleet, name = "n_rows") %>%
+  print(n = 50)
 ```
 
-# Identify Key Data Gaps
+## Manual bounding box standardization
 
-```{r identify-gaps}
-# Function to identify key gaps in BPUE data
-identify_bpue_gaps <- function(df, sheet_name) {
-  # Look for BPUE-related columns (flexible matching)
-  bpue_cols <- names(df)[str_detect(names(df), regex("bpue|rate|mortality", ignore_case = TRUE))]
+The coordinate formats vary wildly across studies (degrees-minutes, cardinal
+directions, signed coordinates, text descriptions, etc.). This lookup table
+manually standardizes each unique string to lat_min, lat_max, lon_min, lon_max
+(signed convention: S = negative lat, W = negative lon).
 
-  if (length(bpue_cols) == 0) {
-    return(NULL)
-  }
+```{r bbox-lookup}
+bbox_lookup <- tribble(
+  ~bbox_raw, ~lat_min, ~lat_max, ~lon_min, ~lon_max, ~bbox_notes,
 
-  # Check for geographic columns
-  geo_cols <- names(df)[str_detect(names(df), regex("lat|lon|region|area|box", ignore_case = TRUE))]
+  # --- Klaer & Polacheck 1996: Japan PLL, SE Indian & SW Pacific ---
+  "10-50S, 105-165 E",
+  -50, -10, 105, 165, "",
 
-  # Check for study info columns
-  study_cols <- names(df)[str_detect(names(df), regex("author|year|source|citation|study", ignore_case = TRUE))]
+  # --- Ryan et al. 2002: Japan/SA PLL, SE Atlantic & SW Indian ---
+  "25-40S, 10-35 E",
+  -40, -25, 10, 35, "",
 
-  # Identify rows with BPUE but missing geographic info
-  if (length(geo_cols) > 0 && length(bpue_cols) > 0) {
-    # Check which rows have BPUE data
-    has_bpue <- rowSums(!is.na(select(df, all_of(bpue_cols)))) > 0
-    # Check which rows have geographic data
-    has_geo <- rowSums(!is.na(select(df, all_of(geo_cols)))) > 0
+  # --- Inoue et al. 2012a: Japan PLL, SE & SW Atlantic ---
+  "35-45S 5-25E",
+  -45, -35, 5, 25, "",
 
-    n_missing_geo <- sum(has_bpue & !has_geo)
-    n_complete <- sum(has_bpue & has_geo)
+  # --- Jimenez et al. 2014: Japan PLL, SW Atlantic ---
+  "34-37 S 49-54 W",
+  -37, -34, -54, -49, "",
 
-    return(tibble(
-      sheet = sheet_name,
-      bpue_columns = paste(bpue_cols, collapse = ", "),
-      geo_columns = paste(geo_cols, collapse = ", "),
-      n_with_bpue = sum(has_bpue),
-      n_complete_records = n_complete,
-      n_missing_geography = n_missing_geo
-    ))
-  }
+  # --- Huang & Yeh 2011: Taiwan PLL, SW Pacific ---
+  "20-50S, 100 E-150 W",
+  -50, -20, 100, 210, "Crosses dateline; lon_max stored as 210 (=-150+360) for polygon construction",
 
-  return(NULL)
-}
+  # --- Klaer et al. 2009: Taiwan/Brazil/Uruguay PLL, SW & SE Atlantic ---
+  "25-45S, 45 W-25E",
+  -45, -25, -45, 25, "Crosses prime meridian",
 
-# Analyze gaps across all sheets
-gaps <- map2_dfr(all_sheets, sheet_names, identify_bpue_gaps)
+  # --- Huang & Liu 2010: Taiwan PLL, SW & SE Indian ---
+  "29-32 S 70-90E",
+  -32, -29, 70, 90, "",
 
-if (!is.null(gaps) && nrow(gaps) > 0) {
-  cat("\n=== DATA COMPLETENESS SUMMARY ===\n\n")
-  print(gaps)
+  # --- Yeh et al. 2012: Taiwan PLL, SE Atlantic ---
+  "20-60S, 20 W-40E",
+  -60, -20, -20, 40, "",
+
+  # --- Yeh et al. 2012: Taiwan PLL, SW Atlantic ---
+  "20-60S, 90-20 W",
+  -60, -20, -90, -20, "",
+
+  # --- Huang 2017: Taiwan PLL, all regions (FLAG: same bbox for all!) ---
+  "25-60 S, 30 W-20 E",
+  -60, -25, -30, 20, "FLAG: Huang 2017 uses same bbox for all regions - needs manual correction in CSV",
+
+  # --- Bugoni et al. 2008: Brazil PLL, SW Atlantic ---
+  "22-38 S, 26-58 W",
+  -38, -22, -58, -26, "",
+
+  # --- Jimenez et al. 2020: Brazil/Uruguay/SA PLL, broad extent ---
+  "(-10 to -50 -70 to 70)",
+  -50, -10, -70, 70, "Jimenez et al. 2020 signed coords; very broad extent",
+
+  # --- Klaer et al. 2009: Brazil PLL, SW Atlantic ---
+  "15-40S, 55-25W",
+  -40, -15, -55, -25, "",
+
+  # --- Jimenez et al. 2009a: Uruguay PLL, nearshore SW Atlantic ---
+  "34 30 - 37 S 51 30-53 W",
+  -37, -34.5, -53, -51.5, "Degrees-minutes converted: 34d30m = 34.5",
+
+  # --- Jimenez et al. 2009a: Uruguay PLL, shelf break SW Atlantic ---
+  "32 30 -37 S 47 30 - 51 30 W",
+  -37, -32.5, -51.5, -47.5, "Degrees-minutes converted",
+
+  # --- Jimenez et al. 2009a: Uruguay PLL, offshore SW Atlantic ---
+  "east of 47 30 W to approx 23 W  approx 25-35 S",
+  -35, -25, -47.5, -23, "Text description approximated to coordinates",
+
+  # --- Klaer et al. 2009: Uruguay PLL, SW Atlantic ---
+  "25-40S, 55-20W",
+  -40, -25, -55, -20, "",
+
+  # --- Jimenez et al. 2014: Uruguay PLL, SW Atlantic ---
+  "19-47 S 20-60 W",
+  -47, -19, -60, -20, "",
+
+  # --- Jimenez et al. 2014: Uruguay PLL (trailing space variant) ---
+  "19-47 S 20-60 W ",
+  -47, -19, -60, -20, "Trailing space variant",
+
+  # --- Peterson et al. 2008: South Africa PLL ---
+  # (uses same bbox as Ryan: "25-40S, 10-35 E" - already in lookup)
+
+  # --- Abraham and Thompson 2009: NZ PLL, SE Indian ---
+  "(160.5 E- 174.5 E, 55.5 S- 38S)",
+  -55.5, -38, 160.5, 174.5, "",
+
+  # --- Abraham and Thompson 2009: NZ DLL, crosses dateline ---
+  "(170 E-172 W, 42-46 S)",
+  -46, -42, 170, 188, "Crosses dateline; lon_max=188 (=-172+360)",
+
+  # --- Abraham and Thompson 2009: NZ DLL, crosses dateline ---
+  "(175.5 E-172 W, 33.5-42 S)",
+  -42, -33.5, 175.5, 188, "Crosses dateline; lon_max=188 (=-172+360)",
+
+  # --- Abraham and Thompson 2009: NZ DLL (trailing space variant) ---
+  "(170 E-172 W, 42-46 S) ",
+  -46, -42, 170, 188, "Trailing space; crosses dateline",
+
+  # --- Collins et al. 2021: CCAMLR DLL, South Georgia ---
+  "50-30W 50-57S",
+  -57, -50, -50, -30, "Lon listed first; South Georgia area",
+
+  # --- Moreno et al. 1996: Chile/Argentina DLL, South Georgia ---
+  "50-56 lat, 54 to 20 long",
+  -56, -50, -54, -20, "Assumed S and W based on South Georgia context",
+
+  # --- Favero et al. 2003: Argentina DLL, Patagonian shelf ---
+  "(70-50W, 30-58S)",
+  -58, -30, -70, -50, "",
+
+  # --- Favero et al. 2013: Argentina DLL ---
+  "35-60 S, 45-75 W",
+  -60, -35, -75, -45, "",
+
+  # --- Nel et al. 2002: South Africa DLL, Prince Edward Islands ---
+  "(-50.5 to  -43; 32.6 to 43)",
+  -50.5, -43, 32.6, 43, "PEI EEZ; signed coords with semicolon separator",
+
+  # --- Weimerkirch et al. 2000: France/Ukraine/Japan DLL, Kerguelen ---
+  "46-51 S, 66 to 72 E",
+  -51, -46, 66, 72, "Kerguelen area"
+)
+
+# Join standardized coordinates to BPUE data
+bpue_std <- bpue_raw %>%
+  left_join(bbox_lookup, by = "bbox_raw")
+
+# Diagnostic: check for unmatched bboxes (have bbox_raw but no lat_min)
+unmatched <- bpue_std %>%
+  filter(!is.na(bbox_raw) & bbox_raw != "" & is.na(lat_min)) %>%
+  distinct(bbox_raw)
+
+if (nrow(unmatched) > 0) {
+  # These bbox strings are in the CSV but not in our lookup - need to add them
+  unmatched %>% print()
 } else {
-  cat("\nNo BPUE columns detected in sheets.\n")
+  # All non-empty bboxes matched successfully
+}
+
+# Summary of standardization
+tibble(
+  category = c("Total rows", "Bbox standardized", "Empty (temporal gaps)", "Unmatched"),
+  count = c(
+    nrow(bpue_std),
+    sum(!is.na(bpue_std$lat_min)),
+    sum(is.na(bpue_std$bbox_raw) | bpue_std$bbox_raw == ""),
+    nrow(unmatched)
+  )
+) %>% print()
+```
+
+## Flag known issues
+
+```{r flag-issues}
+# Huang 2017 entries that need manual bbox correction
+huang_flag <- bpue_std %>%
+  filter(str_detect(citation, fixed("Huang 2017", ignore_case = TRUE))) %>%
+  select(row_id, fleet, year_group, region, bbox_raw, bbox_notes)
+
+huang_flag %>% print(n = 20)
+
+# Entries with BPUE = 0
+zero_bpue <- bpue_std %>%
+  filter(!is.na(bpue) & bpue == 0) %>%
+  select(row_id, fishery_type, fleet, year_group, citation, notes_sarah)
+
+zero_bpue %>% print(n = 10)
+```
+
+## Save standardized data
+
+```{r save-standardized}
+write_csv(bpue_std, here("data/BPUE_2926_standardized.csv"))
+```
+
+# Part 2: Load Fishing Effort Data
+
+## Pelagic longline effort
+
+```{r load-pll}
+pll_data <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE)
+
+# Standardize fleet names to match BPUE CSV naming
+pll_data <- pll_data %>%
+  mutate(fleet = case_when(
+    Flag == "South Korea" ~ "Korea",
+    TRUE ~ Flag
+  ))
+
+# Assign year groups
+year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+
+pll_data <- pll_data %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1995 ~ "1990-1995",
+    Year >= 1996 & Year <= 2000 ~ "1996-2000",
+    Year >= 2001 & Year <= 2005 ~ "2001-2005",
+    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(year_group))
+
+# Available PLL fleets
+pll_data %>% count(fleet, sort = TRUE) %>% print(n = 30)
+```
+
+## Demersal longline effort
+
+```{r load-dll}
+# Load all demersal sources (same approach as script 01)
+ccamlr_data <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"), show_col_types = FALSE)
+arg_data <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"), show_col_types = FALSE)
+chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"), show_col_types = FALSE)
+falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"), show_col_types = FALSE)
+namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"), show_col_types = FALSE)
+saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"), show_col_types = FALSE)
+
+# Standardize column names
+standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",
+                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month") {
+  data %>%
+    select(all_of(c(year_col, month_col, lat_col, lon_col, hooks_col))) %>%
+    rename(Year = all_of(year_col), Month = all_of(month_col),
+           Lat = all_of(lat_col), Lon = all_of(lon_col),
+           Hooks = all_of(hooks_col)) %>%
+    mutate(fleet = dataset_name)
+}
+
+ccamlr_std <- standardize_dem_data(
+  ccamlr_data, "CCAMLR",
+  lon_col = "longitude_5deg", lat_col = "latitude_5deg",
+  hooks_col = "hook_count", year_col = "year", month_col = "month"
+)
+arg_std <- standardize_dem_data(arg_data, "Argentina", lon_col = "Lng", hooks_col = "Effort")
+chile_std <- standardize_dem_data(chile_data, "Chile", lon_col = "Lng", hooks_col = "Effort")
+falk_std <- standardize_dem_data(falk_data, "Falklands", lon_col = "Lng", hooks_col = "Effort")
+namibia_std <- namibia_data %>%
+  mutate(fleet = "Namibia") %>%
+  select(Year, Month, Lat, Lon, Hooks, fleet)
+saf_std <- saf_data %>%
+  rename(Hooks = Effort) %>%
+  mutate(fleet = "South Africa") %>%
+  select(Year, Month, Lat, Lon, Hooks, fleet)
+
+# Combine and clean
+dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std) %>%
+  mutate(
+    RFMO = case_when(
+      fleet == "CCAMLR" ~ "CCAMLR",
+      TRUE ~ NA_character_
+    ),
+    Lon = ifelse(Lon > 180, Lon - 360, Lon)
+  ) %>%
+  filter(Year >= 1990, Year <= 2010) %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1995 ~ "1990-1995",
+    Year >= 1996 & Year <= 2000 ~ "1996-2000",
+    Year >= 2001 & Year <= 2005 ~ "2001-2005",
+    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(year_group))
+
+# Available DLL fleets
+dll_data %>% count(fleet, sort = TRUE) %>% print(n = 20)
+```
+
+## Load basemap
+
+```{r load-basemap}
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+# Part 3: Build BPUE Bounding Box Polygons
+
+```{r bbox-polygons}
+# Filter to rows with standardized bounding boxes and BPUE values
+bpue_with_bbox <- bpue_std %>%
+  filter(!is.na(lat_min) & !is.na(bpue))
+
+# Function to create sf polygon from bbox coordinates
+# Handles dateline crossings (lon_max > 180) by splitting into two polygons
+make_bbox_polygon <- function(lat_min, lat_max, lon_min, lon_max) {
+  if (lon_max > 180) {
+    # Split at dateline: polygon from lon_min to 180, and -180 to (lon_max - 360)
+    coords1 <- matrix(c(lon_min, lat_min, 180, lat_min, 180, lat_max,
+                         lon_min, lat_max, lon_min, lat_min),
+                       ncol = 2, byrow = TRUE)
+    lon_max_wrapped <- lon_max - 360
+    coords2 <- matrix(c(-180, lat_min, lon_max_wrapped, lat_min,
+                         lon_max_wrapped, lat_max, -180, lat_max, -180, lat_min),
+                       ncol = 2, byrow = TRUE)
+    st_multipolygon(list(list(coords1), list(coords2)))
+  } else {
+    coords <- matrix(c(lon_min, lat_min, lon_max, lat_min, lon_max, lat_max,
+                        lon_min, lat_max, lon_min, lat_min),
+                     ncol = 2, byrow = TRUE)
+    st_polygon(list(coords))
+  }
+}
+
+# Create sf object with geometries
+bpue_sf <- bpue_with_bbox %>%
+  rowwise() %>%
+  mutate(geometry = list(make_bbox_polygon(lat_min, lat_max, lon_min, lon_max))) %>%
+  ungroup() %>%
+  mutate(geometry = st_sfc(geometry, crs = 4326)) %>%
+  st_as_sf()
+
+# Create short label for maps
+bpue_sf <- bpue_sf %>%
+  mutate(
+    cite_short = str_extract(citation, "^[A-Za-z]+\\s*(et al\\.?)?\\s*\\d{4}"),
+    map_label = paste0(cite_short, "\nBPUE=", signif(bpue, 3))
+  )
+```
+
+## Expand multi-period entries
+
+BPUE entries that span multiple year groups (e.g., "2001-2005, 2006-2010")
+get duplicated so they appear on each relevant year group panel.
+
+```{r expand-periods}
+target_year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+
+# Parse the year_group field, which may contain comma-separated periods
+# Also handle non-standard periods like "1995-2000" -> map to "1996-2000"
+expand_to_target_periods <- function(yg_string) {
+  if (is.na(yg_string) | yg_string == "") return(character(0))
+
+  # Split on comma
+  periods <- str_trim(str_split(yg_string, ",")[[1]])
+
+  # Map each listed period to target year groups
+  matched <- map(periods, function(p) {
+    # Direct match
+    if (p %in% target_year_groups) return(p)
+    # Handle non-standard ranges by checking overlap
+    if (p == "1995-2000") return("1996-2000")
+    if (p == "2005-2010") return("2006-2010")
+    if (p == " 1996-2000") return("1996-2000")
+    if (p == " 2011-2015") return(character(0))
+    if (p == "2011-2015") return(character(0))
+    # If it contains a target, match it
+    matches <- target_year_groups[map_lgl(target_year_groups, ~str_detect(p, .x))]
+    if (length(matches) > 0) return(matches)
+    return(character(0))
+  }) %>% unlist() %>% unique()
+
+  return(matched)
+}
+
+# Expand: one row per year group per study
+bpue_expanded <- bpue_sf %>%
+  rowwise() %>%
+  mutate(plot_year_group = list(expand_to_target_periods(year_group))) %>%
+  ungroup() %>%
+  unnest(plot_year_group)
+
+# Summary: how many BPUE entries per fleet x fishery x period
+bpue_expanded %>%
+  st_drop_geometry() %>%
+  count(fishery_type, fleet, plot_year_group) %>%
+  pivot_wider(names_from = plot_year_group, values_from = n, values_fill = 0) %>%
+  print(n = 50)
+```
+
+# Part 4: Generate Fleet Maps
+
+## Helper: create effort raster for a fleet + period
+
+```{r effort-raster-function}
+make_effort_raster <- function(effort_data, fleet_name, yr_group) {
+  effort_subset <- effort_data %>%
+    filter(fleet == fleet_name, year_group == yr_group) %>%
+    group_by(Lon, Lat) %>%
+    summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = "drop")
+
+  if (nrow(effort_subset) < 2) return(NULL)
+
+  tryCatch(
+    rast(effort_subset, type = "xyz", crs = "EPSG:4326"),
+    error = function(e) NULL
+  )
 }
 ```
 
-# Extract Study Metadata
+## Map function: one fleet, faceted by period
 
-Create a master list of all studies with their current data status.
+```{r map-function}
+create_fleet_map <- function(fishery, fleet_name, effort_data, bpue_data,
+                              year_groups = target_year_groups) {
 
-```{r extract-metadata}
-# Function to extract study metadata from a sheet
-extract_study_metadata <- function(df, sheet_name) {
-  # Try to find key columns (flexible)
-  author_col <- names(df)[str_detect(names(df), regex("author", ignore_case = TRUE))][1]
-  year_col <- names(df)[str_detect(names(df), regex("year", ignore_case = TRUE))][1]
-  region_col <- names(df)[str_detect(names(df), regex("region|area", ignore_case = TRUE))][1]
-  fishery_col <- names(df)[str_detect(names(df), regex("fishery|fleet|gear", ignore_case = TRUE))][1]
-  bpue_col <- names(df)[str_detect(names(df), regex("bpue", ignore_case = TRUE))][1]
+  # Filter BPUE data for this fleet and fishery
+  bpue_fleet <- bpue_data %>%
+    filter(fishery_type == fishery, fleet == fleet_name)
 
-  # Build metadata table
-  metadata <- df %>%
-    mutate(
-      sheet = sheet_name,
-      row_num = row_number()
+  # Build one panel per year group
+  panels <- map(year_groups, function(yg) {
+
+    # Get effort raster for this fleet + period
+    effort_rast <- make_effort_raster(effort_data, fleet_name, yg)
+
+    # Get BPUE boxes for this period
+    bpue_period <- bpue_fleet %>%
+      filter(plot_year_group == yg)
+
+    # Determine map extent from effort data extent or default to Southern Hemisphere
+    if (!is.null(effort_rast)) {
+      e <- ext(effort_rast)
+      # Pad extent slightly
+      xlim <- c(max(e[1] - 10, -180), min(e[2] + 10, 180))
+      ylim <- c(max(e[3] - 5, -80), min(e[4] + 5, 10))
+    } else {
+      xlim <- c(-180, 180)
+      ylim <- c(-70, 0)
+    }
+
+    p <- ggplot()
+
+    # Add effort layer if available
+    if (!is.null(effort_rast)) {
+      effort_df <- as.data.frame(effort_rast, xy = TRUE, na.rm = TRUE)
+      names(effort_df)[3] <- "effort"
+      effort_df <- effort_df %>% mutate(effort_sqrt = sqrt(effort))
+
+      p <- p +
+        geom_raster(data = effort_df, aes(x = x, y = y, fill = effort_sqrt), alpha = 0.8)
+    }
+
+    # Add land
+    p <- p +
+      geom_sf(data = ne_land, fill = "grey80", color = "grey50", linewidth = 0.2)
+
+    # Add BPUE bounding boxes
+    if (nrow(bpue_period) > 0) {
+      p <- p +
+        geom_sf(data = bpue_period, fill = alpha("red", 0.1), color = "red",
+                linewidth = 0.9, linetype = "solid") +
+        geom_sf_label(data = bpue_period, aes(label = map_label),
+                      size = 1.8, fill = alpha("white", 0.8),
+                      label.size = 0.15)
+    }
+
+    # Subtitle indicates data status
+    has_effort <- !is.null(effort_rast)
+    has_bpue <- nrow(bpue_period) > 0
+    status <- if (has_effort & has_bpue) {
+      NULL
+    } else if (has_effort & !has_bpue) {
+      "TEMPORAL GAP: effort but no BPUE"
+    } else if (!has_effort & has_bpue) {
+      "no effort data for this fleet"
+    } else {
+      "no data"
+    }
+
+    p <- p +
+      coord_sf(xlim = xlim, ylim = ylim, expand = FALSE) +
+      scale_fill_viridis_c(
+        name = expression(sqrt("Hooks")),
+        na.value = "transparent",
+        option = "plasma"
+      ) +
+      labs(title = yg, subtitle = status) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 10, face = "bold"),
+        plot.subtitle = element_text(size = 8, color = "red", face = "italic"),
+        legend.position = "right",
+        legend.key.height = unit(0.4, "cm"),
+        legend.key.width = unit(0.3, "cm"),
+        legend.title = element_text(size = 7),
+        legend.text = element_text(size = 6),
+        axis.text = element_text(size = 7),
+        axis.title = element_blank()
+      )
+
+    return(p)
+  })
+
+  # Combine panels
+  combined <- wrap_plots(panels, ncol = 2, guides = "collect") +
+    plot_annotation(
+      title = paste0(fishery, " - ", fleet_name),
+      subtitle = "Fishing effort (fill) with BPUE study bounding boxes (red). Red subtitle = gap.",
+      theme = theme(
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 10)
+      )
     )
 
-  # Select available columns
-  available_cols <- c("sheet", "row_num")
-  if (!is.na(author_col)) available_cols <- c(available_cols, author_col)
-  if (!is.na(year_col)) available_cols <- c(available_cols, year_col)
-  if (!is.na(region_col)) available_cols <- c(available_cols, region_col)
-  if (!is.na(fishery_col)) available_cols <- c(available_cols, fishery_col)
-  if (!is.na(bpue_col)) available_cols <- c(available_cols, bpue_col)
-
-  metadata <- metadata %>%
-    select(all_of(available_cols))
-
-  return(metadata)
-}
-
-# Extract metadata from all sheets
-study_metadata <- map2_dfr(all_sheets, sheet_names, possibly(extract_study_metadata, otherwise = NULL))
-
-if (!is.null(study_metadata) && nrow(study_metadata) > 0) {
-  cat("\n=== MASTER STUDY LIST ===\n")
-  cat("Total records:", nrow(study_metadata), "\n\n")
-
-  # Display interactive table
-  datatable(
-    study_metadata,
-    options = list(
-      pageLength = 20,
-      scrollX = TRUE
-    ),
-    filter = "top"
-  )
+  return(combined)
 }
 ```
 
-# Framework for Adding Geographic Bounding Boxes
+## PLL fleet maps
 
-```{r bounding-box-template}
-# Template function for creating bounding boxes
-create_bounding_box <- function(lat_min, lat_max, lon_min, lon_max, study_id) {
-  # Create polygon for bounding box
-  coords <- matrix(c(
-    lon_min, lat_min,
-    lon_max, lat_min,
-    lon_max, lat_max,
-    lon_min, lat_max,
-    lon_min, lat_min
-  ), ncol = 2, byrow = TRUE)
+```{r pll-maps, fig.width=14, fig.height=10, results='asis'}
+dir.create(here("output/maps/bpue_review"), showWarnings = FALSE, recursive = TRUE)
 
-  poly <- st_polygon(list(coords))
+# Get PLL fleets from BPUE data that have at least one non-empty row
+pll_bpue_fleets <- bpue_std %>%
+  filter(fishery_type == "PLL") %>%
+  distinct(fleet) %>%
+  pull(fleet)
 
-  # Create sf object
-  bbox_sf <- st_sf(
-    study_id = study_id,
-    lat_min = lat_min,
-    lat_max = lat_max,
-    lon_min = lon_min,
-    lon_max = lon_max,
-    geometry = st_sfc(poly, crs = 4326)
+for (fl in pll_bpue_fleets) {
+  p <- create_fleet_map(
+    fishery = "PLL",
+    fleet_name = fl,
+    effort_data = pll_data,
+    bpue_data = bpue_expanded
   )
-
-  return(bbox_sf)
+  print(p)
+  ggsave(here(paste0("output/maps/bpue_review/PLL_", str_replace_all(fl, " ", "_"), ".png")),
+         p, width = 14, height = 10, dpi = 300)
 }
-
-# Example: Create a bounding box for a hypothetical study
-# Uncomment and modify to add real studies
-# example_box <- create_bounding_box(
-#   lat_min = -60,
-#   lat_max = -30,
-#   lon_min = -70,
-#   lon_max = -40,
-#   study_id = "Smith2010_SouthAtlantic"
-# )
-#
-# # Save as shapefile or GeoJSON
-# st_write(example_box, here("data/bpue_bounding_boxes/smith2010.geojson"))
-
-cat("\nBounding box template function created: create_bounding_box()\n")
-cat("Use this to add geographic extent for each study.\n")
 ```
 
-# Framework for PDF Data Extraction
+## DLL fleet maps
 
-```{r pdf-extraction-template}
-# Template for extracting BPUE from a PDF
-extract_bpue_from_pdf <- function(pdf_path) {
-  # This is a template - actual implementation depends on PDF structure
+```{r dll-maps, fig.width=14, fig.height=10, results='asis'}
+dll_bpue_fleets <- bpue_std %>%
+  filter(fishery_type == "DLL") %>%
+  distinct(fleet) %>%
+  pull(fleet)
 
-  cat("\nTo extract BPUE from a PDF:\n")
-  cat("1. Provide the PDF path\n")
-  cat("2. I'll read the PDF and search for:\n")
-  cat("   - BPUE values (birds per 1000 hooks, or other units)\n")
-  cat("   - Geographic region\n")
-  cat("   - Sample size (hooks observed)\n")
-  cat("   - Fishery type (pelagic/demersal)\n")
-  cat("   - Mitigation measures\n")
-  cat("   - Confidence intervals\n")
-  cat("3. I'll format the data to add to your Excel file\n")
-
-  # Example structure for returned data
-  example_data <- tibble(
-    author = "Smith et al.",
-    year = 2010,
-    region = "South Atlantic",
-    fishery_type = "Pelagic longline",
-    bpue_per_1000_hooks = 0.015,
-    ci_lower = 0.010,
-    ci_upper = 0.020,
-    hooks_observed = 500000,
-    mitigation = "Tori lines",
-    lat_min = -60,
-    lat_max = -30,
-    lon_min = -70,
-    lon_max = -40
+for (fl in dll_bpue_fleets) {
+  p <- create_fleet_map(
+    fishery = "DLL",
+    fleet_name = fl,
+    effort_data = dll_data,
+    bpue_data = bpue_expanded
   )
-
-  cat("\nExample extracted data structure:\n")
-  print(example_data)
-
-  return(example_data)
+  print(p)
+  ggsave(here(paste0("output/maps/bpue_review/DLL_", str_replace_all(fl, " ", "_"), ".png")),
+         p, width = 14, height = 10, dpi = 300)
 }
-
-# Show template
-extract_bpue_from_pdf("path/to/paper.pdf")
 ```
 
-# Next Steps
+# Part 5: Gap Analysis
 
-This script provides the framework. To complete the literature review:
+## Temporal gaps
 
-1. **Identify papers to extract**: Which studies in the Excel file need data filled in?
-2. **Extract from PDFs**: Provide PDF paths and I'll extract BPUE values
-3. **Add geographic bounds**: Use `create_bounding_box()` for each study
-4. **Create spatial BPUE surface**: Once data is complete, create raster surface
-5. **Update script 03b**: Use spatially-referenced BPUE instead of mean values
+Blank rows in the spreadsheet = periods where we need BPUE estimates.
 
-# Save Updated Data
+```{r temporal-gaps}
+temporal_gaps <- bpue_std %>%
+  filter(is.na(bpue) | is.na(bbox_raw) | bbox_raw == "") %>%
+  select(fishery_type, fleet, year_group) %>%
+  distinct() %>%
+  arrange(fishery_type, fleet, year_group)
 
-When ready to save updates back to Excel or CSV:
+temporal_gaps %>% print(n = 100)
+```
 
-```{r save-template, eval=FALSE}
-# Save individual sheets as CSV for easier editing
-iwalk(all_sheets, function(df, name) {
-  # Clean sheet name for filename
-  clean_name <- str_replace_all(tolower(name), "[^a-z0-9]+", "_")
-  write_csv(df, here(paste0("output/lit_review_", clean_name, ".csv")))
+## Spatial gap analysis
+
+For each fleet + period with BPUE data, what percentage of that fleet's
+fishing effort cells are covered by at least one BPUE bounding box?
+
+```{r spatial-gaps}
+check_spatial_coverage <- function(fishery, fleet_name, yr_group,
+                                    effort_data, bpue_data) {
+  # Get effort raster
+  effort_rast <- make_effort_raster(effort_data, fleet_name, yr_group)
+  if (is.null(effort_rast)) {
+    return(tibble(fishery = fishery, fleet = fleet_name, year_group = yr_group,
+                  has_effort = FALSE, n_effort_cells = 0,
+                  n_covered = 0, n_gap = 0, pct_covered = NA))
+  }
+
+  # Effort cell locations as points
+
+  effort_df <- as.data.frame(effort_rast, xy = TRUE, na.rm = TRUE)
+  names(effort_df)[3] <- "effort"
+  effort_pts <- st_as_sf(effort_df, coords = c("x", "y"), crs = 4326)
+
+  # BPUE boxes for this fleet + period
+  bpue_boxes <- bpue_data %>%
+    filter(fishery_type == fishery, fleet == fleet_name, plot_year_group == yr_group)
+
+  if (nrow(bpue_boxes) == 0) {
+    return(tibble(fishery = fishery, fleet = fleet_name, year_group = yr_group,
+                  has_effort = TRUE, n_effort_cells = nrow(effort_df),
+                  n_covered = 0, n_gap = nrow(effort_df), pct_covered = 0))
+  }
+
+  # Check which effort cells intersect any bbox
+  covered <- st_intersects(effort_pts, bpue_boxes, sparse = FALSE)
+  n_cov <- sum(rowSums(covered) > 0)
+
+  tibble(fishery = fishery, fleet = fleet_name, year_group = yr_group,
+         has_effort = TRUE, n_effort_cells = nrow(effort_df),
+         n_covered = n_cov, n_gap = nrow(effort_df) - n_cov,
+         pct_covered = round(100 * n_cov / nrow(effort_df), 1))
+}
+
+# Run for all PLL fleets with BPUE data
+pll_gaps <- map_dfr(pll_bpue_fleets, function(fl) {
+  map_dfr(target_year_groups, function(yg) {
+    check_spatial_coverage("PLL", fl, yg, pll_data, bpue_expanded)
+  })
 })
 
-# Or update the master Excel file (requires writexl package)
-# library(writexl)
-# write_xlsx(all_sheets, here("output/bpue_literature_review_updated.xlsx"))
+# Run for all DLL fleets with BPUE data
+dll_gaps <- map_dfr(dll_bpue_fleets, function(fl) {
+  map_dfr(target_year_groups, function(yg) {
+    check_spatial_coverage("DLL", fl, yg, dll_data, bpue_expanded)
+  })
+})
+
+spatial_gaps <- bind_rows(pll_gaps, dll_gaps) %>% arrange(fishery, fleet, year_group)
+spatial_gaps %>% print(n = 100)
+
+# Save
+write_csv(spatial_gaps, here("output/spatial_gap_analysis.csv"))
+write_csv(temporal_gaps, here("output/temporal_gap_analysis.csv"))
+```
+
+## Coverage heatmap
+
+```{r coverage-heatmap, fig.width=14, fig.height=8}
+coverage_plot_data <- spatial_gaps %>%
+  filter(has_effort)
+
+p_heatmap <- ggplot(coverage_plot_data,
+                     aes(x = year_group, y = fleet, fill = pct_covered)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(is.na(pct_covered), "no effort",
+                                paste0(pct_covered, "%"))),
+            size = 3) +
+  facet_wrap(~fishery, scales = "free_y") +
+  scale_fill_gradient2(
+    low = "red", mid = "yellow", high = "darkgreen",
+    midpoint = 50, na.value = "grey90",
+    name = "% Effort Cells\nCovered by BPUE"
+  ) +
+  labs(
+    title = "BPUE Spatial Coverage: Where Are the Gaps?",
+    subtitle = "Red = fishing effort exists but no BPUE study covers it. Grey = no effort data for this fleet.",
+    x = "Year Group", y = "Fleet"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(p_heatmap)
+
+ggsave(here("output/maps/bpue_review/coverage_heatmap.png"),
+       p_heatmap, width = 14, height = 8, dpi = 300)
+```
+
+## Fleets with effort data but NO BPUE entries at all
+
+These fleets appear in the fishing effort data but have no corresponding
+rows in the BPUE spreadsheet.
+
+```{r missing-fleets}
+# PLL fleets with effort but not in BPUE data
+pll_effort_fleets <- pll_data %>% distinct(fleet) %>% pull()
+pll_bpue_all_fleets <- bpue_std %>% filter(fishery_type == "PLL") %>% distinct(fleet) %>% pull()
+pll_missing <- setdiff(pll_effort_fleets, pll_bpue_all_fleets)
+
+# DLL fleets with effort but not in BPUE data
+dll_effort_fleets <- dll_data %>% distinct(fleet) %>% pull()
+dll_bpue_all_fleets <- bpue_std %>% filter(fishery_type == "DLL") %>% distinct(fleet) %>% pull()
+dll_missing <- setdiff(dll_effort_fleets, dll_bpue_all_fleets)
+
+tibble(
+  fishery = c(rep("PLL", length(pll_missing)), rep("DLL", length(dll_missing))),
+  fleet = c(pll_missing, dll_missing),
+  note = "Has fishing effort data but NO BPUE entry in spreadsheet"
+) %>% print(n = 50)
+```
+
+## Fleets with BPUE data but NO fishing effort data
+
+These fleets have BPUE estimates in the spreadsheet but no corresponding
+fishing effort data. Effort may be lumped into another category (e.g., "Other")
+or needs to be sourced separately.
+
+```{r bpue-no-effort}
+# PLL fleets with BPUE but not in effort data
+pll_bpue_no_effort <- setdiff(pll_bpue_all_fleets, pll_effort_fleets)
+
+# DLL fleets with BPUE but not in effort data
+dll_bpue_no_effort <- setdiff(dll_bpue_all_fleets, dll_effort_fleets)
+
+bpue_no_effort <- tibble(
+  fishery = c(rep("PLL", length(pll_bpue_no_effort)), rep("DLL", length(dll_bpue_no_effort))),
+  fleet = c(pll_bpue_no_effort, dll_bpue_no_effort),
+  note = "Has BPUE data but NO fishing effort data"
+)
+
+bpue_no_effort %>% print(n = 50)
+```
+
+## Combined gap summary
+
+```{r combined-gap-summary}
+# Full two-way mismatch table: for every fleet x fishery, do we have effort, BPUE, or both?
+all_fleets <- bind_rows(
+  bpue_std %>% select(fishery_type, fleet) %>% rename(fishery = fishery_type),
+  tibble(fishery = "PLL", fleet = pll_effort_fleets),
+  tibble(fishery = "DLL", fleet = dll_effort_fleets)
+) %>%
+  distinct()
+
+fleet_data_status <- all_fleets %>%
+  mutate(
+    has_effort = case_when(
+      fishery == "PLL" ~ fleet %in% pll_effort_fleets,
+      fishery == "DLL" ~ fleet %in% dll_effort_fleets
+    ),
+    has_bpue = case_when(
+      fishery == "PLL" ~ fleet %in% pll_bpue_all_fleets,
+      fishery == "DLL" ~ fleet %in% dll_bpue_all_fleets
+    ),
+    status = case_when(
+      has_effort & has_bpue ~ "Both",
+      has_effort & !has_bpue ~ "Effort only (need BPUE)",
+      !has_effort & has_bpue ~ "BPUE only (need effort)",
+      TRUE ~ "Neither"
+    )
+  ) %>%
+  arrange(fishery, status, fleet)
+
+fleet_data_status %>% print(n = 60)
+```
+
+# Part 6: Regional Gap Table
+
+Comprehensive table showing BPUE data availability by year group, fishery, fleet,
+and ocean region -- but only where fishing effort actually occurs.
+
+## Define ocean regions
+
+```{r define-regions}
+# 7 regions: SW/SE for each ocean basin + Southern Ocean
+region_defs <- tribble(
+  ~region,            ~lon_min, ~lon_max, ~lat_min, ~lat_max,
+  "SW Atlantic",         -70,      -20,      -60,        0,
+  "SE Atlantic",         -20,       20,      -60,        0,
+  "SW Indian",            20,       80,      -60,        0,
+  "SE Indian",            80,      140,      -60,        0,
+  "SW Pacific",          140,      180,      -60,        0,
+  "SE Pacific",         -180,      -70,      -60,        0,
+  "Southern Ocean",     -180,      180,      -90,      -60
+)
+```
+
+## Assign effort cells to regions
+
+```{r assign-effort-regions}
+# Function to assign a lon/lat point to a region
+assign_region <- function(lon, lat, region_defs) {
+  matches <- region_defs %>%
+    filter(lon >= lon_min, lon < lon_max, lat >= lat_min, lat < lat_max) %>%
+    pull(region)
+  if (length(matches) == 0) return(NA_character_)
+  # Return first match (Southern Ocean check: lat < -60 should match)
+  return(matches[1])
+}
+
+# Assign regions to PLL effort data
+pll_with_region <- pll_data %>%
+  rowwise() %>%
+  mutate(region = assign_region(Lon, Lat, region_defs)) %>%
+  ungroup()
+
+# Assign regions to DLL effort data
+dll_with_region <- dll_data %>%
+  rowwise() %>%
+  mutate(region = assign_region(Lon, Lat, region_defs)) %>%
+  ungroup()
+
+# Which fleet x year_group x region combos have fishing effort?
+pll_effort_by_region <- pll_with_region %>%
+  filter(!is.na(region)) %>%
+  group_by(fleet, year_group, region, RFMO) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery = "PLL")
+
+dll_effort_by_region <- dll_with_region %>%
+  filter(!is.na(region)) %>%
+  group_by(fleet, year_group, region, RFMO) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery = "DLL")
+
+effort_by_region <- bind_rows(pll_effort_by_region, dll_effort_by_region)
+
+# How many unique fleet x period x region combos have effort?
+effort_by_region %>%
+  count(fishery, name = "n_combos") %>%
+  print()
+```
+
+## Parse BPUE region assignments
+
+The BPUE CSV region column can list multiple regions (e.g., "SE Atlantic & SW Indian").
+Expand these so each BPUE entry maps to individual regions.
+
+```{r parse-bpue-regions}
+# Standardize region names from BPUE data to match our 7 regions
+# The CSV uses patterns like "SW Atlantic", "SE Atlantic & SW Indian", "CCAMLR"
+parse_bpue_regions <- function(region_string) {
+  if (is.na(region_string) | region_string == "") return(character(0))
+
+  # Replace CCAMLR with Southern Ocean
+  region_string <- str_replace_all(region_string, "CCAMLR", "Southern Ocean")
+
+  # Split on "&", ",", and "and"
+  parts <- str_split(region_string, "\\s*[&,]\\s*|\\s+and\\s+")[[1]]
+  parts <- str_trim(parts)
+
+  # Match each part to our defined regions
+  matched <- map_chr(parts, function(p) {
+    # Direct or partial match against region names
+    hit <- region_defs$region[str_detect(region_defs$region, fixed(p, ignore_case = TRUE))]
+    if (length(hit) > 0) return(hit[1])
+    # Try partial matches
+    if (str_detect(p, regex("SW.*Atl", ignore_case = TRUE))) return("SW Atlantic")
+    if (str_detect(p, regex("SE.*Atl", ignore_case = TRUE))) return("SE Atlantic")
+    if (str_detect(p, regex("SW.*Ind", ignore_case = TRUE))) return("SW Indian")
+    if (str_detect(p, regex("SE.*Ind", ignore_case = TRUE))) return("SE Indian")
+    if (str_detect(p, regex("SW.*Pac", ignore_case = TRUE))) return("SW Pacific")
+    if (str_detect(p, regex("SE.*Pac", ignore_case = TRUE))) return("SE Pacific")
+    if (str_detect(p, regex("South", ignore_case = TRUE))) return("Southern Ocean")
+    if (str_detect(p, regex("CCAMLR", ignore_case = TRUE))) return("Southern Ocean")
+    return(NA_character_)
+  })
+
+  return(matched[!is.na(matched)])
+}
+
+# Expand BPUE data: one row per region per study
+bpue_by_region <- bpue_std %>%
+  filter(!is.na(bpue)) %>%
+  rowwise() %>%
+  mutate(parsed_regions = list(parse_bpue_regions(region))) %>%
+  ungroup() %>%
+  unnest(parsed_regions) %>%
+  rename(bpue_region = parsed_regions)
+
+# Also expand year groups (same logic as earlier)
+bpue_by_region <- bpue_by_region %>%
+  rowwise() %>%
+  mutate(plot_year_group = list(expand_to_target_periods(year_group))) %>%
+  ungroup() %>%
+  unnest(plot_year_group)
+```
+
+## Sanity check: CSV region labels vs. bounding box centroids
+
+Compare the region label from the CSV against what the bounding box centroid
+would assign. Mismatches may indicate a labeling error or a study that spans
+multiple regions.
+
+```{r region-sanity-check}
+# Assign region from bbox centroid for each unique BPUE observation
+bbox_region_check <- bpue_std %>%
+  filter(!is.na(lat_min) & !is.na(bpue)) %>%
+  distinct(row_id, .keep_all = TRUE) %>%
+  mutate(
+    centroid_lat = (lat_min + lat_max) / 2,
+    centroid_lon = (lon_min + lon_max) / 2,
+    # Wrap dateline-crossing centroids back to -180/180
+    centroid_lon = ifelse(centroid_lon > 180, centroid_lon - 360, centroid_lon)
+  ) %>%
+  rowwise() %>%
+  mutate(region_from_bbox = assign_region(centroid_lon, centroid_lat, region_defs)) %>%
+  ungroup()
+
+# Parse CSV region labels and compare
+bbox_region_check <- bbox_region_check %>%
+  rowwise() %>%
+  mutate(regions_from_csv = list(parse_bpue_regions(region))) %>%
+  ungroup() %>%
+  mutate(
+    bbox_in_csv = map2_lgl(region_from_bbox, regions_from_csv,
+                            ~!is.na(.x) && .x %in% .y)
+  )
+
+# Show mismatches: bbox centroid region not found in CSV region labels
+mismatches <- bbox_region_check %>%
+  filter(!bbox_in_csv) %>%
+  select(row_id, citation, region, region_from_bbox, bbox_raw, centroid_lon, centroid_lat)
+
+if (nrow(mismatches) > 0) {
+  # Mismatches found - review these entries
+  mismatches %>% print(n = 50)
+} else {
+  # All bbox centroids fall within their CSV-labeled regions
+}
+```
+
+## Build the regional gap table
+
+This is an expanded version of the BPUE CSV: start with everywhere fishing effort
+exists (fleet x fishery x year_group x region), then join BPUE data where available.
+Rows without BPUE = gaps to fill.
+
+```{r regional-gap-table}
+# Collapse BPUE data: for each fishery x fleet x period x region,
+# list all BPUE values and citations
+bpue_regional_summary <- bpue_by_region %>%
+  group_by(fishery_type, fleet, plot_year_group, bpue_region) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    bpue_values = paste(signif(bpue, 3), collapse = "; "),
+    citations = paste(unique(citation), collapse = "; "),
+    .groups = "drop"
+  ) %>%
+  rename(fishery = fishery_type, year_group = plot_year_group, region = bpue_region)
+
+# Left join: start from effort (where fishing occurs), attach BPUE where it exists
+regional_gap <- effort_by_region %>%
+  left_join(
+    bpue_regional_summary,
+    by = c("fishery", "fleet", "year_group", "region")
+  ) %>%
+  mutate(
+    has_bpue = !is.na(n_studies),
+    n_studies = replace_na(n_studies, 0),
+    n_bpue = replace_na(n_bpue, 0)
+  ) %>%
+  arrange(fishery, fleet, year_group, region)
+
+# Print the full table
+regional_gap %>% print(n = 200)
+```
+
+## Gap-only table
+
+```{r gap-only-table}
+# Show only the gaps: effort exists but no BPUE
+gaps_only <- regional_gap %>%
+  filter(!has_bpue) %>%
+  select(fishery, fleet, RFMO, year_group, region, total_hooks) %>%
+  arrange(fishery, fleet, region, year_group)
+
+gaps_only %>% print(n = 200)
+
+# Save both tables
+write_csv(regional_gap, here("output/regional_bpue_gap_table.csv"))
+write_csv(gaps_only, here("output/regional_bpue_gaps_only.csv"))
+```
+
+## Regional gap summary
+
+```{r regional-gap-heatmap, fig.width=16, fig.height=10}
+# Create a readable summary: fleet x region, colored by coverage across periods
+gap_summary <- regional_gap %>%
+  group_by(fishery, fleet, region) %>%
+  summarise(
+    periods_with_effort = n(),
+    periods_with_bpue = sum(has_bpue),
+    periods_missing_bpue = sum(!has_bpue),
+    .groups = "drop"
+  )
+
+# Heatmap: for each fleet x region, how many of the 4 periods have BPUE?
+p_regional <- ggplot(gap_summary,
+                      aes(x = region, y = fleet,
+                          fill = periods_with_bpue / periods_with_effort)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = paste0(periods_with_bpue, "/", periods_with_effort)),
+            size = 2.5) +
+  facet_wrap(~fishery, scales = "free_y") +
+  scale_fill_gradient2(
+    low = "red", mid = "yellow", high = "darkgreen",
+    midpoint = 0.5, na.value = "grey90",
+    name = "Fraction of Periods\nwith BPUE Data",
+    labels = scales::percent
+  ) +
+  labs(
+    title = "Regional BPUE Coverage by Fleet",
+    subtitle = "Numbers show periods with BPUE / periods with effort. Only regions with fishing effort shown.",
+    x = "Region", y = "Fleet"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  )
+
+print(p_regional)
+
+ggsave(here("output/maps/bpue_review/regional_gap_heatmap.png"),
+       p_regional, width = 16, height = 10, dpi = 300)
+```
+
+# Part 7: BPUE Summary Statistics
+
+Mean and SD of BPUE across different groupings. Uses the expanded BPUE data
+(one row per region per time period) so multi-region studies contribute to
+each region they cover.
+
+## Full summary: fishery x fleet x period x region
+
+```{r bpue-summary-full}
+bpue_summary_full <- bpue_by_region %>%
+  group_by(fishery_type, fleet, plot_year_group, bpue_region) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    mean_bpue = round(mean(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    .groups = "drop"
+  ) %>%
+  arrange(fishery_type, fleet, plot_year_group, bpue_region)
+
+bpue_summary_full %>% print(n = 200)
+write_csv(bpue_summary_full, here("output/bpue_summary_full.csv"))
+```
+
+## BPUE by fishery
+
+```{r bpue-by-fishery}
+bpue_summary_fishery <- bpue_by_region %>%
+  group_by(fishery_type) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    mean_bpue = round(mean(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    .groups = "drop"
+  )
+
+bpue_summary_fishery %>% print()
+write_csv(bpue_summary_fishery, here("output/bpue_summary_by_fishery.csv"))
+```
+
+## BPUE by fleet
+
+```{r bpue-by-fleet}
+bpue_summary_fleet <- bpue_by_region %>%
+  group_by(fishery_type, fleet) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    mean_bpue = round(mean(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    .groups = "drop"
+  ) %>%
+  arrange(fishery_type, fleet)
+
+bpue_summary_fleet %>% print(n = 50)
+write_csv(bpue_summary_fleet, here("output/bpue_summary_by_fleet.csv"))
+```
+
+## BPUE by time period
+
+```{r bpue-by-period}
+bpue_summary_period <- bpue_by_region %>%
+  group_by(fishery_type, plot_year_group) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    mean_bpue = round(mean(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    .groups = "drop"
+  )
+
+bpue_summary_period %>% print()
+write_csv(bpue_summary_period, here("output/bpue_summary_by_period.csv"))
+```
+
+## BPUE by region
+
+```{r bpue-by-region-summary}
+bpue_summary_region <- bpue_by_region %>%
+  group_by(fishery_type, bpue_region) %>%
+  summarise(
+    n_studies = n_distinct(citation),
+    n_bpue = n_distinct(row_id),
+    mean_bpue = round(mean(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
+    .groups = "drop"
+  ) %>%
+  arrange(fishery_type, bpue_region)
+
+bpue_summary_region %>% print()
+write_csv(bpue_summary_region, here("output/bpue_summary_by_region.csv"))
 ```
 
 # Session Info

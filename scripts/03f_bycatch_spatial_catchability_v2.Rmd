@@ -1,0 +1,1358 @@
+---
+title: "Wandering Albatross Bycatch - Spatial Catchability v2 (Fleet-by-Period)"
+author: "WAAL Bycatch Project"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# Overview
+
+This script implements a **spatially-varying catchability approach** using fleet-by-period
+effort data and the BPUE literature review from script 04. It replaces the placeholder
+studies and expert elicitation in script 03d.
+
+## Method
+
+**Step 1: Estimate per-study catchability**
+
+For each BPUE study (fleet, fishery, time period, bounding box):
+
+```
+β_i = BPUE_i / (1000 × B_study_i)
+```
+
+where B_study = hooks-weighted mean TOTAL WAAL density in the study's bounding box.
+This extracts "pure catchability" — the per-hook risk per unit bird density.
+β is a property of the fishery's gear/practices, independent of location.
+
+**Step 2: Compute fishery-level mean beta**
+
+Average β across all studies within each fishery type (PLL, DLL) to get a single
+catchability value representing how dangerous each gear type is per hook per bird.
+
+**Step 3: Calculate bycatch using BI-specific bird density**
+
+```
+bycatch_cell = β_fishery × hooks_cell × BI_birds_cell
+```
+
+Uses Bird Island age-class density rasters directly (from script 02).
+Total bycatch depends on the spatial overlap of hooks and BI birds.
+Since β is calibrated from study areas (typically high total bird density)
+but applied with BI-specific density, bird density genuinely matters — areas
+with fewer BI birds contribute proportionally less bycatch.
+
+# Section 1: Setup
+
+```{r libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(viridis)
+library(patchwork)
+```
+
+# Section 2: Load Base Data
+
+## Bird densities and distributions
+
+```{r load-bird-data}
+# Total bird density (all populations combined)
+total_bird_density <- rast(here("output/rasters/total_bird_density_all_pops.tif"))
+
+# Bird Island age-class density rasters (from script 02)
+# These give the density of BI WAAL per cell for each age class
+bi_density_fb <- rast(here("output/rasters/BI_density_fb_final.tif"))
+bi_density_sb <- rast(here("output/rasters/BI_density_sb_final.tif"))
+bi_density_nb <- rast(here("output/rasters/BI_density_nb_final.tif"))
+bi_density_j2j3 <- rast(here("output/rasters/BI_density_j2j3_final.tif"))
+bi_density_imm <- rast(here("output/rasters/BI_density_imm_final.tif"))
+
+bi_dists <- list(fb = bi_density_fb, sb = bi_density_sb, nb = bi_density_nb,
+                 j2j3 = bi_density_j2j3, imm = bi_density_imm)
+
+# Total BI bird density (sum across age classes)
+bi_density_total <- bi_density_fb + bi_density_sb + bi_density_nb +
+                    bi_density_j2j3 + bi_density_imm
+```
+
+## Demographic proportions
+
+```{r load-demographics}
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+dem_props_summary <- dem_props %>%
+  group_by(Dem_class) %>%
+  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
+
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+pop_sizes <- c(
+  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
+)
+```
+
+## Basemap
+
+```{r load-basemap}
+ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+# Section 3: Load Fleet-by-Period Effort Data
+
+## Pelagic longline
+
+```{r load-pll}
+pll_data <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE)
+
+# Standardize fleet names to match BPUE CSV naming
+# Merge NA and "Other" into a single "Other" category (likely same unlabeled effort
+# recorded differently across RFMOs)
+pll_data <- pll_data %>%
+  mutate(fleet = case_when(
+    Flag == "South Korea" ~ "Korea",
+    is.na(Flag) ~ "Other",
+    Flag == "Other" ~ "Other",
+    TRUE ~ Flag
+  ))
+
+# Assign year groups
+target_year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+
+pll_data <- pll_data %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1995 ~ "1990-1995",
+    Year >= 1996 & Year <= 2000 ~ "1996-2000",
+    Year >= 2001 & Year <= 2005 ~ "2001-2005",
+    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(year_group))
+
+pll_data %>% count(fleet, sort = TRUE) %>% print(n = 30)
+```
+
+## Demersal longline
+
+```{r load-dll}
+ccamlr_data <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"), show_col_types = FALSE)
+arg_data <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"), show_col_types = FALSE)
+# Filter out pelagic longline swordfish rows — these are PLL, not DLL
+chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"), show_col_types = FALSE) %>%
+  filter(FISHERY != "Pel LL SWO")
+falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"), show_col_types = FALSE)
+namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"), show_col_types = FALSE)
+saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"), show_col_types = FALSE)
+
+standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",
+                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month") {
+  data %>%
+    select(all_of(c(year_col, month_col, lat_col, lon_col, hooks_col))) %>%
+    rename(Year = all_of(year_col), Month = all_of(month_col),
+           Lat = all_of(lat_col), Lon = all_of(lon_col),
+           Hooks = all_of(hooks_col)) %>%
+    mutate(fleet = dataset_name)
+}
+
+ccamlr_std <- standardize_dem_data(
+  ccamlr_data, "CCAMLR",
+  lon_col = "longitude_5deg", lat_col = "latitude_5deg",
+  hooks_col = "hook_count", year_col = "year", month_col = "month"
+)
+arg_std <- standardize_dem_data(arg_data, "Argentina", lon_col = "Lng", hooks_col = "Effort")
+chile_std <- standardize_dem_data(chile_data, "Chile", lon_col = "Lng", hooks_col = "Effort")
+falk_std <- standardize_dem_data(falk_data, "Falklands", lon_col = "Lng", hooks_col = "Effort")
+namibia_std <- namibia_data %>%
+  mutate(fleet = "Namibia") %>%
+  select(Year, Month, Lat, Lon, Hooks, fleet)
+saf_std <- saf_data %>%
+  rename(Hooks = Effort) %>%
+  mutate(fleet = "South Africa") %>%
+  select(Year, Month, Lat, Lon, Hooks, fleet)
+
+dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std) %>%
+  mutate(
+    Lon = ifelse(Lon > 180, Lon - 360, Lon)
+  ) %>%
+  filter(Year >= 1990, Year <= 2010) %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1995 ~ "1990-1995",
+    Year >= 1996 & Year <= 2000 ~ "1996-2000",
+    Year >= 2001 & Year <= 2005 ~ "2001-2005",
+    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(year_group))
+
+dll_data %>% count(fleet, sort = TRUE) %>% print(n = 20)
+```
+
+## Rasterize effort by fleet x period
+
+Aggregate effort to 5x5 degree mean annual hooks per cell, for each fleet x year_group.
+
+```{r rasterize-effort}
+# Use total_bird_density as the template grid
+template <- total_bird_density
+
+# Function: aggregate effort data to a raster for one fleet x period
+# Uses MEAN ANNUAL hooks (total hooks / number of years in period) so that
+# bycatch = beta * hooks * birds gives an annual estimate
+make_effort_raster <- function(effort_data, fleet_name, yr_group, template_rast) {
+  # Count distinct years with data for this fleet x period
+  n_years <- effort_data %>%
+    filter(fleet == fleet_name, year_group == yr_group) %>%
+    pull(Year) %>%
+    n_distinct()
+  if (n_years == 0) return(NULL)
+
+  effort_subset <- effort_data %>%
+    filter(fleet == fleet_name, year_group == yr_group) %>%
+    group_by(Lon, Lat) %>%
+    summarise(total_hooks = sum(Hooks, na.rm = TRUE) / n_years, .groups = "drop")
+
+  if (nrow(effort_subset) < 2) return(NULL)
+
+  effort_rast <- tryCatch(
+    rast(effort_subset, type = "xyz", crs = "EPSG:4326"),
+    error = function(e) NULL
+  )
+  if (is.null(effort_rast)) return(NULL)
+
+  # Resample to match template grid
+  resample(effort_rast, template_rast, method = "bilinear")
+}
+
+# Build a nested list: effort_rasters[[fishery]][[fleet]][[year_group]]
+# Also build a flat lookup table for iteration
+effort_combos <- bind_rows(
+  pll_data %>% distinct(fleet, year_group) %>% mutate(fishery = "PLL"),
+  dll_data %>% distinct(fleet, year_group) %>% mutate(fishery = "DLL")
+)
+
+# Create effort rasters for all combos
+effort_rasters <- list()
+
+for (i in 1:nrow(effort_combos)) {
+  fi <- effort_combos$fishery[i]
+  fl <- effort_combos$fleet[i]
+  yg <- effort_combos$year_group[i]
+
+  src_data <- if (fi == "PLL") pll_data else dll_data
+  r <- make_effort_raster(src_data, fl, yg, template)
+
+  if (!is.null(r)) {
+    key <- paste(fi, fl, yg, sep = "|")
+    effort_rasters[[key]] <- r
+  }
+}
+
+# Helper to retrieve an effort raster
+get_effort_raster <- function(fishery, fleet, year_group) {
+  key <- paste(fishery, fleet, year_group, sep = "|")
+  effort_rasters[[key]]
+}
+
+# Also create total effort rasters per fishery x period (summed across fleets)
+# for use in gap-filling beta conversion
+fishery_period_combos <- expand_grid(
+  fishery = c("PLL", "DLL"),
+  year_group = target_year_groups
+)
+
+total_effort_by_fp <- list()
+for (i in 1:nrow(fishery_period_combos)) {
+  fi <- fishery_period_combos$fishery[i]
+  yg <- fishery_period_combos$year_group[i]
+
+  # Sum all fleet rasters for this fishery x period
+  matching_keys <- names(effort_rasters)[str_detect(names(effort_rasters),
+                                                     paste0("^", fi, "\\|.*\\|", yg, "$"))]
+  if (length(matching_keys) > 0) {
+    stacked <- rast(effort_rasters[matching_keys])
+    total_r <- app(stacked, sum, na.rm = TRUE)
+    total_effort_by_fp[[paste(fi, yg, sep = "|")]] <- total_r
+  }
+}
+
+cat("Effort rasters created:", length(effort_rasters), "fleet-level,",
+    length(total_effort_by_fp), "fishery-period totals\n")
+```
+
+# Section 4: Load BPUE Literature Data
+
+```{r load-bpue}
+bpue_std <- read_csv(here("data/BPUE_2926_standardized.csv"), show_col_types = FALSE)
+
+# Filter to rows with valid bounding boxes and BPUE values
+bpue_with_bbox <- bpue_std %>%
+  filter(!is.na(lat_min) & !is.na(bpue))
+
+# Function to create sf polygon from bbox coordinates
+# Handles dateline crossings (lon_max > 180)
+make_bbox_polygon <- function(lat_min, lat_max, lon_min, lon_max) {
+  if (lon_max > 180) {
+    coords1 <- matrix(c(lon_min, lat_min, 180, lat_min, 180, lat_max,
+                         lon_min, lat_max, lon_min, lat_min),
+                       ncol = 2, byrow = TRUE)
+    lon_max_wrapped <- lon_max - 360
+    coords2 <- matrix(c(-180, lat_min, lon_max_wrapped, lat_min,
+                         lon_max_wrapped, lat_max, -180, lat_max, -180, lat_min),
+                       ncol = 2, byrow = TRUE)
+    st_multipolygon(list(list(coords1), list(coords2)))
+  } else {
+    coords <- matrix(c(lon_min, lat_min, lon_max, lat_min, lon_max, lat_max,
+                        lon_min, lat_max, lon_min, lat_min),
+                     ncol = 2, byrow = TRUE)
+    st_polygon(list(coords))
+  }
+}
+
+# Build sf object
+bpue_sf <- bpue_with_bbox %>%
+  rowwise() %>%
+  mutate(geometry = list(make_bbox_polygon(lat_min, lat_max, lon_min, lon_max))) %>%
+  ungroup() %>%
+  mutate(geometry = st_sfc(geometry, crs = 4326)) %>%
+  st_as_sf()
+
+# Assign each study to the BEST-FITTING single target period (no duplication)
+# For studies spanning multiple periods, pick the earliest matching target period.
+# This avoids double-counting studies that span period boundaries.
+assign_best_period <- function(yg_string) {
+  if (is.na(yg_string) | yg_string == "") return(NA_character_)
+  periods <- str_trim(str_split(yg_string, ",")[[1]])
+  matched <- map(periods, function(p) {
+    if (p %in% target_year_groups) return(p)
+    if (p == "1995-2000") return("1996-2000")
+    if (p == "2005-2010") return("2006-2010")
+    if (p == " 1996-2000") return("1996-2000")
+    if (p == " 2011-2015") return(character(0))
+    if (p == "2011-2015") return(character(0))
+    matches <- target_year_groups[map_lgl(target_year_groups, ~str_detect(p, .x))]
+    if (length(matches) > 0) return(matches[1])
+    return(character(0))
+  }) %>% unlist() %>% unique()
+  # Return only the FIRST (earliest) matching period
+  if (length(matched) == 0) return(NA_character_)
+  return(matched[1])
+}
+
+bpue_expanded <- bpue_sf %>%
+  rowwise() %>%
+  mutate(plot_year_group = assign_best_period(year_group)) %>%
+  ungroup() %>%
+  filter(!is.na(plot_year_group))
+
+cat("Studies assigned to single best-fitting period (no duplication):\n")
+cat("Total study-period rows:", nrow(bpue_expanded), "\n\n")
+
+# Do NOT reroute fleets without effort data (Uruguay, NZ) to "Other".
+# Instead, keep them as-is. They will simply be skipped in beta calculation
+# (Section 6) since there's no matching effort raster, preventing their
+# high BPUEs from inflating the "Other" fleet's catchability.
+pll_effort_fleets <- pll_data %>% distinct(fleet) %>% pull()
+dll_effort_fleets <- dll_data %>% distinct(fleet) %>% pull()
+
+# Flag fleets with no effort data (for reporting only)
+bpue_expanded <- bpue_expanded %>%
+  mutate(has_effort_data = case_when(
+    fishery_type == "PLL" ~ fleet %in% pll_effort_fleets,
+    fishery_type == "DLL" ~ fleet %in% dll_effort_fleets,
+    TRUE ~ FALSE
+  ))
+
+cat("Fleets WITHOUT matching effort data (will be skipped, not rerouted):\n")
+bpue_expanded %>%
+  st_drop_geometry() %>%
+  filter(!has_effort_data) %>%
+  distinct(fishery_type, fleet) %>%
+  print()
+
+# Summary
+bpue_expanded %>%
+  st_drop_geometry() %>%
+  count(fishery_type, fleet, plot_year_group) %>%
+  pivot_wider(names_from = plot_year_group, values_from = n, values_fill = 0) %>%
+  print(n = 50)
+```
+
+# Section 5: Load BPUE Summary Statistics (for gap-filling)
+
+```{r load-bpue-summaries}
+bpue_by_fleet <- read_csv(here("output/bpue_summary_by_fleet.csv"), show_col_types = FALSE)
+bpue_by_region <- read_csv(here("output/bpue_summary_by_region.csv"), show_col_types = FALSE)
+bpue_by_period <- read_csv(here("output/bpue_summary_by_period.csv"), show_col_types = FALSE)
+bpue_by_fishery <- read_csv(here("output/bpue_summary_by_fishery.csv"), show_col_types = FALSE)
+
+# Define ocean regions (same as script 04)
+region_defs <- tribble(
+  ~region,            ~lon_min, ~lon_max, ~lat_min, ~lat_max,
+  "SW Atlantic",         -70,      -20,      -60,        0,
+  "SE Atlantic",         -20,       20,      -60,        0,
+  "SW Indian",            20,       80,      -60,        0,
+  "SE Indian",            80,      140,      -60,        0,
+  "SW Pacific",          140,      180,      -60,        0,
+  "SE Pacific",         -180,      -70,      -60,        0,
+  "Southern Ocean",     -180,      180,      -90,      -60
+)
+
+# Function to assign a point to a region
+assign_region <- function(lon, lat) {
+  matches <- region_defs %>%
+    filter(lon >= lon_min, lon < lon_max, lat >= lat_min, lat < lat_max) %>%
+    pull(region)
+  if (length(matches) == 0) return(NA_character_)
+  return(matches[1])
+}
+```
+
+# Section 6: Calculate Catchability per BPUE Study
+
+Beta (catchability) is the per-hook mortality risk per unit bird density. It is
+extracted from each BPUE study by dividing out the local bird density where the
+study was conducted:
+
+```
+β = BPUE / (1000 × B_study)
+```
+
+where B_study = hooks-weighted mean TOTAL WAAL density in the study's bounding box.
+This extracts "pure catchability" — a property of the fishery/gear, not the location.
+
+A single **fishery-level mean β** is then applied uniformly to all cells:
+
+```
+bycatch_cell = β_fishery × hooks_cell × BI_birds_cell
+```
+
+Bird density matters in the output because β is calibrated from study areas
+(typically high bird density) but applied to all effort cells (many with lower
+bird density). This avoids the cancellation that occurs when per-study betas
+are applied within their own bounding boxes.
+
+```{r calculate-betas}
+# Align TOTAL bird density to template (used for B_study — all WAAL, not just BI)
+bird_density_aligned <- resample(total_bird_density, template, method = "bilinear")
+
+# Align BI age-class densities to template
+bi_dists_aligned <- map(bi_dists, function(r) {
+  resample(r, template, method = "bilinear")
+})
+
+# Total BI density aligned to template
+bi_density_aligned <- Reduce("+", bi_dists_aligned)
+
+# Calculate beta for each BPUE study using bounding-box TOTAL WAAL density
+bpue_geom <- bpue_expanded
+
+bpue_betas <- bpue_expanded %>%
+  st_drop_geometry() %>%
+  mutate(beta = NA_real_,
+         B_study = NA_real_,
+         fleet_hooks_in_box = NA_real_,
+         has_effort_match = FALSE)
+
+for (i in 1:nrow(bpue_betas)) {
+  fi <- bpue_betas$fishery_type[i]
+  fl <- bpue_betas$fleet[i]
+  yg <- bpue_betas$plot_year_group[i]
+  bpue_val <- bpue_betas$bpue[i]
+
+  # Get fleet effort raster for this fleet x period
+  key <- paste(fi, fl, yg, sep = "|")
+  effort_r <- effort_rasters[[key]]
+  if (is.null(effort_r)) next
+
+  # Get study bounding box from geometry
+  bbox <- st_bbox(bpue_geom[i, ])
+  bbox_ext <- ext(bbox["xmin"], bbox["xmax"], bbox["ymin"], bbox["ymax"])
+
+  # Crop effort and TOTAL bird density to bounding box
+  effort_crop <- tryCatch(crop(effort_r, bbox_ext), error = function(e) NULL)
+  birds_crop <- tryCatch(crop(bird_density_aligned, bbox_ext), error = function(e) NULL)
+
+  if (is.null(effort_crop) || is.null(birds_crop)) next
+
+  # Compute hooks-weighted mean TOTAL WAAL density in the box
+  hooks_in_box <- global(effort_crop, "sum", na.rm = TRUE)[1, 1]
+  hooks_x_birds_in_box <- global(effort_crop * birds_crop, "sum", na.rm = TRUE)[1, 1]
+
+  if (is.na(hooks_in_box) || hooks_in_box <= 0) next
+  if (is.na(hooks_x_birds_in_box) || hooks_x_birds_in_box <= 0) next
+
+  B_study <- hooks_x_birds_in_box / hooks_in_box
+
+  bpue_betas$B_study[i] <- B_study
+  bpue_betas$fleet_hooks_in_box[i] <- hooks_in_box
+  bpue_betas$beta[i] <- bpue_val / (1000 * B_study)
+  bpue_betas$has_effort_match[i] <- TRUE
+}
+
+# Summary of per-study beta calculations
+cat("\n=== PER-STUDY BETA CALCULATION SUMMARY ===\n")
+cat("Total BPUE study-period rows:", nrow(bpue_betas), "\n")
+cat("Successfully calculated beta:", sum(!is.na(bpue_betas$beta)), "\n")
+cat("No matching effort data:", sum(is.na(bpue_betas$beta)), "\n\n")
+
+# Show per-study details
+cat("\n=== PER-STUDY BETA VALUES ===\n")
+bpue_betas %>%
+  filter(!is.na(beta)) %>%
+  select(fishery_type, fleet, plot_year_group, bpue, B_study, beta,
+         fleet_hooks_in_box) %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
+  print(n = 50)
+
+# Compute FISHERY-LEVEL MEAN BETA
+# This is the key step: average beta across all studies within each fishery type.
+# Each study contributes equally (simple mean). This gives a single catchability
+# value per fishery that represents "how dangerous this gear type is per hook
+# per unit bird density."
+beta_by_fishery_type <- bpue_betas %>%
+  filter(!is.na(beta)) %>%
+  group_by(fishery_type) %>%
+  summarise(
+    n_studies = n(),
+    mean_beta = mean(beta),
+    median_beta = median(beta),
+    sd_beta = sd(beta),
+    min_beta = min(beta),
+    max_beta = max(beta),
+    mean_B_study = mean(B_study),
+    .groups = "drop"
+  )
+
+cat("\n=== FISHERY-LEVEL MEAN BETA (applied uniformly to all cells) ===\n")
+beta_by_fishery_type %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
+  print()
+
+# Also compute fleet-level mean beta for diagnostic comparison
+beta_by_fleet_type <- bpue_betas %>%
+  filter(!is.na(beta)) %>%
+  group_by(fishery_type, fleet) %>%
+  summarise(
+    n_studies = n(),
+    mean_beta = mean(beta),
+    .groups = "drop"
+  )
+
+cat("\n=== FLEET-LEVEL MEAN BETA (for reference) ===\n")
+beta_by_fleet_type %>%
+  mutate(mean_beta = signif(mean_beta, 4)) %>%
+  print(n = 20)
+```
+
+# Section 7: Build Catchability Surface
+
+For each fleet × fishery × period, create a per-cell catchability map by overlaying
+BPUE study bounding boxes. Where multiple studies overlap a cell, take the mean of
+their betas. Cells with effort but no study coverage are marked as gaps (filled in
+Section 8).
+
+```{r build-catchability-maps}
+cat("\n=== BUILDING PER-CELL CATCHABILITY SURFACE ===\n")
+
+# Get all fleet x fishery x period combos that have effort
+fleet_fp_combos <- effort_combos %>%
+  filter(paste(fishery, fleet, year_group, sep = "|") %in% names(effort_rasters))
+
+# Attach betas to BPUE studies (need geometry for spatial matching)
+bpue_with_betas <- bpue_expanded %>%
+  left_join(
+    bpue_betas %>% select(row_id, plot_year_group, beta, has_effort_match),
+    by = c("row_id", "plot_year_group")
+  ) %>%
+  filter(!is.na(beta))
+
+# Store results: one catchability raster per fleet x fishery x period
+catchability_rasters <- list()
+coverage_info <- tibble()
+
+for (i in 1:nrow(fleet_fp_combos)) {
+  fi <- fleet_fp_combos$fishery[i]
+  fl <- fleet_fp_combos$fleet[i]
+  yg <- fleet_fp_combos$year_group[i]
+  key <- paste(fi, fl, yg, sep = "|")
+
+  effort_r <- effort_rasters[[key]]
+
+  # Get BPUE studies matching this fleet + fishery + period
+  studies <- bpue_with_betas %>%
+    filter(fishery_type == fi, fleet == fl, plot_year_group == yg)
+
+  if (nrow(studies) == 0) {
+    # No BPUE studies for this fleet x fishery x period -> all cells are gaps
+    catchability_rasters[[key]] <- NA
+    coverage_info <- bind_rows(coverage_info, tibble(
+      fishery = fi, fleet = fl, year_group = yg,
+      n_effort_cells = NA_integer_, n_covered = 0L,
+      n_gap = NA_integer_, method = "all_gap"
+    ))
+    next
+  }
+
+  # Get cell coordinates from effort raster
+  effort_df <- as.data.frame(effort_r, xy = TRUE, cells = TRUE, na.rm = TRUE)
+  names(effort_df)[4] <- "effort"
+  effort_df <- effort_df %>% filter(effort > 0)
+
+  if (nrow(effort_df) == 0) next
+
+  # Convert effort cells to sf points for spatial intersection with study bboxes
+  effort_pts <- st_as_sf(effort_df, coords = c("x", "y"), crs = 4326)
+
+  # Check which effort cells fall within each study's bounding box
+  intersections <- st_intersects(effort_pts, studies)
+
+  # For each cell, average betas of covering studies (weighted mean where overlap)
+  effort_df$beta <- NA_real_
+  effort_df$n_studies <- 0L
+
+  for (j in seq_along(intersections)) {
+    study_indices <- intersections[[j]]
+    if (length(study_indices) > 0) {
+      study_betas <- studies$beta[study_indices]
+      effort_df$beta[j] <- mean(study_betas, na.rm = TRUE)
+      effort_df$n_studies[j] <- length(study_indices)
+    }
+  }
+
+  n_covered <- sum(!is.na(effort_df$beta))
+  n_gap <- sum(is.na(effort_df$beta))
+
+  # Create catchability raster
+  catch_rast <- template * NA
+  catch_rast[effort_df$cell] <- effort_df$beta
+
+  catchability_rasters[[key]] <- catch_rast
+
+  coverage_info <- bind_rows(coverage_info, tibble(
+    fishery = fi, fleet = fl, year_group = yg,
+    n_effort_cells = nrow(effort_df), n_covered = n_covered,
+    n_gap = n_gap, method = "direct"
+  ))
+}
+
+cat("\nCatchability maps built:", sum(!is.na(catchability_rasters)), "fleet-period combos\n")
+coverage_info %>% print(n = 50)
+```
+
+# Section 8: Fill Gaps in Catchability Surface
+
+For cells with effort but no BPUE study coverage, fill using similarity-based
+mean β values. Since β is "pure catchability" (bird density factored out),
+averaging β across studies is appropriate.
+
+Gap-fill β = mean of available similarity dimensions (within same fishery type):
+- Fleet mean β (if fleet has BPUE data elsewhere)
+- Region mean β
+- Period mean β
+- Fallback: fishery-type mean β
+
+```{r fill-gaps}
+cat("\n=== GAP FILLING ===\n")
+
+# Pre-compute mean beta by similarity dimensions (from direct study betas)
+valid_betas <- bpue_betas %>% filter(!is.na(beta))
+
+# Assign each study to a region based on bounding box centroid
+valid_betas <- valid_betas %>%
+  mutate(
+    bbox_center_lon = (lon_min + lon_max) / 2,
+    bbox_center_lat = (lat_min + lat_max) / 2,
+    study_region = map2_chr(bbox_center_lon, bbox_center_lat, assign_region)
+  )
+
+# Mean beta by fleet (within fishery type)
+beta_by_fleet <- valid_betas %>%
+  group_by(fishery_type, fleet) %>%
+  summarise(mean_beta = mean(beta, na.rm = TRUE), n = n(), .groups = "drop")
+
+# Mean beta by region (within fishery type)
+beta_by_region <- valid_betas %>%
+  filter(!is.na(study_region)) %>%
+  group_by(fishery_type, study_region) %>%
+  summarise(mean_beta = mean(beta, na.rm = TRUE), n = n(), .groups = "drop")
+
+# Mean beta by period (within fishery type)
+beta_by_period <- valid_betas %>%
+  group_by(fishery_type, plot_year_group) %>%
+  summarise(mean_beta = mean(beta, na.rm = TRUE), n = n(), .groups = "drop")
+
+# Mean beta by fishery type (ultimate fallback)
+beta_by_fishery_mean <- valid_betas %>%
+  group_by(fishery_type) %>%
+  summarise(mean_beta = mean(beta, na.rm = TRUE), n = n(), .groups = "drop")
+
+cat("Beta summary tables computed:\n")
+cat("  By fleet:", nrow(beta_by_fleet), "entries\n")
+cat("  By region:", nrow(beta_by_region), "entries\n")
+cat("  By period:", nrow(beta_by_period), "entries\n")
+cat("  By fishery:", nrow(beta_by_fishery_mean), "entries\n\n")
+
+cat("Mean beta by fishery type:\n")
+beta_by_fishery_mean %>% print()
+
+# Track gap-fill details
+gap_fill_log <- tibble()
+
+for (i in 1:nrow(fleet_fp_combos)) {
+  fi <- fleet_fp_combos$fishery[i]
+  fl <- fleet_fp_combos$fleet[i]
+  yg <- fleet_fp_combos$year_group[i]
+  key <- paste(fi, fl, yg, sep = "|")
+
+  effort_r <- effort_rasters[[key]]
+
+  # Get or create the catchability raster
+  catch_rast <- catchability_rasters[[key]]
+  if (is.logical(catch_rast) && is.na(catch_rast)) {
+    catch_rast <- template * NA
+  }
+
+  # Find cells that have effort but no beta (gaps)
+  effort_df <- as.data.frame(effort_r, xy = TRUE, cells = TRUE, na.rm = TRUE)
+  names(effort_df)[4] <- "effort"
+  effort_df <- effort_df %>% filter(effort > 0)
+
+  if (nrow(effort_df) == 0) next
+
+  # Get existing beta values
+  existing_beta <- values(catch_rast)[effort_df$cell]
+  gap_cells <- which(is.na(existing_beta))
+
+  if (length(gap_cells) == 0) next
+
+  # Look up fleet mean beta (if fleet has any BPUE data, same fishery type)
+  fleet_beta_val <- beta_by_fleet %>%
+    filter(fishery_type == fi, fleet == fl) %>%
+    pull(mean_beta)
+  has_fleet_beta <- length(fleet_beta_val) > 0 && !is.na(fleet_beta_val[1])
+
+  # Look up period mean beta
+  period_beta_val <- beta_by_period %>%
+    filter(fishery_type == fi, plot_year_group == yg) %>%
+    pull(mean_beta)
+  has_period_beta <- length(period_beta_val) > 0 && !is.na(period_beta_val[1])
+
+  # Fishery-type fallback beta
+  fishery_beta_val <- beta_by_fishery_mean %>%
+    filter(fishery_type == fi) %>%
+    pull(mean_beta)
+
+  # Assign each gap cell to a region
+  gap_df <- effort_df[gap_cells, ]
+  gap_df$region <- map_chr(1:nrow(gap_df), function(j) {
+    assign_region(gap_df$x[j], gap_df$y[j])
+  })
+
+  # Process gap cells grouped by region
+  gap_regions <- gap_df %>%
+    filter(!is.na(region)) %>%
+    distinct(region) %>%
+    pull(region)
+
+  for (reg in gap_regions) {
+    reg_cells <- gap_df %>% filter(region == reg)
+
+    # Look up region mean beta
+    region_beta_val <- beta_by_region %>%
+      filter(fishery_type == fi, study_region == reg) %>%
+      pull(mean_beta)
+    has_region_beta <- length(region_beta_val) > 0 && !is.na(region_beta_val[1])
+
+    # Compute fill beta as mean of available similarity dimensions
+    fill_components <- c()
+    if (has_fleet_beta) fill_components <- c(fill_components, fleet_beta_val[1])
+    if (has_region_beta) fill_components <- c(fill_components, region_beta_val[1])
+    if (has_period_beta) fill_components <- c(fill_components, period_beta_val[1])
+
+    if (length(fill_components) > 0) {
+      fill_beta <- mean(fill_components)
+      fill_method <- paste0("similarity_", length(fill_components))
+    } else {
+      fill_beta <- fishery_beta_val[1]
+      fill_method <- "fishery_mean"
+    }
+
+    # Assign to all gap cells in this region
+    catch_rast[reg_cells$cell] <- fill_beta
+
+    gap_fill_log <- bind_rows(gap_fill_log, tibble(
+      fishery = fi, fleet = fl, year_group = yg,
+      region = reg,
+      n_cells = nrow(reg_cells),
+      fill_method = fill_method,
+      fill_beta = fill_beta,
+      n_components = length(fill_components)
+    ))
+  }
+
+  # Handle gap cells with no region assignment
+  no_region_cells <- gap_df %>% filter(is.na(region))
+  if (nrow(no_region_cells) > 0) {
+    fallback_beta <- fishery_beta_val[1]
+
+    catch_rast[no_region_cells$cell] <- fallback_beta
+
+    gap_fill_log <- bind_rows(gap_fill_log, tibble(
+      fishery = fi, fleet = fl, year_group = yg,
+      region = "no_region",
+      n_cells = nrow(no_region_cells),
+      fill_method = "fishery_mean",
+      fill_beta = fallback_beta,
+      n_components = 0L
+    ))
+  }
+
+  # Update the catchability raster
+  catchability_rasters[[key]] <- catch_rast
+}
+
+cat("\nGap-fill summary:\n")
+gap_fill_log %>%
+  group_by(fishery, fill_method) %>%
+  summarise(
+    n_regions = n(),
+    total_cells = sum(n_cells),
+    mean_fill_beta = format(mean(fill_beta, na.rm = TRUE), scientific = TRUE),
+    .groups = "drop"
+  ) %>%
+  print(n = 20)
+```
+
+# Section 9: Calculate Bycatch
+
+For each fleet × fishery × period, apply the per-cell catchability surface:
+
+`bycatch_cell = β_cell × hooks_cell × BI_birds_cell`
+
+Key: β was calibrated using GLOBAL WAAL density (all populations), but bycatch
+is calculated using BI-specific bird density. This means global bird density
+cancels in the total WAAL estimate (as expected: total = BPUE × hooks), but
+BI's share depends on the actual spatial overlap of hooks and BI birds within
+each study area. Areas where BI birds are a larger fraction of total WAAL
+contribute proportionally more to BI bycatch.
+
+```{r calculate-bycatch}
+cat("\n=== CALCULATING BYCATCH ===\n")
+cat("Using per-cell catchability surface × hooks × BI bird density\n")
+cat("β calibrated with global WAAL, applied with BI-specific density\n\n")
+
+# Calculate bycatch for each fleet x fishery x period
+bycatch_results <- tibble()
+
+for (i in 1:nrow(fleet_fp_combos)) {
+  fi <- fleet_fp_combos$fishery[i]
+  fl <- fleet_fp_combos$fleet[i]
+  yg <- fleet_fp_combos$year_group[i]
+  key <- paste(fi, fl, yg, sep = "|")
+
+  effort_r <- effort_rasters[[key]]
+  catch_r <- catchability_rasters[[key]]
+
+  # Skip if catchability is still NA (shouldn't happen after gap-filling)
+  if (is.logical(catch_r) && is.na(catch_r)) next
+
+  # BI bycatch per cell per age class = beta_cell * hooks_cell * BI_birds_age_cell
+  byc_by_age <- map_dbl(names(bi_dists_aligned), function(age) {
+    bi_age_byc <- catch_r * effort_r * bi_dists_aligned[[age]]
+    global(bi_age_byc, "sum", na.rm = TRUE)[1, 1]
+  })
+  names(byc_by_age) <- names(bi_dists_aligned)
+
+  bi_total <- sum(byc_by_age, na.rm = TRUE)
+
+  bycatch_results <- bind_rows(bycatch_results, tibble(
+    fishery = fi,
+    fleet = fl,
+    year_group = yg,
+    bi_total = bi_total,
+    fb = byc_by_age["fb"],
+    sb = byc_by_age["sb"],
+    nb = byc_by_age["nb"],
+    j2j3 = byc_by_age["j2j3"],
+    imm = byc_by_age["imm"]
+  ))
+}
+
+cat("\n=== BYCATCH BY FLEET x FISHERY x PERIOD ===\n")
+bycatch_results %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print(n = 100)
+```
+
+# Section 10: Summary Tables
+
+## Annual bycatch by fishery x period
+
+Each value is the estimated annual BI bycatch for that fishery during that period
+(effort rasters use mean annual hooks).
+
+```{r summary-by-fishery-period}
+byc_by_fp <- bycatch_results %>%
+  group_by(fishery, year_group) %>%
+  summarise(
+    n_fleets = n(),
+    bi_total = sum(bi_total, na.rm = TRUE),
+    fb = sum(fb, na.rm = TRUE),
+    sb = sum(sb, na.rm = TRUE),
+    nb = sum(nb, na.rm = TRUE),
+    j2j3 = sum(j2j3, na.rm = TRUE),
+    imm = sum(imm, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\n=== ANNUAL BI BYCATCH BY FISHERY x PERIOD ===\n")
+byc_by_fp %>%
+  mutate(across(where(is.numeric) & !matches("n_fleets"), ~round(.x, 2))) %>%
+  print(n = 20)
+```
+
+## Total annual bycatch by period (PLL + DLL combined)
+
+```{r summary-by-period}
+byc_by_period <- bycatch_results %>%
+  group_by(year_group) %>%
+  summarise(
+    bi_total = sum(bi_total, na.rm = TRUE),
+    fb = sum(fb, na.rm = TRUE),
+    sb = sum(sb, na.rm = TRUE),
+    nb = sum(nb, na.rm = TRUE),
+    j2j3 = sum(j2j3, na.rm = TRUE),
+    imm = sum(imm, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\n=== TOTAL ANNUAL BI BYCATCH BY PERIOD (PLL + DLL) ===\n")
+byc_by_period %>%
+  mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+  print()
+
+# Grand total: sum of (annual bycatch * years in period) across all periods
+# Each period spans 5 years (except 1990-1995 = 6 years)
+byc_cumulative <- byc_by_period %>%
+  mutate(
+    n_years = case_when(
+      year_group == "1990-1995" ~ 6,
+      TRUE ~ 5
+    ),
+    period_total = bi_total * n_years
+  )
+
+cat("\n=== CUMULATIVE BI BYCATCH OVER FULL STUDY PERIOD (1990-2010) ===\n")
+cat("Annual rate * years in each period:\n")
+byc_cumulative %>%
+  mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+  select(year_group, bi_total, n_years, period_total) %>%
+  print()
+cat("\nTotal across 1990-2010:", round(sum(byc_cumulative$period_total), 1), "BI birds\n")
+cat("Average annual rate:   ", round(mean(byc_by_period$bi_total), 1), "BI birds/year\n")
+```
+
+## Diagnostic: where is the bycatch coming from?
+
+```{r diagnostic-breakdown}
+# 1) Total mean annual hooks per fishery x period (summed across all fleets)
+hooks_by_fp <- effort_combos %>%
+  filter(paste(fishery, fleet, year_group, sep = "|") %in% names(effort_rasters)) %>%
+  rowwise() %>%
+  mutate(
+    total_hooks = {
+      r <- effort_rasters[[paste(fishery, fleet, year_group, sep = "|")]]
+      if (!is.null(r)) global(r, "sum", na.rm = TRUE)[1, 1] else 0
+    }
+  ) %>%
+  ungroup()
+
+cat("\n=== MEAN ANNUAL HOOKS BY FLEET x FISHERY x PERIOD ===\n")
+hooks_by_fp %>%
+  arrange(fishery, desc(total_hooks)) %>%
+  print(n = 60)
+
+cat("\n=== TOTAL MEAN ANNUAL HOOKS BY FISHERY x PERIOD ===\n")
+hooks_by_fp %>%
+  group_by(fishery, year_group) %>%
+  summarise(total_hooks = sum(total_hooks), n_fleets = n(), .groups = "drop") %>%
+  print(n = 20)
+
+# 2) Bycatch breakdown by fleet
+cat("\n=== BYCATCH PER FLEET (top contributors) ===\n")
+bycatch_results %>%
+  arrange(fishery, desc(bi_total)) %>%
+  mutate(bi_total = round(bi_total, 4)) %>%
+  select(fishery, fleet, year_group, bi_total) %>%
+  print(n = 40)
+
+# 3) Naive check: if we just applied mean BPUE to total hooks, what would we get?
+#    This tells us whether the spatial method is inflating beyond what the rates imply
+cat("\n=== NAIVE BPUE x HOOKS CHECK ===\n")
+naive_check <- hooks_by_fp %>%
+  group_by(fishery, year_group) %>%
+  summarise(total_hooks = sum(total_hooks), .groups = "drop") %>%
+  left_join(
+    bpue_by_fishery %>% select(fishery_type, mean_bpue) %>% rename(fishery = fishery_type),
+    by = "fishery"
+  ) %>%
+  mutate(
+    naive_global_byc = mean_bpue / 1000 * total_hooks,
+    # Compare to actual calculated bycatch
+  ) %>%
+  left_join(
+    byc_by_fp %>% select(fishery, year_group, bi_total),
+    by = c("fishery", "year_group")
+  ) %>%
+  mutate(
+    ratio_actual_vs_naive = round(bi_total / naive_global_byc, 2)
+  )
+
+naive_check %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
+  print(n = 20)
+
+cat("\nWith bird-density-corrected catchability, ratio should be < 1\n")
+cat("(ratio < 1 means catchability correctly accounts for hooks in low-bird areas)\n")
+cat("(ratio ~ 1 would mean hooks and birds perfectly overlap everywhere)\n")
+
+# 4) How many fleets have direct BPUE data vs are entirely gap-filled?
+cat("\n=== FLEET BPUE DATA STATUS ===\n")
+fleet_bpue_status <- hooks_by_fp %>%
+  mutate(
+    has_direct_bpue = paste(fishery, fleet, year_group, sep = "|") %in%
+      paste(bpue_betas$fishery_type[!is.na(bpue_betas$beta)],
+            bpue_betas$fleet[!is.na(bpue_betas$beta)],
+            bpue_betas$plot_year_group[!is.na(bpue_betas$beta)], sep = "|")
+  )
+
+fleet_bpue_status %>%
+  group_by(fishery, has_direct_bpue) %>%
+  summarise(
+    n_fleet_periods = n(),
+    total_hooks = sum(total_hooks),
+    .groups = "drop"
+  ) %>%
+  print()
+```
+
+## Mean annual bycatch by fishery (averaged across periods)
+
+```{r summary-by-fishery}
+byc_by_fishery <- byc_by_fp %>%
+  group_by(fishery) %>%
+  summarise(
+    n_periods = n(),
+    bi_annual_mean = mean(bi_total, na.rm = TRUE),
+    fb = mean(fb, na.rm = TRUE),
+    sb = mean(sb, na.rm = TRUE),
+    nb = mean(nb, na.rm = TRUE),
+    j2j3 = mean(j2j3, na.rm = TRUE),
+    imm = mean(imm, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("\n=== MEAN ANNUAL BI BYCATCH BY FISHERY (averaged across periods) ===\n")
+byc_by_fishery %>%
+  mutate(across(where(is.numeric) & !matches("n_periods"), ~round(.x, 2))) %>%
+  print()
+
+cat("\nCombined mean annual BI bycatch (PLL + DLL):",
+    round(sum(byc_by_fishery$bi_annual_mean), 2), "birds/year\n")
+```
+
+## Per capita rates
+
+```{r per-capita}
+# Average annual bycatch across all periods
+n_periods <- length(target_year_groups)
+
+byc_annual_avg <- bycatch_results %>%
+  group_by(fishery) %>%
+  summarise(
+    across(c(fb, sb, nb, j2j3, imm), ~sum(.x, na.rm = TRUE) / n_periods),
+    .groups = "drop"
+  )
+
+percap_rates <- byc_annual_avg %>%
+  pivot_longer(cols = c(fb, sb, nb, j2j3, imm), names_to = "age_class", values_to = "annual_byc") %>%
+  mutate(
+    population = pop_sizes[age_class],
+    percap = annual_byc / population
+  )
+
+cat("\n=== PER CAPITA RATES (ANNUAL AVERAGE) ===\n")
+percap_rates %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
+  print(n = 20)
+```
+
+## Gap-fill summary
+
+```{r gap-fill-summary}
+cat("\n=== GAP-FILL SUMMARY ===\n")
+
+# Coverage by fishery
+gap_fill_log %>%
+  count(fishery, fill_method, name = "n_entries") %>%
+  print(n = 20)
+
+# Overall: direct vs filled
+coverage_overall <- coverage_info %>%
+  group_by(fishery) %>%
+  summarise(
+    total_effort_cells = sum(n_effort_cells, na.rm = TRUE),
+    direct_covered = sum(n_covered, na.rm = TRUE),
+    gaps = sum(n_gap, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    pct_direct = round(100 * direct_covered / total_effort_cells, 1),
+    pct_filled = round(100 * gaps / total_effort_cells, 1)
+  )
+
+cat("\nDirect vs gap-filled coverage:\n")
+coverage_overall %>% print()
+```
+
+# Section 11: Visualization
+
+## Catchability maps by fishery x period
+
+```{r map-catchability, fig.width=14, fig.height=12}
+map_extent <- c(-180, 180, -90, 0)
+
+# Effort-weighted mean catchability across fleets for visualization
+for (fi in c("PLL", "DLL")) {
+  catch_maps <- list()
+
+  for (yg in target_year_groups) {
+    num_rast <- template * 0
+    den_rast <- template * 0
+
+    matching_keys <- names(catchability_rasters)[
+      str_detect(names(catchability_rasters), paste0("^", fi, "\\|.*\\|", yg, "$"))
+    ]
+
+    for (k in matching_keys) {
+      cr <- catchability_rasters[[k]]
+      er <- effort_rasters[[k]]
+      if (!is.logical(cr)) {
+        beta_x_effort <- cr * er
+        beta_x_effort[is.na(beta_x_effort)] <- 0
+        er_clean <- er
+        er_clean[is.na(er_clean)] <- 0
+        num_rast <- num_rast + beta_x_effort
+        den_rast <- den_rast + er_clean
+      }
+    }
+
+    mean_catch <- num_rast / den_rast
+    mean_catch[den_rast == 0] <- NA
+
+    catch_df <- as.data.frame(mean_catch, xy = TRUE, na.rm = TRUE)
+    names(catch_df)[3] <- "catchability"
+
+    p <- ggplot(catch_df, aes(x = x, y = y, fill = catchability)) +
+      geom_raster() +
+      geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+      coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+      scale_fill_viridis_c(name = expression(beta), na.value = "white", option = "magma") +
+      labs(title = paste(fi, yg)) +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 11, face = "bold"), legend.position = "right")
+
+    catch_maps[[yg]] <- p
+  }
+
+  combined <- wrap_plots(catch_maps, ncol = 2) +
+    plot_annotation(title = paste(fi, "- Effort-Weighted Mean Catchability by Period"))
+  print(combined)
+}
+```
+
+## Bycatch density maps
+
+```{r map-bycatch, fig.width=14, fig.height=12}
+for (fi in c("PLL", "DLL")) {
+  byc_maps <- list()
+
+  for (yg in target_year_groups) {
+    # Sum bycatch across all fleets for this fishery x period
+    byc_total <- template * 0
+
+    matching_keys <- names(catchability_rasters)[
+      str_detect(names(catchability_rasters), paste0("^", fi, "\\|.*\\|", yg, "$"))
+    ]
+
+    for (k in matching_keys) {
+      cr <- catchability_rasters[[k]]
+      er <- effort_rasters[[k]]
+      if (!is.logical(cr)) {
+        # β_cell × hooks_cell × BI_birds_cell
+        cell_byc <- cr * er * bi_density_aligned
+        cell_byc[is.na(cell_byc)] <- 0
+        byc_total <- byc_total + cell_byc
+      }
+    }
+
+    byc_total[byc_total == 0] <- NA
+
+    byc_df <- as.data.frame(byc_total, xy = TRUE, na.rm = TRUE)
+    names(byc_df)[3] <- "bycatch"
+
+    p <- ggplot(byc_df, aes(x = x, y = y, fill = bycatch)) +
+      geom_raster() +
+      geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+      coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+      scale_fill_viridis_c(name = "BI Bycatch", na.value = "white", direction = -1) +
+      labs(title = paste(fi, yg)) +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 11, face = "bold"), legend.position = "right")
+
+    byc_maps[[yg]] <- p
+  }
+
+  combined <- wrap_plots(byc_maps, ncol = 2) +
+    plot_annotation(title = paste(fi, "- Bird Island Bycatch Density by Period"))
+  print(combined)
+}
+```
+
+# Section 12: Save Outputs
+
+```{r save-outputs}
+dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
+dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
+
+# Save bycatch results (fleet-level detail)
+write_csv(bycatch_results, here("output/bycatch_by_fleet_period_03f.csv"))
+
+# Save fishery x period summaries
+write_csv(byc_by_fp, here("output/bycatch_by_fishery_period_03f.csv"))
+
+# Save per capita rates
+write_csv(percap_rates, here("output/bycatch_percapita_03f.csv"))
+
+# Save gap-fill log
+write_csv(gap_fill_log, here("output/gap_fill_log_03f.csv"))
+
+# Save coverage info
+write_csv(coverage_info, here("output/coverage_info_03f.csv"))
+
+# Save beta values for each study
+write_csv(
+  bpue_betas %>% select(row_id, fishery_type, fleet, plot_year_group, bpue,
+                         beta, B_study, fleet_hooks_in_box, has_effort_match),
+  here("output/bpue_study_betas_03f.csv")
+)
+
+# Save fishery-level beta summary
+write_csv(beta_by_fishery_type, here("output/beta_by_fishery_type_03f.csv"))
+
+# Save catchability rasters per fishery x period (effort-weighted mean across fleets)
+for (fi in c("PLL", "DLL")) {
+  for (yg in target_year_groups) {
+    num_rast <- template * 0
+    den_rast <- template * 0
+
+    matching_keys <- names(catchability_rasters)[
+      str_detect(names(catchability_rasters), paste0("^", fi, "\\|.*\\|", yg, "$"))
+    ]
+
+    for (k in matching_keys) {
+      cr <- catchability_rasters[[k]]
+      er <- effort_rasters[[k]]
+      if (!is.logical(cr)) {
+        beta_x_effort <- cr * er
+        beta_x_effort[is.na(beta_x_effort)] <- 0
+        er_clean <- er
+        er_clean[is.na(er_clean)] <- 0
+        num_rast <- num_rast + beta_x_effort
+        den_rast <- den_rast + er_clean
+      }
+    }
+
+    mean_catch <- num_rast / den_rast
+    mean_catch[den_rast == 0] <- NA
+
+    yg_clean <- str_replace(yg, "-", "_")
+    writeRaster(mean_catch,
+                here(paste0("output/rasters/catchability_", tolower(fi), "_", yg_clean, "_03f.tif")),
+                overwrite = TRUE)
+  }
+}
+
+cat("\nAll outputs saved\n")
+```
+
+# Diagnostics
+
+```{r diagnostics}
+cat("\n=== DIAGNOSTIC SUMMARY ===\n\n")
+
+cat("Fleet-level effort rasters:", length(effort_rasters), "\n")
+cat("Catchability rasters built:",
+    sum(!sapply(catchability_rasters, function(x) is.logical(x) && is.na(x))), "\n\n")
+
+cat("Total BI bycatch by fishery (mean annual across periods):\n")
+byc_by_fishery %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print()
+
+cat("\nPer-study beta value ranges:\n")
+bpue_betas %>%
+  filter(!is.na(beta)) %>%
+  group_by(fishery_type) %>%
+  summarise(
+    n = n(),
+    min_beta = format(min(beta), scientific = TRUE),
+    mean_beta = format(mean(beta), scientific = TRUE),
+    median_beta = format(median(beta), scientific = TRUE),
+    max_beta = format(max(beta), scientific = TRUE),
+    .groups = "drop"
+  ) %>%
+  print()
+
+# Comparison: spatial method (β × hooks × BI_birds) vs naive (BPUE × hooks)
+# The ratio tells us how much the spatial method adjusts for BI's actual distribution
+# Ratio < 1 means BI birds are concentrated in lower-effort areas relative to total WAAL
+cat("\n=== SPATIAL vs NAIVE COMPARISON ===\n")
+cat("Spatial: actual BI bycatch from catchability surface\n")
+cat("Naive: mean_BPUE/1000 × total_hooks (assumes BI fraction is uniform)\n\n")
+naive_check %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
+  print(n = 20)
+
+cat("\nRatio < 1 → BI birds concentrated in areas with relatively less fishing effort\n")
+cat("Ratio ~ 1 → BI bird distribution aligns with total WAAL distribution\n")
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

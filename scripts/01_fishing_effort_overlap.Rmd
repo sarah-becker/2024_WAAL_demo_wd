@@ -196,6 +196,29 @@ rast_dll_cumulative <- rast(dll_cumulative, type = "xyz", crs = "EPSG:4326")
 rast_dll_cumulative_scaled <- rast_dll_cumulative / 1e6
 ```
 
+```{r}
+library(dplyr)
+
+dll_summary <- dll_data %>%
+  group_by(.data[["dataset"]]) %>%
+  summarise(
+    min_year = min(.data[["Year"]], na.rm = TRUE),
+    max_year = max(.data[["Year"]], na.rm = TRUE),
+    min_lat  = min(.data[["Lat"]],  na.rm = TRUE),
+    max_lat  = max(.data[["Lat"]],  na.rm = TRUE),
+    min_lon  = min(.data[["Lon"]],  na.rm = TRUE),
+    max_lon  = max(.data[["Lon"]],  na.rm = TRUE),
+    total_hooks = sum(.data[["Hooks"]], na.rm = TRUE),
+    n_records   = n(),
+    n_years     = n_distinct(.data[["Year"]]),
+    .groups = "drop"
+  )
+
+dll_summary
+
+```
+
+
 # Calculate Spatial Overlap
 
 Overlap is calculated as the product of bird density and fishing effort within each grid cell. We calculate separate overlaps for pelagic and demersal fisheries due to different spatial extents.

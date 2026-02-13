@@ -1,0 +1,1059 @@
+# Work Summary - WAAL Bycatch Analysis
+
+## Session: January 12, 2026
+
+### Overview
+Major revision to bycatch estimation methodology. Identified and corrected conceptual issue in script 03b regarding spatial allocation of Bird Island bycatch. Implemented corrected approach in script 03c.
+
+---
+
+## Key Accomplishments
+
+### 1. Identified Conceptual Issue in Script 03b
+
+**Problem discovered:**
+- Script 03b scaled Bird Island distributions by **global average** (15.67% of total WAAL population)
+- This assumed BI represents 15.67% of birds uniformly across all space
+- **Reality**: % BI varies spatially from 0-60% depending on location
+
+**Why this matters:**
+- Near South Georgia: BI may be 60% of local WAAL population
+- Near Crozet: BI may be only 5% of local WAAL population
+- Scaling by global average (15.67%) everywhere underestimates this heterogeneity
+
+### 2. Confirmed Theoretical Foundation
+
+**Verified catchability framework:**
+- Catchability (β) is analogous to Lotka-Volterra interaction coefficients
+- Also equivalent to fisheries catchability coefficient (q)
+- All represent per capita interaction rates: β = probability of capture per hook per bird
+- BPUE is a **fishery property** (fishing practices), not a **population property**
+- Therefore, BPUE should not be scaled by bird composition
+
+**Key equations:**
+```
+β = (BPUE × Total_Hooks) / Σ(Hooks × Birds_all_WAAL)
+Bycatch = Σ(Hooks × Birds × β)
+```
+
+### 3. Compared Population Distribution Datasets (Script 02b)
+
+**Created comparison script** to validate using both Carneiro and Clay data:
+- **Carneiro et al. 2020**: Population-specific distributions (South Georgia)
+- **Clay et al. 2019**: Age-class specific distributions (Bird Island tracking)
+
+**Results:**
+- Pearson correlation: r = 0.98 (98% of variance shared)
+- Spearman correlation: rho = 0.94 (rank order highly consistent)
+- **Conclusion**: Distributions are highly consistent, safe to combine
+
+**Interpretation:**
+- Both datasets capture the same underlying BI spatial distribution
+- Small differences due to different time periods, sample sizes, methods
+- Validated hybrid approach: Carneiro for population allocation, Clay for age partitioning
+
+### 4. Implemented Corrected Method (Script 03c)
+
+**New approach:**
+```
+Step 1: Calculate catchability using ALL WAAL (same as 03b)
+  β = (BPUE × H_total) / Σ(hooks × birds_all_WAAL)
+
+Step 2: Calculate total WAAL bycatch density in each cell
+  total_bycatch[i] = hooks[i] × birds_all[i] × β
+
+Step 3: Allocate to BI using LOCAL % BI (NEW - uses actual spatial variation)
+  BI_bycatch[i] = total_bycatch[i] × pct_BI[i]
+
+  where pct_BI[i] comes from script 02 (Carneiro-based)
+
+Step 4: Partition BI bycatch by age class (using Clay distributions)
+  BI_age_bycatch[i] = BI_bycatch[i] × age_weight[i]
+
+  where age_weight[i] comes from Clay age-class distributions
+```
+
+**Key innovation:**
+- Uses **actual local % BI** that varies spatially (0-60%)
+- NOT global average (15.67%) applied uniformly
+
+### 5. Compared Results: 03b vs 03c
+
+**Total bycatch:**
+- 03b: 284.3 birds/year
+- 03c: 312.1 birds/year
+- Change: +27.8 birds (+9.8%)
+
+**By fishery (more revealing):**
+
+| Fishery | 03b | 03c | Ratio | Change |
+|---------|-----|-----|-------|--------|
+| Pelagic | 147.9 | 196.4 | 1.33× | +33% |
+| Demersal | 136.4 | 115.7 | 0.85× | -15% |
+
+**Interpretation:**
+- **Pelagic fishing** occurs more in areas with OTHER populations (not BI)
+  - BI gets 14.2% of pelagic bycatch (vs 32.1% mean BI across space)
+  - Pelagic fleets operate widely across Southern Ocean
+  - Less concentrated near South Georgia
+
+- **Demersal fishing** occurs more near BI birds
+  - BI gets 19.5% of demersal bycatch (closer to 32.1% mean)
+  - Demersal fisheries target shelf/slope near islands
+  - South Georgia is major toothfish fishery
+
+**Why this matters:**
+- 03b underestimated pelagic risk to BI (by 33%)
+- 03b overestimated demersal risk to BI (by 15%)
+- The global average approach masked real spatial patterns
+
+### 6. Discussed Future Enhancements
+
+#### Regional Catchability Approach (Future Script)
+**Concept**: Stratify by region × fishery using literature BPUE
+
+```r
+# For each region (South Atlantic, Indian Ocean, etc.):
+β_region = (BPUE_region × H_region) / Σ(hooks × birds)_region
+
+# Then apply within region using local % BI (same as 03c)
+```
+
+**Benefits:**
+- Captures regional differences in fishing practices/mitigation
+- South Georgia (good mitigation) vs IUU areas (poor mitigation)
+- Still maintains catchability framework within regions
+- Combines regional BPUE variation with fine-scale spatial allocation
+
+**Data needs from lit review:**
+- BPUE (essential)
+- Geographic bounding box (essential)
+- Fishery type: pelagic/demersal (essential)
+- Sample size: hooks observed (essential)
+- Time period: years data collected (essential)
+- Mitigation status: present/absent/type (high priority)
+- Fleet/country (nice to have)
+- Confidence intervals (nice to have)
+
+**For ~20-30 papers**: Should be sufficient for 3-5 regional strata per fishery
+
+#### Age-Specific Catchability
+**Biological plausibility:**
+- Juveniles may be more naive, aggressive foragers → higher catchability
+- Adults more experienced, cautious → lower catchability
+- Breeding vs non-breeding may have different vulnerability
+
+**Data reality:**
+- Literature rarely reports age-specific bycatch
+- Most studies report BPUE for all ages combined
+- Age at sea is difficult to determine
+
+**Recommended approach:**
+1. Note as assumption in methods (constant catchability across ages)
+2. Look for any age-specific data during lit review
+3. Conduct sensitivity analysis in demographic model
+4. Document as uncertainty/future research
+
+#### Temporal Variation in BPUE
+**Critical insight:**
+- Current BPUE estimates may be post-mitigation
+- BI population decline may reflect historical (pre-mitigation) mortality
+- Need to match BPUE time period to population trend data
+
+**For lit review:**
+- Extract year of data collection (not just publication year)
+- Note mitigation status (pre/post, mandatory/voluntary)
+- Stratify BPUE by time period
+- Can estimate historical mortality for demographic model
+
+### 7. Supervisor Feedback and Script 03d Development
+
+**Supervisor consultation confirmed 03c approach and suggested refinement:**
+
+#### Confirmation of 03c Theoretical Framework
+- ✓ **BPUE should NOT be scaled by % BI** - correct, it's a fishery property
+- ✓ **Use catchability (β) derived from BPUE for all WAAL** - theoretically sound
+- ✓ **Allocate to BI using local composition** - biologically realistic
+- **03c approach validated!**
+
+#### Suggested Enhancement: Spatial Catchability (Script 03d)
+Instead of single global β, create **cell-specific catchability map** based on literature coverage:
+
+**Approach:**
+```
+For each 5×5 cell:
+1. Identify which BPUE studies cover this cell (via bounding boxes)
+2. Calculate β for each study's BPUE
+3. Average them → β_cell (WEIGHTED by sample size)
+4. Apply β_cell to calculate bycatch using local % BI
+```
+
+**Key decisions:**
+1. **Averaging method**: Weighted mean by sample size (hooks observed)
+   - Studies with larger samples get more weight
+   - More reliable than simple mean
+
+2. **Gap filling**: Expert elicitation for cells without literature coverage
+   - Consult fisheries experts to assign appropriate BPUE values
+   - Based on similarity in: fishing operations, mitigation practices, regulatory environment
+   - Document rationale for each assignment
+
+**Result:** Spatially-varying catchability map reflecting local fishing practices!
+
+#### Script 03d Implementation
+
+**Created: scripts/03d_bycatch_spatial_catchability.Rmd**
+
+**Features:**
+- Defines BPUE studies with geographic bounding boxes
+- For each cell, finds overlapping studies
+- Calculates weighted average catchability (by sample size)
+- Expert elicitation framework for gap filling
+- Maintains catchability framework + local % BI allocation
+- Outputs catchability maps, coverage maps, bycatch by age
+
+**Placeholders to fill:**
+- BPUE study definitions (from lit review - script 04)
+- Expert gap-fill regions (from expert consultation)
+
+**Advantages:**
+- Captures spatial variation in fishing practices/mitigation
+- Handles overlapping studies elegantly
+- Fine spatial resolution (5×5 cells)
+- Empirical where possible (literature) + expert knowledge for gaps
+- Maintains theoretical rigor (catchability framework)
+
+---
+
+## Scripts Created/Modified
+
+### New Scripts:
+1. **scripts/02b_compare_carneiro_clay.Rmd**
+   - Compares Carneiro South Georgia vs Clay total distributions
+   - Validates hybrid approach (r = 0.98)
+   - Outputs: correlation plots, difference maps, agreement statistics
+
+2. **scripts/03c_bycatch_corrected_catchability.Rmd**
+   - Implements corrected allocation using local % BI map
+   - Maintains catchability framework throughout
+   - Uses Carneiro for population allocation, Clay for age partitioning
+   - Outputs: age-specific bycatch, per capita rates, comparison with 03b
+
+3. **scripts/03d_bycatch_spatial_catchability.Rmd**
+   - Implements spatial catchability approach (supervisor feedback)
+   - Cell-specific β based on literature coverage
+   - Weighted averaging by sample size
+   - Expert elicitation for gap filling
+   - Outputs: catchability maps, coverage maps, bycatch estimates
+
+### Existing Scripts (unchanged):
+- **scripts/02_compare_pop_distributions.Rmd**: Already saves `percentage_bird_island.tif`
+- **scripts/03b_bycatch_catchability_method.Rmd**: Preserved for comparison
+
+---
+
+## Key Results from Script 03c
+
+### Total Bycatch Estimates
+
+| Age Class | Pelagic | Demersal | Total | Per Capita Rate |
+|-----------|---------|----------|-------|-----------------|
+| FB | 11.0 | 7.1 | 18.1 | 0.0196 |
+| SB | 22.8 | 12.1 | 34.9 | 0.0128 |
+| NB | 52.2 | 37.7 | 89.8 | 0.0227 |
+| J2J3 | 28.0 | 13.4 | 41.4 | 0.0252 |
+| IMM | 82.4 | 45.5 | 127.9 | 0.0211 |
+| **TOTAL** | **196.4** | **115.7** | **312.1** | - |
+
+### Validation Checks (All Pass ✓)
+- Total WAAL bycatch matches expected (100%)
+- Age partitioning sums to BI total (100%)
+- Catchability values identical to 03b
+- BI allocation: 14.2% (pelagic), 19.5% (demersal)
+
+### Spatial Patterns
+- Mean % BI across space: 32.1%
+- But BI gets only 14.2-19.5% of bycatch
+- Reveals fishing concentrates in areas with fewer BI birds
+- Especially true for pelagic fisheries (high seas, distant water)
+
+---
+
+## Conceptual Advances
+
+### 1. Clarified Catchability vs Population Proportion
+**The confusion:**
+- Should we scale BPUE by % BI birds?
+- If birds from different populations have different distributions, doesn't that affect bycatch?
+
+**The resolution:**
+- BPUE is a **fishery property** (gear, practices, mitigation)
+- All birds in a location face the **same local catchability**
+- The **% BI varies spatially** and determines BI's share of local bycatch
+- But we don't pre-scale BPUE - we scale the bycatch allocation
+
+**Mathematical equivalence:**
+```
+Method A (conceptually wrong):
+  BPUE_map[i] = BPUE × pct_BI[i]  ← Treats BPUE as pop property
+
+Method B (correct - what 03c does):
+  Total_bycatch[i] = hooks[i] × birds_all[i] × β
+  BI_bycatch[i] = Total_bycatch[i] × pct_BI[i]  ← Allocates bycatch by composition
+
+These give different results because Method A artificially varies BPUE!
+```
+
+### 2. Hybrid Data Source Approach Validated
+- **Carneiro (population-specific)**: WHERE each breeding population goes
+- **Clay (age-specific)**: WHERE each age class from BI goes
+- **High correlation (r=0.98)**: They agree on BI spatial distribution
+- **Complementary**: Use both for population allocation + age partitioning
+
+### 3. Three Levels of Heterogeneity Captured
+**Current (03c):**
+1. Spatial bird composition (% BI varies 0-60%)
+2. Age-class distributions (where different ages go)
+
+**Future (03d - spatial approach):**
+1. Cell-specific catchability (via literature coverage)
+2. Spatial bird composition (via % BI map)
+3. Age-class distributions (via Clay)
+
+---
+
+## Next Steps
+
+### Immediate:
+1. ✅ Script 03c validated and recommended for current analyses
+2. ✅ Script 03d framework created (supervisor feedback incorporated)
+3. Integrate per capita mortality rates into matrix model (use 03c for now)
+4. Run population projections with fishing mortality
+
+### Literature Review (Script 04) - **CRITICAL NEXT STEP**:
+1. Extract BPUE from ~20-30 papers
+2. **Essential data for each study:**
+   - BPUE value (birds per 1000 hooks)
+   - Geographic bounding box (lat/lon min/max)
+   - Fishery type (pelagic/demersal)
+   - Sample size (hooks observed) - **needed for weighted averaging**
+   - Time period (years data collected)
+3. **High priority:**
+   - Mitigation status (present/absent/type)
+   - Fleet/country (if available)
+4. **Output format:** Ready to plug into script 03d bounding box structure
+
+### Expert Elicitation for Gap Filling:
+1. Identify regions without literature coverage (after lit review)
+2. Consult with fisheries experts to assign BPUE values for gaps
+3. Base assignments on similarity in:
+   - Fishing operations (fleet type, gear, practices)
+   - Mitigation adoption (tori lines, night setting, regulations)
+   - Regulatory environment (RFMO requirements, enforcement)
+4. Document rationale for each assignment
+5. Populate `expert_gap_fill` table in script 03d
+
+### Implement Spatial Catchability (Script 03d):
+1. Complete literature review → replace placeholder studies
+2. Complete expert elicitation → populate gap-fill table
+3. Run script 03d with real data
+4. Compare with 03c to quantify impact of spatial variation
+5. Generate catchability maps showing regional patterns
+6. Assess which approach (03c vs 03d) to use for final demographic model
+
+### Sensitivity Analyses:
+1. Age-specific catchability (juveniles more vulnerable?)
+2. Temporal variation (pre- vs post-mitigation BPUE)
+3. BPUE uncertainty (confidence intervals from literature)
+4. Regional variation (once lit review complete)
+
+---
+
+## Files Modified
+
+### New Files:
+- `scripts/02b_compare_carneiro_clay.Rmd`
+- `scripts/03c_bycatch_corrected_catchability.Rmd`
+- `output/bycatch_summary_03c.csv`
+- `output/bycatch_percapita_summary_03c.csv`
+- `output/bycatch_comparison_03b_vs_03c.csv`
+- `output/carneiro_clay_agreement.csv`
+- `output/maps/comparison_carneiro_clay.png`
+- `output/maps/bycatch_*_03c.png` (multiple maps)
+- `output/rasters/bycatch_*_03c.tif` (multiple rasters)
+
+### Existing Files (used, not modified):
+- `output/rasters/percentage_bird_island.tif` (from script 02)
+- `output/rasters/total_bird_density_all_pops.tif` (from script 02)
+- All fishing effort and bird distribution inputs
+
+---
+
+## Key Insights for Paper/Thesis
+
+### Methodological Contribution:
+1. Properly integrates population-specific and age-specific spatial data
+2. Maintains theoretical rigor (catchability framework)
+3. Accounts for spatial heterogeneity in population composition
+4. Validates hybrid data source approach (Carneiro + Clay)
+
+### Biological/Conservation Implications:
+1. Pelagic fisheries pose higher risk to BI than previously estimated
+2. Demersal fisheries pose lower risk (concentrated near SG, well-regulated)
+3. Spatial patterns reveal where different populations face different risks
+4. Regional approach will identify priority areas for mitigation
+
+### Uncertainty/Future Work:
+1. Age-specific vulnerability (biological plausibility, but no data)
+2. Temporal trends (need historical BPUE for population decline period)
+3. Regional variation (planned - regional catchability approach)
+4. Other populations' demographics (BI data only)
+
+---
+
+## Questions Remaining
+
+1. **Temporal mismatch**: When was BI declining vs when were BPUE studies conducted?
+2. **Other populations**: Why is BI declining but others stable (if ~same per capita mortality)?
+3. **Historical baseline**: What was BPUE pre-mitigation during period of decline?
+4. **Regional coverage**: Will 20-30 papers be sufficient for 3-5 regional strata?
+
+---
+
+## Session Continuation: January 12, 2026 (Afternoon)
+
+### Overview
+Attempted to systematically compare 03d and 03e methods to verify mathematical equivalence. Discovered critical data issues that explain discrepancies between scripts and invalidate current results.
+
+### Summary
+**Good news:** 03d and 03e methods are mathematically equivalent when using identical data.
+
+**Bad news:** Multiple critical data problems identified:
+1. **Fishing effort template has wrong extent** - excludes South Georgia (lat only to -50°, SG is at -54°)
+2. **Bird distributions show albatross in tropics** - biologically impossible
+3. **All comparison results are invalid** due to template issue
+
+**Status:** All bycatch analyses on hold until data validation and corrections completed tomorrow.
+
+---
+
+## Key Findings
+
+### 1. Discovered Differences Between Actual Scripts and Comparison Tests
+
+**Created comparison script to test 03d vs 03e equivalence:**
+- Script: `03_comparison_all_methods.Rmd`
+- Goal: Test if methods are mathematically equivalent when using same data/parameters
+
+**Found actual 03d and 03e scripts use different approaches than expected:**
+
+| Feature | Actual 03d/03e Scripts | Original Comparison Script |
+|---------|------------------------|----------------------------|
+| Catchability | **Spatial** (BPUE study bounding boxes) | **Global** (single β value) |
+| % BI extent | **Clipped** (only in SG range from script 02) | **Unclipped** (everywhere) |
+| BI distribution | Carneiro (03d) vs Clay (03e) | Tested combinations |
+
+**This explained why actual scripts gave different results:**
+- Actual 03d: 111.91 pelagic, 68.36 demersal
+- Actual 03e: 80.59 pelagic, 79.82 demersal
+- They weren't using the same approach!
+
+### 2. BPUE Study Coverage Issues
+
+**Analyzed spatial coverage of placeholder BPUE studies:**
+
+Pelagic studies:
+- Study 1: lat -60 to -30, lon -70 to -20
+- Study 2: lat -60 to -35, lon -65 to -25
+- Coverage: Reasonable for South Atlantic
+
+Demersal studies:
+- Study 1: lat -60 to -35, lon -70 to -25
+- Study 2: lat -55 to -40, lon -65 to -50
+- **Problem: Only covers 2.24% of demersal fishing effort!**
+
+**Where demersal fishing actually occurs:**
+- 69% of effort: Southern Atlantic (lon -72° to -77°, west of Chile)
+- 16% of effort: Indian Ocean
+- 13% of effort: Other regions
+- **Only 2.2% of effort: Near South Georgia**
+
+**Result with spatial catchability:**
+- BI birds concentrated near South Georgia (Clay distributions)
+- Most demersal fishing occurs far from South Georgia
+- Low spatial overlap → very low demersal bycatch (2.59 birds)
+- vs 79.82 birds in actual 03e script
+
+### 3. Updated Comparison Script to Use Global BPUE
+
+**Simplified approach:**
+- Removed spatial catchability (lit review incomplete anyway)
+- Use single global β per fishery
+- Focus on testing mathematical equivalence of 03d vs 03e methods
+- Script renamed: `03_comparison_global_unclipped.Rmd`
+
+**Results with global catchability:**
+- Method 03d: 262.73 pelagic, 6.37 demersal = 269.10 total
+- Method 03e: 262.73 pelagic, 6.37 demersal = 269.10 total
+- ✓ **Mathematical equivalence confirmed!** (difference < 0.01 birds)
+
+**But demersal still oddly low (6.37 vs expected ~70-80)...**
+
+### 4. CRITICAL BUG DISCOVERED: Fishing Effort Template Extent
+
+**Investigated why demersal bycatch remained low and South Georgia missing from BI maps:**
+
+```
+Clay distributions (original):
+  - Latitude: -90° to 0°
+  - Contains South Georgia data at -54°
+  - 2 cells near SG with data
+
+Fishing effort template:
+  - Latitude: -50° to 65°  ← WRONG!
+  - DOES NOT include South Georgia (-54°)
+  - Resolution: 5° × 5°
+
+After resampling Clay to fishing template:
+  - 0 cells near South Georgia
+  - All SG data LOST during resample
+```
+
+**This explains EVERYTHING:**
+- Why SG doesn't appear in BI density maps
+- Why demersal bycatch is 6 birds instead of 70-80
+- Why results look "more clipped" when unclipped
+- Why script 03d shows 111 pelagic (uses different template)
+- Why comparison shows 263 pelagic (different alignment)
+
+**The fishing effort rasters have incorrect spatial extent!**
+
+### 5. Data Shows Bird Island Albatross in Tropics (Biologically Impossible)
+
+**User observation:**
+- Maps show BI albatross density in tropical latitudes
+- Wandering albatross are Southern Ocean species
+- Should not occur north of ~30°S
+
+**This indicates MULTIPLE data problems:**
+1. Template extent wrong (excludes SG)
+2. Possibly fishing effort data wrong
+3. Possibly bird distribution data wrong
+4. Possibly alignment/resampling issues creating artifacts
+
+**Status:** Need thorough data validation tomorrow
+- Check all input rasters for correct extent and values
+- Verify bird distributions are realistic
+- Check fishing effort matches source data
+- Rebuild from scratch if necessary
+
+### 7. Clay Age-Class Proportion Issue
+
+**Discovered age class proportions don't sum to 1.0:**
+- FB: 5.7%, SB: 16.9%, NB: 24.4%, J2J3: 10.0%, IMM: 36.3%
+- **Sum: 93.2% (missing J1 juveniles and some adult classes)**
+
+**Fixed in comparison script:**
+- Weight Clay distributions by age proportions
+- Normalize combined result to sum to 1.0
+- Then scale by prop_BI (931.8 / 5325.8 = 0.175)
+- This correctly accounts for BI = 60% of SG
+
+### 8. Map Extent Issues in Final Script
+
+**Script 03_final_clay_carneiro_method.Rmd maps cut off Southern Ocean:**
+- Used `ext(template)` for map limits
+- Should use `map_extent <- c(-180, 180, -90, 0)`
+- **Fixed:** Changed all maps to use full Southern Hemisphere extent
+
+---
+
+## Scripts Created/Modified
+
+### Modified:
+1. **scripts/03_comparison_all_methods.Rmd**
+   - Reverted clipping changes to test unclipped approach
+   - Added visualization maps
+   - Discovered doesn't match actual 03d/03e behavior
+
+2. **scripts/03_final_clay_carneiro_method.Rmd**
+   - Fixed map extents to show full Southern Ocean
+   - Changed from `ext(template)` to `map_extent <- c(-180, 180, -90, 0)`
+
+### Created:
+3. **scripts/03_comparison_global_unclipped.Rmd** (new)
+   - Tests mathematical equivalence of 03d vs 03e
+   - Global catchability (single β per fishery)
+   - Unclipped Clay for BI + Carneiro for others
+   - Fixed age class normalization
+   - Includes visualization maps
+   - **Confirms methods are mathematically equivalent**
+   - **BUT reveals critical template extent bug**
+
+---
+
+## Critical Issues Identified
+
+### 1. **Fishing Effort Template Extent is Wrong**
+**Status:** CRITICAL BUG - blocking all analyses
+
+**Problem:**
+- Template latitude: -50° to 65°
+- South Georgia location: -54°
+- Template excludes entire region below -50°
+
+**Impact:**
+- All resampling operations lose South Georgia data
+- Explains low bycatch estimates
+- Explains missing BI in maps
+- Invalidates all comparison results
+
+**Next Steps:**
+- Determine correct template to use
+- Option A: Use `total_bird_density_all_pops.tif` from script 02
+- Option B: Regenerate fishing effort rasters with correct extent (-90° to 65°)
+- Re-run all analyses with corrected template
+
+### 2. Clipping Method Creates Mathematical Non-Equivalence
+
+**Script 02 approach:**
+- Creates `percentage_bird_island.tif` with values only in SG range
+- Outside SG range: NA (not calculated)
+- Used in actual 03d and 03e scripts
+
+**Issue:**
+- If 03d uses clipped % BI but 03e doesn't, they're not mathematically equivalent
+- Current actual scripts differ (111 vs 81 pelagic) partly due to this
+
+**Decision needed:**
+- Use clipped (conservative, avoids edge artifacts) OR
+- Use unclipped (theoretically consistent, calculates everywhere birds exist)
+
+### 3. Spatial vs Global Catchability
+
+**Spatial approach (03d/03e actual scripts):**
+- Different β in different regions based on BPUE study coverage
+- Requires literature review to define bounding boxes
+- More realistic but complex
+
+**Global approach (comparison script):**
+- Single β value everywhere
+- Simpler, good for testing equivalence
+- Less realistic spatial patterns
+
+**Decision needed:**
+- Which approach for standardized method?
+- Global is simpler for now (lit review incomplete)
+- Can add spatial variation later
+
+---
+
+## Key Insights
+
+### 1. Template Extent is Foundational
+**Everything depends on getting the spatial template correct:**
+- Alignment operations
+- Resampling
+- Coverage calculations
+- Final bycatch estimates
+
+**If template is wrong, all downstream results are invalid.**
+
+### 2. Mathematical Equivalence Works (When Data is Correct)
+- 03d and 03e methods ARE mathematically equivalent
+- When using same data/catchability, results match perfectly
+- Discrepancies in actual scripts due to different implementations, not methods
+
+### 3. Data Quality Issues Cascade
+- Wrong template extent → lost South Georgia data
+- Lost SG data → artificially low BI density
+- Low BI density → unrealistically low bycatch
+- Small differences in inputs → large differences in outputs
+
+---
+
+## Questions to Resolve (Tomorrow)
+
+### Immediate Priority: Data Validation
+
+1. **Why are there albatross in the tropics?**
+   - Bird distributions should be Southern Ocean only
+   - Check Clay input rasters directly
+   - Check Carneiro input rasters directly
+   - Verify no resampling artifacts creating spurious tropical values
+
+2. **Which template should be the canonical one?**
+   - total_bird_density_all_pops.tif from script 02?
+   - Regenerated fishing effort with correct extent?
+   - Some other reference raster?
+   - **Must extend to at least -80°S to include all bird ranges**
+
+3. **What is the correct spatial extent for Southern Ocean analyses?**
+   - Latitude: -90° to 0°? -80° to 0°?
+   - Should match bird distribution data extent
+   - Verify against original data sources
+
+4. **Are fishing effort rasters themselves correct?**
+   - Do they have correct extent in source data?
+   - Or were they processed incorrectly?
+   - Need to check source CSVs: Pel_LL_effort.csv and demersal sources
+   - Regenerate if necessary
+
+5. **Are ALL input rasters valid?**
+   - Check every TIF file for:
+     - Correct extent (not cut off)
+     - Realistic values (no negatives, no impossibly large values)
+     - Correct units
+     - No NaN/Inf issues
+   - Validate against biological knowledge (no tropical albatross!)
+
+### Once Data is Fixed:
+
+6. **Clipped vs Unclipped - which to standardize on?**
+   - Clipped: Conservative, matches script 02 output
+   - Unclipped: Theoretically consistent, mathematically cleaner
+
+7. **Once template is fixed, how different will results be?**
+   - Need to re-run all comparisons
+   - Verify 03d and 03e still match
+   - Get realistic bycatch estimates
+
+8. **Should we use spatial or global catchability?**
+   - Global is simpler for now (lit review incomplete)
+   - Can add spatial variation later once lit review complete
+
+---
+
+## Session: January 15, 2026
+
+### Overview
+Major overhaul of fishing effort data processing and visualization in script 01 to match Clay et al. 2019 methodology. Fixed data aggregation, scaling, and created publication-quality maps with discrete color bins.
+
+---
+
+## Key Accomplishments
+
+### 1. Fixed Fishing Effort Rasterization to Preserve Exact Values
+
+**Problem discovered:**
+- Data is already in 5×5 degree gridded cells
+- Script was converting to points, then rasterizing with `fun=mean`
+- This caused grid misalignment and value inconsistencies
+- Values didn't match Clay 2019 reference plots
+
+**Solution implemented:**
+- Changed from point-based rasterization to direct grid conversion
+- Now uses `rast(data, type="xyz")` for already-gridded data
+- Preserves exact values from source data
+- Eliminates rounding errors and alignment issues
+
+**Code changes (lines 93-98, 177-182):**
+```r
+# Before:
+pll_points <- vect(pll_annual, geom = c("Lon", "Lat"))
+rast_pll <- rasterize(pll_points, rast_pll, field = "mean_effort", fun = mean)
+
+# After:
+rast_pll <- rast(pll_mean_annual, type = "xyz", crs = "EPSG:4326")
+```
+
+### 2. Created Mean AND Cumulative Fishing Effort Versions
+
+**Added new raster outputs:**
+- **Mean annual effort**: Average hooks per location across years (1990-2009)
+- **Cumulative effort**: Total hooks summed across all years (1990-2009)
+- Both available in scaled (10^6) and unscaled versions
+
+**Calculations:**
+```r
+# Mean: group by Lon, Lat → mean(Hooks)
+# Cumulative: group by Lon, Lat → sum(Hooks)
+```
+
+### 3. Corrected Scaling Units to Match Clay 2019
+
+**Critical discovery:**
+- Initially scaled demersal to 10^3 hooks (incorrect - confused with trawl)
+- Clay 2019 legend clearly states: **"10^6 hooks for longline"** (both pelagic AND demersal)
+- Demersal values were 10× too high
+
+**Solution:**
+- Changed demersal scaling from 10^3 to 10^6 (lines 185, 196)
+- Both fisheries now use consistent scaling
+- Values now match Clay 2019 reference plots
+
+**Impact:**
+- Demersal values reduced by 10×
+- Now shows realistic values (5 instead of 50 in most cells)
+- Matches published literature
+
+### 4. Created Discrete Blue Color Scale for Maps
+
+**Implemented discrete bins matching Clay 2019:**
+- Bin breaks: 0, 5, 10, 25, 50, 100, 500, >500 (in units of 10^6 hooks)
+- Blue color palette (light to dark) from RColorBrewer
+- Same color = same fishing effort value across all plots
+
+**Transformation-aware binning:**
+- Untransformed: bins at actual values (5, 10, 25, ...)
+- Sqrt transformed: bins at sqrt(5), sqrt(10), sqrt(25), ...
+- Log transformed: bins at log(6), log(11), log(26), ...
+- **Labels stay the same** (5, 10, 25, ...) so colors are comparable
+
+**Code (lines 293-310):**
+```r
+# Transform breaks to match data transformation
+if (transform == "sqrt") {
+  breaks <- sqrt(original_breaks)
+} else if (transform == "log") {
+  breaks <- log(original_breaks + 1)
+}
+```
+
+### 5. Created Multiple Map Versions for Each Dataset
+
+**Generated 12 scaled fishing effort maps:**
+
+For each fishery type (pelagic, demersal):
+- Mean annual effort × 3 transformations (raw, sqrt, log)
+- Cumulative effort × 3 transformations (raw, sqrt, log)
+
+**All with:**
+- Discrete blue color bins
+- Horizontal legends at bottom
+- Consistent scaling (10^6 hooks)
+- 10 cm wide × 6 cm tall figures at 300 dpi
+
+### 6. Fixed Legend Display
+
+**Problem:**
+- Initial legends showed only title and min/max values
+- Color bar and bin labels were missing/unreadable
+
+**Solutions applied:**
+- Changed from `guide_colorsteps` to `guide_colorbar`
+- Made legends horizontal at bottom (barwidth=15cm, barheight=0.8cm)
+- Added black frame and tick marks for visibility
+- Sized appropriately for publication
+
+### 7. Updated Pelagic Extent (Attempted)
+
+**Changed extent from -50S to -60S** (line 267)
+- Updated `ext_pel <- c(-180, 180, -60, 0)`
+- However, data doesn't actually extend south of -50S
+
+**Data verification:**
+- Pelagic data (Pel_LL_effort.csv) contains: ICCAT, WCPFC, IOTC, IATTC
+- Southernmost latitude: **-47.5°S** (center of -50° to -45° cell)
+- No data south of 50°S in the file
+- Clay 2019 plot shows data to ~60°S in Southern Ocean
+
+**Conclusion:**
+- Clay 2019 likely had additional data sources (e.g., CCSBT)
+- Cannot replicate their 50-60°S coverage without additional data
+- Current analysis accurately reflects available data extent
+
+### 8. Verified Temporal Extent
+
+**Confirmed both datasets filtered to 1990-2009:**
+- **Pelagic**: Naturally 1990-2009 in source data
+- **Demersal**: Filtered on line 162 (`filter(Year >= 1990, Year <= 2009)`)
+- Matches WAAL distribution data timeframe (Clay et al. 2019)
+- CCAMLR source data extends 1989-2024, correctly filtered
+
+---
+
+## Scripts Modified
+
+### scripts/01_fishing_effort_overlap.Rmd
+
+**Major changes:**
+1. **Lines 93-98**: Fixed pelagic mean rasterization (direct xyz conversion)
+2. **Lines 103-112**: Added pelagic cumulative effort calculation
+3. **Lines 177-182**: Fixed demersal mean rasterization
+4. **Lines 187-196**: Added demersal cumulative effort calculation
+5. **Lines 185, 196**: Changed demersal scaling from 10^3 to 10^6
+6. **Lines 267**: Updated pelagic extent to -60S
+7. **Lines 268-350**: Enhanced mapping function with discrete bins and transformations
+8. **Lines 354-487**: Created all scaled map versions (mean + cumulative × transformations)
+9. **Lines 646-660**: Updated raster save operations with correct scaling comments
+10. **Lines 281-288**: Added resample step in overlap calculation to fix extent mismatch
+
+**Function enhancements:**
+- `map_fishing_effort()`: Added `discrete_bins` and `bin_breaks` parameters
+- Transformation-aware bin calculation
+- Horizontal legend layout
+- Improved formatting for publication
+
+---
+
+## Files Created/Modified
+
+### New Output Files:
+**Rasters (scaled to 10^6 hooks):**
+- `output/rasters/fishing_effort_demersal_mean_scaled.tif`
+- `output/rasters/fishing_effort_pelagic_mean_scaled.tif`
+- `output/rasters/fishing_effort_demersal_cumulative.tif`
+- `output/rasters/fishing_effort_pelagic_cumulative.tif`
+- `output/rasters/fishing_effort_demersal_cumulative_scaled.tif`
+- `output/rasters/fishing_effort_pelagic_cumulative_scaled.tif`
+
+**Maps (12 total - mean + cumulative × raw/sqrt/log × pelagic/demersal):**
+- `output/maps/fishing_effort_demersal_mean_scaled_raw.png`
+- `output/maps/fishing_effort_demersal_mean_scaled_sqrt.png`
+- `output/maps/fishing_effort_demersal_mean_scaled_log.png`
+- `output/maps/fishing_effort_pelagic_mean_scaled_raw.png`
+- `output/maps/fishing_effort_pelagic_mean_scaled_sqrt.png`
+- `output/maps/fishing_effort_pelagic_mean_scaled_log.png`
+- `output/maps/fishing_effort_demersal_cumulative_scaled_raw.png`
+- `output/maps/fishing_effort_demersal_cumulative_scaled_sqrt.png`
+- `output/maps/fishing_effort_demersal_cumulative_scaled_log.png`
+- `output/maps/fishing_effort_pelagic_cumulative_scaled_raw.png`
+- `output/maps/fishing_effort_pelagic_cumulative_scaled_sqrt.png`
+- `output/maps/fishing_effort_pelagic_cumulative_scaled_log.png`
+
+---
+
+## Key Results
+
+### Fishing Effort Summary Statistics
+
+**Pelagic Longline (1990-2009):**
+- Total hooks: [to be calculated]
+- Mean annual hooks: [to be calculated]
+- Spatial extent: -47.5°S to 62.5°N
+- Data sources: ICCAT, WCPFC, IOTC, IATTC
+
+**Demersal Longline (1990-2009):**
+- Total hooks: [to be calculated]
+- Mean annual hooks: [to be calculated]
+- Spatial extent: -77.5°S to [northern limit]
+- Data sources: CCAMLR, Argentina, Chile, Falklands, Namibia, South Africa
+
+### Map Validation
+
+**Pelagic maps:**
+- ✓ Match Clay 2019 values and spatial patterns
+- ✓ Correct scaling (10^6 hooks)
+- ✓ Discrete blue color bins display correctly
+- ✓ Legends readable and positioned at bottom
+- ⚠ Data only extends to 50°S (Clay had data to 60°S - different sources)
+
+**Demersal maps:**
+- ✓ Match Clay 2019 values after 10^6 correction
+- ✓ Values now realistic (5 vs previous 50)
+- ✓ Correct scaling (10^6 hooks)
+- ✓ Same color scale as pelagic for comparability
+- ✓ Extends to Southern Ocean (-77.5°S)
+
+---
+
+## Technical Improvements
+
+### 1. Data Processing Best Practices
+- Eliminated unnecessary point conversions for gridded data
+- Preserved exact source values without rounding
+- Proper temporal filtering (1990-2009)
+- Separated mean vs cumulative calculations
+
+### 2. Visualization Enhancements
+- Publication-quality discrete color schemes
+- Consistent binning across transformations
+- Horizontal legends for better figure layout
+- Multiple transformation options for different audiences
+
+### 3. Code Organization
+- Parameterized mapping function for flexibility
+- Clear comments documenting units and scaling
+- Modular approach (mean and cumulative separate)
+- Saved both scaled and unscaled versions
+
+---
+
+## Insights for Analysis
+
+### 1. Spatial Patterns Confirmed
+- Pelagic effort concentrated in tropical/subtropical high seas
+- Demersal effort concentrated near continental shelves and seamounts
+- Southern Ocean (CCAMLR) demersal effort reaches far south (-77.5°S)
+- Limited pelagic effort in Southern Ocean in available data
+
+### 2. Scaling Implications
+- Using 10^6 hooks as standard unit allows direct comparison between fisheries
+- Values interpretable: 5 = 5 million hooks cumulative over 20 years
+- Consistent with published literature (Clay 2019)
+
+### 3. Data Limitations Identified
+- Pelagic data gap south of 50°S
+- Cannot fully replicate Clay 2019 Southern Ocean coverage
+- May affect overlap calculations with WAAL distributions in far south
+- Consider acquiring CCSBT or additional Southern Ocean pelagic data
+
+---
+
+## Next Steps
+
+### Immediate:
+1. ✅ Fishing effort maps completed and validated
+2. Verify overlap calculations work with corrected rasters
+3. Check if resample fix (line 281) resolved extent mismatch error
+4. Document final fishing effort statistics in results
+
+### Data Acquisition (Optional):
+1. Investigate CCSBT (Southern Bluefin Tuna Commission) data availability
+2. Check for additional Southern Ocean pelagic longline sources
+3. Would extend pelagic coverage from 50°S to potentially 60°S
+4. Improve overlap estimates with southern WAAL distributions
+
+### Analysis Continuation:
+1. Run overlap calculations with corrected fishing effort rasters
+2. Update bycatch estimates using proper scaling (10^6)
+3. Verify spatial overlap patterns match expectations
+4. Generate age-specific overlap maps
+
+---
+
+## Questions Resolved
+
+1. **Why were demersal values 10× too high?** → Incorrect scaling (10^3 vs 10^6)
+2. **Why don't cell values match exactly?** → Point-based rasterization artifacts, now fixed
+3. **Why does pelagic cut off at 50°S?** → Source data limitation, not Clay 2019 extent issue
+4. **Are legends showing correctly?** → Yes, after switching to guide_colorbar with horizontal layout
+5. **Should bins be different for log transform?** → No, transform breaks but keep labels same for comparability
+
+---
+
+## Session: February 11, 2026
+
+### Overview
+Refined BPUE summary statistics in script 04 to correctly count studies and observations, and added CSV exports for all summary tables.
+
+### Changes to Script 04
+
+**Fixed inflated `n_studies` counts:**
+- Changed `n_studies = n()` (row count, inflated by region/year expansion) to `n_studies = n_distinct(citation)` (unique citations)
+- Added `n_bpue = n_distinct(row_id)` to count unique BPUE observations without inflation from region or year-group expansion
+
+**Fixed inflated mean/SD from expansion:**
+- `mean()` and `sd()` were computed on all expanded rows, so a single BPUE duplicated across year groups could show `sd = 0` instead of `NA`
+- Changed to `mean(bpue[!duplicated(row_id)])` and `sd(bpue[!duplicated(row_id)])` to de-duplicate before computing stats
+
+**Added CSV exports for all summary tables:**
+- `output/bpue_summary_full.csv` (fishery x fleet x period x region)
+- `output/bpue_summary_by_fishery.csv`
+- `output/bpue_summary_by_fleet.csv`
+- `output/bpue_summary_by_period.csv`
+- `output/bpue_summary_by_region.csv`
+
+**Added region sanity check:**
+- Compares CSV region labels against bounding box centroid assignments
+- Identified Abraham & Thompson 2009 mislabeled as "SE Indian" (should be "SW Pacific") — fixed in CSV
+- Collins et al. 2021 "CCAMLR" vs "SW Atlantic" is a definitional mismatch (CCAMLR jurisdiction extends north of 60°S)
+- Summaries use CSV region labels (not bbox-derived), confirmed correct
+
+**Region label fix:**
+- Abraham & Thompson 2009 NZ entries corrected from "SE Indian" to "SW Pacific" in source CSV
+
+---
+
+*Last updated: February 11, 2026*

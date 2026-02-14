@@ -1056,4 +1056,45 @@ Refined BPUE summary statistics in script 04 to correctly count studies and obse
 
 ---
 
-*Last updated: February 11, 2026*
+---
+
+## Session: February 12-13, 2026
+
+### Overview
+Completed script 03f with demographic validation, revised gap-filling, and fixed a critical raster extent bug. Total BI bycatch estimate: ~293 birds/yr (down from ~370 after bug fix).
+
+### Key Changes to Script 03f
+
+**1. Demographic validation added (Section 13)**
+- Compares per-capita fishing mortality against known survival rates (s_Juv=0.846, s_Imm=0.921, s_EF=0.913, etc.)
+- Checks that implied natural mortality stays positive (fishing mortality < total mortality)
+- All age classes pass: fishing = 17-38% of total mortality
+- Includes mortality budget in bird counts (total deaths/yr vs bycatch deaths/yr)
+
+**2. Gap-filling revised to temporal extrapolation (Section 8 rewrite)**
+- Priority 1: Same fleet, nearest period with β, scaled by BPUE temporal ratio (`β_fill = β_source × bpue_target / bpue_source`)
+- Priority 2: Regional mean β for target period
+- Priority 3: Fishery-type mean β (fallback)
+- Temporal scaling slightly increased estimates (correct — earlier periods had higher BPUE)
+
+**3. Critical bug fix: BI density raster extent (Section 2 rewrite)**
+- **Problem**: Pre-built `BI_density_*_final.tif` files used fishing effort template (lat -50..65) instead of bird distribution grid (lat -90..0)
+- South Georgia at -54°S was completely excluded → zero BI bird density there → DLL bycatch near SG missing
+- 15.7% of total bird density south of 50°S was lost, inflating β by ~19%
+- **Fix**: Build BI density directly from Clay originals in 03f (correct -90..0 grid)
+- **Impact**: Bycatch dropped from ~370 to ~293 birds/yr; maps now show full SG coverage
+
+**4. Population size calculation fix (Section 2)**
+- `Dem_props copy.csv` has 4 period rows + 1 summary row (1990-2009)
+- Summary row was included in `mean()`, double-counting it
+- Fixed with `filter(Period != "1990-2009")` before grouping
+
+### Other Work
+- Added SSD vs observed demographic proportions comparison to `WAAL_bycatch_2-13-26.Rmd`
+- Population not at stable stage distribution: IMM grew 32%→50%, FB shrank 7.8%→3.4% (consistent with declining population)
+
+### Current Status
+- 03f produces ~293 BI birds/yr — biologically plausible per demographic validation
+- Expert elicitation in progress to refine BPUE rates and gap-filling; will retest when complete
+
+*Last updated: February 13, 2026*

@@ -177,92 +177,82 @@ dem_props_obs %>%
   mutate(across(where(is.numeric), ~round(.x, 4))) %>%
   print()
 ```
+*LOAD BYCATCH MORTALITY FROM SCRIPT 03f*
 
-*FISHING EFFORT AND BPUE*
+Fishing effort, bird distributions, spatial overlap, and BPUE estimation are all handled in script 03f (spatial catchability approach). Here we load the mean annual per-capita bycatch rates and use them in the demographic model.
 
-**mean annual fishing effort - pelagic**
+**load per-capita bycatch rates from 03f (1990-1995 period)**
 ```{r}
-#read in all pelagic data
-#create a raster of mean fishing effort
-#create a raster of total fishing effort
-#create a raster of fishing effort by different RMFOs, flag states etc
-```
+# Load period-specific bycatch totals from 03f
+byc_period <- read_csv(here("output/bycatch_by_fishery_period_03f.csv"), show_col_types = FALSE)
 
-**mean annual fishing effort - demersal**
-```{r}
-#read in all demersal data
-#create a raster of mean fishing effort
-#create a raster of total fishing effort
-#create a raster of fishing effort by different RMFOs, flag states etc
-```
+# Load period-specific population sizes from Clay demographic data
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
 
-**distributions by age classes**
-```{r}
-#read in all age class distributions (mean annual - aka averaged across months)
-```
+# Use 1990-1995 bycatch with 1990-1994 population (closest matching period)
+target_period_byc <- "1990-1995"
+target_period_pop <- "1990-1994"
 
-**calculate overlap scores - population level exposure -  for all age classes**
-```{r}
-# # of hooks * percent population [in each grid cell, using grids that sum to 1]
-```
+pop_1990 <- dem_props %>%
+  filter(Period == target_period_pop, Dem_class != "J1") %>%
+  select(Dem_class, Pop) %>%
+  mutate(age_class = tolower(Dem_class)) %>%
+  mutate(age_class = case_when(
+    age_class == "j2j3" ~ "j2j3",
+    age_class == "imm" ~ "imm",
+    age_class == "fb" ~ "fb",
+    age_class == "sb" ~ "sb",
+    age_class == "nb" ~ "nb"
+  ))
 
-**compare distributions to other populations, map proportion of populations in each grid cell**
-Distributions from Carneiro et al. 2020 Biol Conserc (BAS & CNRS tracking databases)
-Pop estimates from IUCN RedList (?)
-```{r}
-#first get population estimates for each population and scale what % of global pop each population represents - (Ker, Crozet, SG. For Prince Edward islands, take mean of K&Cr rasters and save that map)
-#read in maps of % of each population in each grid cell & multiply by that population estimate to get total birds from each pop in each grid cell
-#sum all grids to get total birds in all pops in each grid cell
-#divide Bird Island bird grids by total bird grids to get % of birds in each cell from south georgia, then take 60% of that to get % Bird Island birds in each grid cell
-```
+# Get 1990-1995 bycatch by fishery and calculate per-capita
+byc_1990 <- byc_period %>%
+  filter(year_group == target_period_byc) %>%
+  select(fishery, fb, sb, nb, j2j3, imm) %>%
+  pivot_longer(cols = c(fb, sb, nb, j2j3, imm), names_to = "age_class", values_to = "annual_byc") %>%
+  left_join(pop_1990 %>% select(age_class, Pop), by = "age_class") %>%
+  mutate(percap = annual_byc / Pop)
 
-**BCPUE**
-Literature review: Klaer 2012 (and papers he cites), Tuck 2011 & 2015, Jimenez
-See literature cited in Carneiro et al. 2022 Biol Conserv (those above, and Bugoni, Moreno et el. 2008, Reid et al. 2004, Tamini et al. 2021 (trawl), Phillips 2013)
-```{r}
-#PELAGIC
-# mean BCPUE for now - per 1000 hooks
-# convert to per 1 hook rate
-# multiply by the % Bird Island grid to scale BPUE 1 to just a BI SG rate
-# multiply by overlap scores for the per cell BPUE 1 FOR EACH AGE CLASS
-# sum across cells for the population BPUE 1 FOR EACH AGE CLASS
-# divide by total pop in each age class for per capita bycatch probability for each age class
+byc_1990 %>% print(n = 20)
 
-#DEMERSAL
-# mean BCPUE for now - per 1000 hooks
-# convert to per 1 hook rate
-# multiply by the % Bird Island grid to scale BPUE 1 to just a BI SG rate
-# multiply by overlap scores for the per cell BPUE 1 FOR EACH AGE CLASS
-# sum across cells for the population BPUE 1 FOR EACH AGE CLASS
-# divide by total pop in each age class for per capita bycatch probability for each age class
+# Extract per-capita rates by fishery and age class
+dem_fm_juv <- byc_1990 %>% filter(fishery == "DLL", age_class == "j2j3") %>% pull(percap)
+dem_fm_imm <- byc_1990 %>% filter(fishery == "DLL", age_class == "imm") %>% pull(percap)
+dem_fm_fb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "fb") %>% pull(percap)
+dem_fm_sb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "sb") %>% pull(percap)
+dem_fm_nb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "nb") %>% pull(percap)
+
+pel_fm_juv <- byc_1990 %>% filter(fishery == "PLL", age_class == "j2j3") %>% pull(percap)
+pel_fm_imm <- byc_1990 %>% filter(fishery == "PLL", age_class == "imm") %>% pull(percap)
+pel_fm_fb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "fb") %>% pull(percap)
+pel_fm_sb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "sb") %>% pull(percap)
+pel_fm_nb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "nb") %>% pull(percap)
+
+# Print summary
+cat(sprintf("=== Per-capita fishing mortality (%s bycatch, %s population) ===\n\n",
+            target_period_byc, target_period_pop))
+cat(sprintf("%-8s %10s %10s %10s\n", "Age", "DLL", "PLL", "Total"))
+for (ac in c("j2j3", "imm", "fb", "sb", "nb")) {
+  d <- byc_1990 %>% filter(fishery == "DLL", age_class == ac) %>% pull(percap)
+  p <- byc_1990 %>% filter(fishery == "PLL", age_class == ac) %>% pull(percap)
+  cat(sprintf("%-8s %10.6f %10.6f %10.6f\n", ac, d, p, d + p))
+}
 ```
 
 **IUU**
-Welch et al (6%), Weimerskirch et al. (=< 33%), Carneiro et al. 2022 (low, need to calculate myself from her paoer)
+Welch et al (6%), Weimerskirch et al. (=< 33%), Carneiro et al. 2022 (low, need to calculate myself from her paper)
 USE THESE RATES TO SET IUU scenarios, distributions as in previous code
 
 
-**partition mortality between natural and fishery mortality*, set efficacy rates***
+**partition mortality between natural and fishery mortality, set efficacy rates**
 ```{r}
-#surv = natural mortality - fishing mortality
-#surv - fishing mortality = natural mortality
+# survival = 1 - total_mortality
+# total_mortality = natural_mortality + fishing_mortality
+# therefore: natural_mortality = (1 - survival) - fishing_mortality
 
-#fishing mortality = per capita calculations above
-dem_fm <- percap_j2j3_dem + percap_i_dem + percap_fb_dem + percap_sb_dem + percap_nb_dem
-dem_fm_juv <- percap_j2j3_dem
-dem_fm_imm <- percap_i_dem
-dem_fm_fb <- percap_fb_dem
-dem_fm_sb <- percap_sb_dem
-dem_fm_nb <- percap_nb_dem
-
-pel_fm <- percap_j2j3_pel + percap_i_pel +  percap_fb_pel + percap_sb_pel + percap_nb_pel
-pel_fm_juv <- percap_j2j3_pel
-pel_fm_imm <- percap_i_pel
-pel_fm_fb <- percap_fb_pel
-pel_fm_sb <- percap_sb_pel
-pel_fm_nb <- percap_nb_pel
-
-#natural mortality no IUU
+# Natural mortality = total mortality minus fishing mortality (no IUU)
 nm_juv <- (1-s_Juv)-dem_fm_juv-pel_fm_juv
 nm_imm <- (1-s_Imm)-dem_fm_imm-pel_fm_imm
 nm_efb <- (1-s_EF)-dem_fm_fb-pel_fm_fb
@@ -270,8 +260,16 @@ nm_esb <- (1-s_ES)-dem_fm_sb-pel_fm_sb
 nm_enb <- (1-s_ENB)-dem_fm_nb-pel_fm_nb
 nm_ifb <- (1-s_IF)-dem_fm_fb-pel_fm_fb
 nm_isb <- (1-s_IS)-dem_fm_sb-pel_fm_sb
-nm_pf  <- (1-s_PF)-dem_fm_nb-pel_fm_nb #not sure what to do here? Maybe take average of breeder classes instead? clay says observerable and nonobservable nb classes from pardo pooled for his analysis...
+nm_pf  <- (1-s_PF)-dem_fm_nb-pel_fm_nb
 
+# Check all natural mortalities are positive
+cat("=== Natural mortality check ===\n")
+nm_vals <- c(nm_juv=nm_juv, nm_imm=nm_imm, nm_efb=nm_efb, nm_esb=nm_esb,
+             nm_enb=nm_enb, nm_ifb=nm_ifb, nm_isb=nm_isb, nm_pf=nm_pf)
+for (nm_name in names(nm_vals)) {
+  cat(sprintf("  %s: %.4f %s\n", nm_name, nm_vals[nm_name],
+              ifelse(nm_vals[nm_name] > 0, "OK", "NEGATIVE - bycatch too high!")))
+}
 ```
 
 **loop through different bycatch reductions scenarios, find lambda for each**
@@ -327,8 +325,6 @@ n_m
 }
 ```
 
-NOTE TO SELF: If I can get this far in the next couple days, just focus on recreating old figures with updated matrix and bycatch mortatlity estimates assuming spatialy uniform (total or mean???) BCPUE. State next steps as: updating BPUE from literature to reflect differences across space. 
-
 **plot bycatch reduction against changes to lambda**
 ```{r}
 ggplot(bycatch_reductions)+
@@ -340,6 +336,7 @@ ggplot(bycatch_reductions)+
   themeo+
   coord_cartesian(expand=FALSE)
 ```
+
 **add uncertainty for mitigation efficacy**
 ```{r}
 bycatch_reductions2 <- seq(0, 1, by =0.01)
@@ -419,6 +416,325 @@ ggplot(output_l)+
   scale_color_manual(values=c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494"))
 ```
 
+*FLEET-LEVEL MITIGATION SCENARIOS*
+
+The blanket approach above applies uniform mitigation across all fisheries. Below we disaggregate bycatch by fleet and apply fleet-specific mitigation reflecting actual management practices.
+
+**load fleet-level bycatch and define mitigation scenarios**
+```{r}
+# Load fleet-level bycatch for the baseline period (1990-1995)
+fleet_byc <- read_csv(here("output/bycatch_by_fleet_period_03f.csv"), show_col_types = FALSE) %>%
+  filter(year_group == "1990-1995")
+
+# Calculate per-capita rates by fleet
+fleet_percap <- fleet_byc %>%
+  select(fishery, fleet, fb, sb, nb, j2j3, imm) %>%
+  pivot_longer(cols = c(fb, sb, nb, j2j3, imm), names_to = "age_class", values_to = "byc") %>%
+  left_join(pop_1990 %>% select(age_class, Pop), by = "age_class") %>%
+  mutate(percap = byc / Pop)
+
+# Show which fleets contribute most to bycatch
+fleet_byc %>%
+  select(fishery, fleet, bi_total) %>%
+  arrange(desc(bi_total)) %>%
+  print(n = 20)
+```
+
+**define mitigation efficacy rates (PLACEHOLDERS - update from literature)**
+```{r}
+# Efficacy of different mitigation measures (proportion reduction in bycatch)
+# These are placeholders — replace with literature values
+eff_tori_lines   <- 0.70  # tori/bird scaring lines
+eff_night_set    <- 0.60  # night setting
+eff_line_weight  <- 0.50  # weighted branch lines / integrated weight lines
+eff_hook_shield  <- 0.40  # hook shielding devices / smart tuna hooks
+
+# Combined efficacy: 1 - (1-a)*(1-b)*(1-c) for independent measures
+eff_2of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set)                    # tori + night set
+eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)  # all three
+
+cat(sprintf("2/3 combined efficacy: %.1f%%\n", eff_2of3 * 100))
+cat(sprintf("3/3 combined efficacy: %.1f%%\n", eff_3of3 * 100))
+```
+
+**define fleet-level mitigation status**
+```{r}
+# Define current mitigation status for each fleet
+# status: "none", "partial" (2/3 measures), "full" (3/3 measures, best practice)
+# compliance: proportion of fleet actually using the measures (0-1)
+# PLACEHOLDERS — update based on RFMO/fleet-specific information
+
+fleet_mitigation <- tribble(
+  ~fishery, ~fleet,          ~status,    ~compliance,  ~notes,
+  # DLL fleets - many have strong mitigation (CCAMLR especially)
+  "DLL",    "CCAMLR",        "full",     0.95,         "3/3 measures, strong enforcement",
+  "DLL",    "Argentina",     "partial",  0.70,         "some measures adopted",
+  "DLL",    "Chile",         "partial",  0.60,         "some measures adopted",
+  "DLL",    "Falklands",     "full",     0.90,         "3/3 measures, good compliance",
+  "DLL",    "South Africa",  "full",     0.85,         "3/3 measures",
+  # PLL fleets - many have 2/3 or less
+  "PLL",    "Japan",         "partial",  0.80,         "2/3 in most RFMOs",
+  "PLL",    "Taiwan",        "partial",  0.60,         "2/3 adopted but variable compliance",
+  "PLL",    "Korea",         "partial",  0.50,         "2/3 in some areas",
+  "PLL",    "Spain",         "partial",  0.70,         "EU requirements, 2/3",
+  "PLL",    "Portugal",      "partial",  0.70,         "EU requirements, 2/3",
+  "PLL",    "Brazil",        "partial",  0.40,         "some measures, lower compliance",
+  "PLL",    "China",         "none",     0.0,          "limited adoption",
+  "PLL",    "Other",         "none",     0.0,          "mixed/unknown fleets",
+  "PLL",    "Chile",         "partial",  0.60,         "some measures",
+  "PLL",    "South Africa",  "partial",  0.70,         "domestic requirements",
+  "PLL",    "Cuba",          "none",     0.0,          "no information",
+  "PLL",    "Belize",        "none",     0.0,          "flag of convenience",
+  "PLL",    "France Reunion", "partial", 0.60,         "EU requirements",
+  "PLL",    "Seychelles",    "none",     0.0,          "limited adoption",
+  "PLL",    "Namibia",       "partial",  0.50,         "some measures",
+  "PLL",    "Vanuatu",       "none",     0.0,          "flag of convenience",
+  "PLL",    "USSR",          "none",     0.0,          "historical, no mitigation",
+  "PLL",    "USA",           "partial",  0.80,         "NMFS requirements",
+  "PLL",    "Panama",        "none",     0.0,          "flag of convenience",
+  "PLL",    "French Polynesia","partial",0.60,         "EU/French requirements",
+  "PLL",    "St. Vincent and Grenadines", "none", 0.0, "flag of convenience"
+)
+
+# Map status to efficacy
+fleet_mitigation <- fleet_mitigation %>%
+  mutate(
+    base_efficacy = case_when(
+      status == "full"    ~ eff_3of3,
+      status == "partial" ~ eff_2of3,
+      status == "none"    ~ 0
+    ),
+    # Effective reduction = base efficacy * compliance
+    effective_reduction = base_efficacy * compliance
+  )
+
+fleet_mitigation %>%
+  select(fishery, fleet, status, compliance, base_efficacy, effective_reduction) %>%
+  arrange(fishery, desc(effective_reduction)) %>%
+  print(n = 30)
+```
+
+**calculate fleet-level fishing mortality under different scenarios**
+```{r}
+# Function to calculate total fishing mortality per age class under a given scenario
+# scenario = a fleet_mitigation-style dataframe with effective_reduction per fleet
+calc_fleet_fm <- function(fleet_percap_df, scenario_df) {
+
+  # Join fleet per-capita rates with scenario reductions
+  fm_by_fleet <- fleet_percap_df %>%
+    left_join(scenario_df %>% select(fishery, fleet, effective_reduction),
+              by = c("fishery", "fleet")) %>%
+    mutate(
+      # If fleet not in scenario table, assume no mitigation
+      effective_reduction = replace_na(effective_reduction, 0),
+      # Reduced per-capita rate
+      percap_mitigated = percap * (1 - effective_reduction)
+    )
+
+  # Sum across fleets within each fishery x age_class
+  fm_by_fishery <- fm_by_fleet %>%
+    group_by(fishery, age_class) %>%
+    summarise(
+      percap_baseline = sum(percap),
+      percap_mitigated = sum(percap_mitigated),
+      pct_reduction = 1 - percap_mitigated / percap_baseline,
+      .groups = "drop"
+    )
+
+  fm_by_fishery
+}
+
+# Helper to extract fm values from scenario output and build matrix
+calc_lambda_from_scenario <- function(scenario_fm) {
+
+  # Extract mitigated per-capita rates
+  get_fm <- function(fish, ac) {
+    scenario_fm %>% filter(fishery == fish, age_class == ac) %>% pull(percap_mitigated)
+  }
+
+  s_dem_fm_juv <- get_fm("DLL", "j2j3"); s_pel_fm_juv <- get_fm("PLL", "j2j3")
+  s_dem_fm_imm <- get_fm("DLL", "imm");  s_pel_fm_imm <- get_fm("PLL", "imm")
+  s_dem_fm_fb  <- get_fm("DLL", "fb");   s_pel_fm_fb  <- get_fm("PLL", "fb")
+  s_dem_fm_sb  <- get_fm("DLL", "sb");   s_pel_fm_sb  <- get_fm("PLL", "sb")
+  s_dem_fm_nb  <- get_fm("DLL", "nb");   s_pel_fm_nb  <- get_fm("PLL", "nb")
+
+  # New survival = 1 - natural_mortality - mitigated_fishing_mortality
+  ns_Juv <- 1 - nm_juv - s_dem_fm_juv - s_pel_fm_juv
+  ns_Imm <- 1 - nm_imm - s_dem_fm_imm - s_pel_fm_imm
+  ns_EF  <- 1 - nm_efb - s_dem_fm_fb  - s_pel_fm_fb
+  ns_IF  <- 1 - nm_ifb - s_dem_fm_fb  - s_pel_fm_fb
+  ns_ES  <- 1 - nm_esb - s_dem_fm_sb  - s_pel_fm_sb
+  ns_IS  <- 1 - nm_isb - s_dem_fm_sb  - s_pel_fm_sb
+  ns_ENB <- 1 - nm_enb - s_dem_fm_nb  - s_pel_fm_nb
+  ns_PF  <- 1 - nm_pf  - s_dem_fm_nb  - s_pel_fm_nb
+
+  # Build matrix (same structure as baseline)
+  n_m <- matrix(data = c(
+    0,     0,     0,      0,      0,                                           0.5*ns_Juv,              0,                       0.5*ns_Juv,              0,                       0,                         0,
+    ns_Juv,0,     0,      0,      0,                                           0,                       0,                       0,                       0,                       0,                         0,
+    0,     ns_Juv,0,      0,      0,                                           0,                       0,                       0,                       0,                       0,                         0,
+    0,     0,     ns_Imm, 0,      0,                                           0,                       0,                       0,                       0,                       0,                         0,
+    0,     0,     0,      ns_Imm, ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),   0,                       0,                       0,                       0,                       0,                         0,
+    0,     0,     0,      0,      ns_Imm*r_Imm*b_Imm*k_Imm,                   0,                       0,                       0,                       0,                       0,                         0,
+    0,     0,     0,      0,      ns_Imm*r_Imm*b_Imm*(1-k_Imm),               0,                       0,                       0,                       0,                       0,                         0,
+    0,     0,     0,      0,      0,                                           ns_IS*r_IS*b_IS*k_IS,    ns_IF*r_IF*b_IF*k_IF,    ns_ES*r_ES*b_ES*k_ES,    ns_EF*r_EF*b_EF*k_EF,    ns_ENB*r_ENB*b_ENB*k_ENB,  ns_PF*r_PF*b_PF*k_PF,
+    0,     0,     0,      0,      0,                                           ns_IS*r_IS*b_IS*(1-k_IS),ns_IF*r_IF*b_IF*(1-k_IF),ns_ES*r_ES*b_ES*(1-k_ES),ns_EF*r_EF*b_EF*(1-k_EF),ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),
+    0,     0,     0,      0,      0,                                           ns_IS*r_IS*(1-b_IS),     ns_IF*r_IF*(1-b_IF),     ns_ES*r_ES*(1-b_ES),     ns_EF*r_EF*(1-b_EF),     ns_ENB*r_ENB*(1-b_ENB),    ns_PF*r_PF*(1-b_PF),
+    0,     0,     0,      0,      0,                                           ns_IS*(1-r_IS),          ns_IF*(1-r_IF),          ns_ES*(1-r_ES),          ns_EF*(1-r_EF),          ns_ENB*(1-r_ENB),          ns_PF*(1-r_PF)
+  ), nrow = 11, byrow = TRUE)
+
+  # Extract lambda
+  n_m_eig <- eigen(n_m)
+  lambda_n <- as.numeric(n_m_eig$values[1])
+
+  return(lambda_n)
+}
+```
+
+**define and run management scenarios**
+```{r}
+# SCENARIO 0: No mitigation (baseline 1990-1995)
+scenario_none <- fleet_mitigation %>%
+  mutate(effective_reduction = 0)
+
+# SCENARIO 1: Current mitigation (as defined in fleet_mitigation table above)
+scenario_current <- fleet_mitigation
+
+# SCENARIO 2: All PLL fleets adopt 2/3 (current compliance levels)
+scenario_pll_2of3 <- fleet_mitigation %>%
+  mutate(
+    base_efficacy = case_when(
+      fishery == "DLL" ~ base_efficacy,  # keep DLL as is
+      TRUE ~ eff_2of3                     # all PLL get 2/3
+    ),
+    compliance = case_when(
+      fishery == "DLL" ~ compliance,
+      compliance == 0 ~ 0.50,             # fleets with no mitigation get 50% compliance
+      TRUE ~ compliance                   # keep existing compliance
+    ),
+    effective_reduction = base_efficacy * compliance
+  )
+
+# SCENARIO 3: All PLL fleets adopt 3/3 (current compliance levels)
+scenario_pll_3of3 <- fleet_mitigation %>%
+  mutate(
+    base_efficacy = case_when(
+      fishery == "DLL" ~ base_efficacy,
+      TRUE ~ eff_3of3
+    ),
+    compliance = case_when(
+      fishery == "DLL" ~ compliance,
+      compliance == 0 ~ 0.50,
+      TRUE ~ compliance
+    ),
+    effective_reduction = base_efficacy * compliance
+  )
+
+# SCENARIO 4: Full compliance everywhere (3/3, 100% compliance)
+scenario_full <- fleet_mitigation %>%
+  mutate(
+    base_efficacy = eff_3of3,
+    compliance = 1.0,
+    effective_reduction = base_efficacy * compliance
+  )
+
+# SCENARIO 5: Target top 3 PLL fleets only (Taiwan, Japan, Other = ~95% of PLL bycatch)
+# These are the fleets where intervention would have the most impact
+scenario_target_top3 <- fleet_mitigation %>%
+  mutate(
+    base_efficacy = case_when(
+      fishery == "PLL" & fleet %in% c("Taiwan", "Japan", "Other") ~ eff_3of3,
+      TRUE ~ base_efficacy
+    ),
+    compliance = case_when(
+      fishery == "PLL" & fleet %in% c("Taiwan", "Japan", "Other") ~ 0.80,
+      TRUE ~ compliance
+    ),
+    effective_reduction = base_efficacy * compliance
+  )
+
+# Run all scenarios
+scenarios <- list(
+  "0_no_mitigation"    = scenario_none,
+  "1_current"          = scenario_current,
+  "2_all_pll_2of3"     = scenario_pll_2of3,
+  "3_all_pll_3of3"     = scenario_pll_3of3,
+  "4_full_compliance"  = scenario_full,
+  "5_target_top3_pll"  = scenario_target_top3
+)
+
+scenario_results <- tibble(
+  scenario = names(scenarios),
+  lambda = NA_real_,
+  dll_reduction_pct = NA_real_,
+  pll_reduction_pct = NA_real_,
+  total_byc_reduction_pct = NA_real_
+)
+
+for (i in seq_along(scenarios)) {
+  fm <- calc_fleet_fm(fleet_percap, scenarios[[i]])
+  scenario_results$lambda[i] <- calc_lambda_from_scenario(fm)
+
+  # Track reductions
+  dll_red <- fm %>% filter(fishery == "DLL") %>% summarise(mean(pct_reduction)) %>% pull()
+  pll_red <- fm %>% filter(fishery == "PLL") %>% summarise(mean(pct_reduction)) %>% pull()
+  total_red <- fm %>% summarise(
+    weighted.mean(pct_reduction, w = percap_baseline)
+  ) %>% pull()
+
+  scenario_results$dll_reduction_pct[i] <- round(dll_red * 100, 1)
+  scenario_results$pll_reduction_pct[i] <- round(pll_red * 100, 1)
+  scenario_results$total_byc_reduction_pct[i] <- round(total_red * 100, 1)
+}
+
+scenario_results %>%
+  mutate(lambda = round(lambda, 4)) %>%
+  print()
+```
+
+**plot scenario comparison**
+```{r}
+ggplot(scenario_results, aes(x = reorder(scenario, lambda), y = lambda)) +
+  geom_col(fill = "#41b6c4", width = 0.6) +
+  geom_hline(yintercept = 1, color = "red", alpha = 0.5, linetype = "dashed") +
+  geom_text(aes(label = round(lambda, 4)), hjust = -0.1, size = 3) +
+  labs(x = "", y = "lambda",
+       title = "Population growth rate under fleet-specific mitigation scenarios") +
+  coord_flip(ylim = c(min(scenario_results$lambda) - 0.005, max(max(scenario_results$lambda) + 0.005, 1.005))) +
+  themeo
+```
+
+**detailed fleet contribution to bycatch reduction**
+```{r}
+# Show which fleets contribute most to bycatch and how much each scenario reduces them
+# Using scenario 5 (target top 3) as example
+fm_target <- calc_fleet_fm(fleet_percap, scenario_target_top3)
+
+# Fleet-level detail
+fleet_detail <- fleet_percap %>%
+  left_join(scenario_target_top3 %>% select(fishery, fleet, effective_reduction, status),
+            by = c("fishery", "fleet")) %>%
+  mutate(
+    effective_reduction = replace_na(effective_reduction, 0),
+    byc_mitigated = byc * (1 - effective_reduction)
+  ) %>%
+  group_by(fishery, fleet) %>%
+  summarise(
+    total_byc_baseline = sum(byc),
+    total_byc_mitigated = sum(byc_mitigated),
+    reduction_pct = round((1 - total_byc_mitigated / total_byc_baseline) * 100, 1),
+    .groups = "drop"
+  ) %>%
+  filter(total_byc_baseline > 0.01) %>%
+  arrange(desc(total_byc_baseline))
+
+fleet_detail %>% print(n = 20)
+
+cat(sprintf("\nTotal baseline bycatch: %.1f birds\n", sum(fleet_detail$total_byc_baseline)))
+cat(sprintf("Total mitigated bycatch: %.1f birds\n", sum(fleet_detail$total_byc_mitigated)))
+cat(sprintf("Overall reduction: %.1f%%\n",
+            (1 - sum(fleet_detail$total_byc_mitigated) / sum(fleet_detail$total_byc_baseline)) * 100))
+```
 
 
 IUU calculations - test

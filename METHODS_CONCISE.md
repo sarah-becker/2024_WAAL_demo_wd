@@ -282,7 +282,109 @@ This stratification enables:
 - Regional boundaries somewhat arbitrary
 - Must weight studies appropriately
 
-**Status:** In development. Requires completion of literature review (script 04).
+**Status:** Superseded by Approach 5 (script 03f).
+
+---
+
+### Approach 5: Fleet-Level Spatial Catchability (Script 03f) - **CURRENT**
+
+Implements the spatial catchability concept from Approach 4 using real BPUE data from the literature review (script 04), disaggregated by fleet × fishery × time period. This enables downstream management scenario modeling at the fleet level.
+
+**Key advances over Approach 4:**
+- Uses real BPUE studies with geographic bounding boxes (from `BPUE_2926_standardized.csv`)
+- Maintains fleet-level resolution (not aggregated to regions) for management scenario testing
+- Hierarchical gap-filling with temporal extrapolation rather than expert elicitation
+- Builds BI density directly from Clay age-class rasters on correct -90..0° grid
+
+**Per-study catchability:**
+```
+For each BPUE study covering fleet f, fishery type, period p, bounding box:
+  β_study = (BPUE/1000 × fleet_hooks_in_box) / Σ_box(fleet_hooks_cell × birds_cell)
+```
+
+Both numerator and denominator use the same fleet's hooks. Where multiple studies overlap in a cell (same fishery + period), betas are averaged.
+
+**Gap-filling hierarchy:**
+1. Same fleet, nearest period with β, scaled by BPUE temporal ratio: `β_fill = β_source × (bpue_target / bpue_source)`
+2. Regional mean β for target period
+3. Fishery-type mean β (fallback)
+
+**Bycatch calculation:**
+```
+bycatch_cell = β_cell × hooks_cell × BI_birds_cell
+```
+Summed across fleets within each fishery × period, then partitioned by age class using Clay distributions.
+
+**Results (mean annual, 1990-2010):**
+- PLL: ~167 birds/yr, DLL: ~127 birds/yr
+- Total: ~293 BI birds/yr
+- Demographic validation: fishing = 17-38% of total mortality across age classes (all positive natural mortality)
+
+**Status:** Implemented and validated. Current recommended approach.
+
+---
+
+## Demographic Model Integration
+
+### Matrix Model Structure
+
+11-stage matrix population model (from Pardo et al.):
+- J2, J3 (juveniles), Imm4, Imm5 (immatures), PB (pre-breeders)
+- IS, IF (inexperienced successful/failed breeders)
+- ES, EF (experienced successful/failed breeders)
+- ENB (experienced non-breeders), Sabb (sabbatical)
+
+Vital rates: survival (s), return (r), breeding probability (b), breeding success (k) per stage.
+
+### Mortality Partitioning
+
+Using 1990-1995 (pre-mitigation baseline) per-capita bycatch rates from 03f:
+
+```
+total_mortality = 1 - s_observed
+fishing_mortality = dem_fm + pel_fm    (from 03f, per age class)
+natural_mortality = total_mortality - fishing_mortality
+```
+
+Mapping 03f age classes to matrix stages:
+- j2j3 → J2, J3 (s_Juv = 0.846)
+- imm → Imm4, Imm5, PB (s_Imm = 0.921)
+- fb → IF, EF (mean of s_IF=0.920, s_EF=0.913)
+- sb → IS, ES (mean of s_IS=0.892, s_ES=0.895)
+- nb → ENB, Sabb (mean of s_ENB=0.943, s_PF=0.935)
+
+### Mitigation Scenario Testing
+
+**Blanket approach** (existing): Uniform reduction across all fisheries, varying % adoption (0-100%) × efficacy (50-100%).
+
+**Fleet-level approach** (new): Disaggregates bycatch by fleet, applies fleet-specific mitigation:
+
+```
+For each fleet:
+  effective_reduction = base_efficacy × compliance
+  percap_mitigated = percap_baseline × (1 - effective_reduction)
+
+Total fishing mortality = Σ_fleets(percap_mitigated)
+```
+
+Mitigation measures and combined efficacy (literature-informed operational values):
+- Individual: tori lines (75%), night setting (60%), line weighting (65%), hook shielding (35%)
+- 2/3 measures (tori lines + night setting): 90.0% reduction
+- 3/3 measures (+ line weighting): 96.5% reduction (consistent with literature: 95-99%)
+- Combined: `1 - (1-eff_a)(1-eff_b)(1-eff_c)` (multiplicative independence)
+
+**Scenarios tested:**
+0. No mitigation (1990-1995 baseline)
+1. Current fleet-specific mitigation
+2. All PLL adopt 2/3 measures
+3. All PLL adopt 3/3 measures
+4. Full compliance everywhere (3/3, 100%)
+5. Target top 3 PLL fleets only (Taiwan, Japan, Other = ~95% of PLL bycatch)
+
+### Validation Approaches
+- **Demographic**: Per-capita fishing mortality < total mortality for all age classes
+- **SSD comparison**: Observed age structure vs stable stage distribution (population not at equilibrium — consistent with declining population under changing fishing pressure)
+- **Future**: Compare predicted lambda under partial mitigation against observed population trends in later periods (2001-2010)
 
 ---
 
@@ -290,17 +392,17 @@ This stratification enables:
 
 We developed these approaches iteratively, identifying conceptual and mathematical issues in each version. Approach 1 proved conceptually flawed. Approach 2 (03b) fixed those flaws but assumes uniform BI proportion (15.67%) everywhere. Approach 3 (03c) uses actual local % BI (0-60%), properly accounting for spatial heterogeneity. Approach 4 (future) will add regional BPUE variation while maintaining the corrected spatial allocation.
 
-| Feature | Overlap (03) | Catchability (03b) | Corrected (03c) | Regional (Future) |
-|---------|--------------|-------------------|-----------------|-------------------|
-| **Theoretical basis** | Ad hoc | Catchability theory | Catchability theory | Regional catchability |
-| **BPUE treatment** | Varies by % BI | Single global | Single global | Regional values |
+| Feature | Overlap (03) | Catchability (03b) | Corrected (03c) | Fleet Spatial (03f) |
+|---------|--------------|-------------------|-----------------|---------------------|
+| **Theoretical basis** | Ad hoc | Catchability theory | Catchability theory | Spatial catchability |
+| **BPUE treatment** | Varies by % BI | Single global | Single global | Per-study bounding boxes |
 | **% BI allocation** | Pre-scaled BPUE | Uniform 15.67% | Local 0-60% | Local 0-60% |
-| **Spatial resolution** | Cell-by-cell | Cell-by-cell | Cell-by-cell | Regional strata |
-| **Conceptual validity** | ✗ Flawed | ~ Limited | ✓ Valid | ✓ Valid |
-| **Regional variation** | No | No | No | Yes |
+| **Fleet resolution** | None | None | None | Per fleet × period |
+| **Conceptual validity** | Flawed | Limited | Valid | Valid |
+| **Gap-filling** | N/A | N/A | N/A | Temporal extrapolation |
 | **Age-class specific** | Yes | Yes | Yes | Yes |
-| **Data requirements** | Low | Low | Low | High |
-| **Status** | Complete | Superseded | **CURRENT** | Planned |
+| **Management scenarios** | No | No | No | Fleet-level |
+| **Status** | Superseded | Superseded | Superseded | **CURRENT** |
 
 ---
 
@@ -350,66 +452,64 @@ A single global BPUE averages over meaningful variation. Regional catchabilities
 
 ## Analytical Workflow
 
-### Current Implementation (Script 03b)
+### Current Implementation
 
 ```
 Data Inputs
-├── Bird distributions (Clay 2019)
+├── Bird distributions by age class (Clay 2019)
 ├── Population distributions (Carneiro 2020)
-├── Fishing effort (pelagic, demersal)
-├── BPUE (mean values)
-└── Demographic data
+├── Fishing effort by fleet × period (PLL, DLL sources)
+├── BPUE studies with bounding boxes (literature review)
+└── Demographic vital rates (Pardo et al.)
 
 ↓
 
-Script 01: Calculate overlap indices
-├── Bird density × fishing effort
-└── By age class × fishery
+Script 01: Rasterize fishing effort
+├── PLL: Pel_LL_effort.csv → 5° grid by fleet × year
+├── DLL: CCAMLR, Argentina, Chile, etc. → 5° grid by fleet × year
+└── Output: effort rasters per fleet × period
 
 ↓
 
 Script 02: Calculate population proportions
 ├── Normalize population distributions
 ├── Weight by breeding pairs
-├── Calculate % from Bird Island
+├── Calculate % from Bird Island per cell
 └── Create total WAAL density map
 
 ↓
 
-Script 03b: Estimate bycatch (catchability method)
-├── Scale BI distributions to global proportion
-├── Calculate catchability (β) per fishery
-├── Apply β to BI age-class distributions
-├── Sum across cells
-└── Calculate per capita mortality rates
-
-↓
-
-Demographic Model
-├── Age-specific mortality rates
-├── Population projections
-└── Sensitivity analyses
-```
-
-### Future Implementation (Script 03c)
-
-Adds regional stratification:
-
-```
 Script 04: BPUE literature review
-├── Extract BPUE from published studies
-├── Create spatial bounding boxes
-├── Calculate weighted regional averages
-└── Generate regional BPUE rasters
+├── Standardize BPUE studies with bounding boxes
+├── Summary statistics by fleet, period, region
+└── Gap analysis
 
 ↓
 
-Script 03c: Regional catchability method
-├── Assign cells to regions
-├── Calculate β_region,fishery
-├── Apply to BI distributions within regions
-├── Stratify by region × fishery × age class
-└── Aggregate for demographic model or scenario testing
+Script 03f: Fleet-level spatial catchability
+├── Per-study β from BPUE × effort / Σ(effort × birds)
+├── Bounding box overlay → per-cell catchability
+├── Hierarchical gap-filling (temporal extrapolation)
+├── Bycatch = β × hooks × BI_birds per cell
+├── Disaggregated by fleet × fishery × period × age class
+└── Demographic validation (natural mortality check)
+
+↓
+
+Demographic Model (WAAL_bycatch_2-13-26.Rmd)
+├── 11-stage matrix with published vital rates
+├── Three-component mortality: natural + legal FM + IUU FM
+├── 6 named mitigation scenarios × coverage levels (blanket)
+├── Fleet-level mitigation scenarios (fleet-specific reductions)
+├── IUU analysis: 2-30% range × enforcement reduction (0/50/100%)
+├── Uncertainty simulation (1000 sims): beta VRs, beta FM, uniform IUU
+│   ├── Biological constraints (s_Juv < s_Imm < min adult s) via re-draws
+│   ├── FM clamping (clamp_fm: scale FM if > 95% of mortality budget)
+│   ├── Post-hoc centering (shift sim mean to match deterministic lambda)
+│   ├── Lambda ribbons (90% CI + IQR) per scenario
+│   ├── Zoomed threshold plots near lambda = 1
+│   └── Probability of recovery P(lambda >= 1) plots
+└── Fixed-IUU uncertainty: 3 IUU levels × 3 enforcement × 6 scenarios
 ```
 
 ---
@@ -437,36 +537,51 @@ Script 03c: Regional catchability method
 
 ---
 
+## Uncertainty Simulation Method
+
+### Monte Carlo Approach
+
+1000 simulations per scenario × coverage level. Each draw samples all vital rates (survival, breeding, return, success) from beta distributions and FM from beta distributions, with IUU proportion from uniform(0.02, 0.30).
+
+### Three Constraint Layers
+
+1. **Biological hierarchy (re-draws):** Adult survival stages drawn first, then s_Imm re-drawn until < min(adult stages), then s_Juv re-drawn until < s_Imm. Fallback cap after 100 attempts.
+
+2. **FM clamping:** `clamp_fm()` ensures legal FM + IUU FM ≤ 95% of total mortality budget `(1 - survival)`, scaling DLL and PLL FM proportionally if exceeded. Guarantees positive natural mortality.
+
+3. **Post-hoc centering:** After all sims complete, lambda values are shifted so the mean matches the deterministic value:
+```
+shift = det_lambda - mean(sim_lambdas)
+lambda_centered = sim_lambda + shift
+```
+This corrects for Jensen's inequality (E[f(x)] ≠ f(E[x])) and constraint-induced bias, using the deterministic lambda as the best central estimate while preserving simulation-derived variance.
+
+### Rationale
+
+The nonlinear relationship between vital rates and lambda means that even unbiased parameter draws produce biased lambda means. Adding biological constraints (which are mathematically equivalent to rejection sampling) further shifts the mean. Post-hoc centering separates two distinct questions: "what is the best estimate of lambda?" (answered by the deterministic model) from "how uncertain are we?" (answered by the simulation spread).
+
+---
+
 ## Next Steps
 
 ### Immediate Priorities
 
-1. **Validate current approach** (script 03b)
-   - Compare with published estimates
-   - Sensitivity to BPUE uncertainty
-   - Integrate into demographic model
+1. **Expert elicitation feedback** — refine BPUE rates and gap-filling methods in 03f
+2. **Update fleet mitigation status/compliance** from RFMO reports
+3. **Replace placeholder vital rate CIs** with published values from Pardo et al. / Clay et al.
+4. **Validate with later periods** — do predicted lambdas under partial mitigation match observed 2001-2010 population trends?
 
-2. **Complete literature review** (script 04)
-   - Systematic extraction of BPUE values
-   - Spatial bounding boxes for studies
-   - Quality assessment and weighting
+### Implemented (February 2026)
+
+5. **Uncertainty quantification** — beta distributions for all vital rates and FM, uniform IUU draws, biological constraints, 1000-sim Monte Carlo
+6. **IUU integration** — three-component mortality partition (natural + legal FM + IUU FM), IUU carved from natural mortality, range 2-30%, enforcement reduction scenarios (0%, 50%, 100%)
+7. **Named mitigation scenarios** — 6 scenarios (individual measures through 3/3 combined) tested across coverage levels with uncertainty
+8. **Probability of recovery** — P(lambda >= 1) plots to visualize where small lambda differences determine population decline vs recovery
 
 ### Future Development
 
-3. **Implement regional catchabilities** (script 03c)
-   - Define regions based on data coverage
-   - Calculate weighted regional BPUE
-   - Validate against global estimate
-
-4. **Uncertainty quantification**
-   - Propagate BPUE confidence intervals
-   - Bootstrap spatial variation
-   - Scenario analyses
-
-5. **Management applications**
-   - Identify high-priority regions for mitigation
-   - Evaluate spatial closures
-   - Project effects of improved practices
+9. **Period-specific demographic model** — use period-specific bycatch rates rather than single baseline
+10. **Refine FM uncertainty** — currently ±100% proportional; update from BPUE confidence intervals once available
 
 ---
 
@@ -497,4 +612,4 @@ Total across regions:         C_fa = Σ_r C_rfa
 
 *For detailed numerical examples, validation calculations, and step-by-step implementation, see METHODS.md (full version).*
 
-*Document last updated: January 12, 2026*
+*Document last updated: February 16, 2026*

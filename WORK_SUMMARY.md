@@ -1097,4 +1097,171 @@ Completed script 03f with demographic validation, revised gap-filling, and fixed
 - 03f produces ~293 BI birds/yr — biologically plausible per demographic validation
 - Expert elicitation in progress to refine BPUE rates and gap-filling; will retest when complete
 
-*Last updated: February 13, 2026*
+---
+
+## Session: February 14, 2026
+
+### Overview
+Connected 03f bycatch estimates to the demographic matrix model in `WAAL_bycatch_2-13-26.Rmd`. Replaced placeholder code with real mortality data, added fleet-level mitigation scenarios.
+
+### Changes to WAAL_bycatch_2-13-26.Rmd
+
+**1. Removed empty placeholder chunks**
+- Deleted ~60 lines of stub code for fishing effort, distributions, overlap, and BPUE (lines 182-237)
+- These are all handled by script 03f now
+
+**2. Added 03f per-capita mortality loading**
+- Loads `bycatch_by_fishery_period_03f.csv` for 1990-1995 period (pre-mitigation baseline)
+- Loads period-specific population from `Dem_props copy.csv` (1990-1994)
+- Calculates per-capita rates as `annual_byc / Pop` for each age class × fishery
+- Feeds into existing `dem_fm_*` / `pel_fm_*` variables used by downstream code
+- Rationale: 1990-1995 = least mitigation → baseline for testing mitigation scenarios
+
+**3. Added fleet-level mitigation scenario framework**
+- Loads fleet-level bycatch from `bycatch_by_fleet_period_03f.csv`
+- Defines per-fleet mitigation status table with: status (none/partial/full), compliance (0-1), and notes
+- Mitigation efficacy placeholders: tori lines (70%), night setting (60%), line weighting (50%)
+- Combined: 2/3 measures = ~88%, 3/3 measures = ~94% (multiplicative independence)
+- `calc_fleet_fm()`: sums per-capita rates across fleets after applying fleet-specific reductions
+- `calc_lambda_from_scenario()`: builds 11-stage matrix with mitigated survival and extracts lambda
+
+**4. Defined 6 management scenarios**
+- 0: No mitigation (1990-1995 baseline)
+- 1: Current mitigation (as defined in fleet table)
+- 2: All PLL fleets adopt 2/3 (current compliance)
+- 3: All PLL fleets adopt 3/3 (current compliance)
+- 4: Full compliance everywhere (3/3, 100%)
+- 5: Target top 3 PLL fleets only (Taiwan, Japan, Other = ~95% of PLL bycatch)
+
+**5. SSD comparison interpretation**
+- J2J3 and IMM under-represented vs SSD; SB and NB over-represented
+- Consistent with aging population: fewer young birds entering, adults accumulating in non-breeding classes
+- Caveat: SSD from mean vital rates (1990-2009) — population was never at this equilibrium
+
+### Key Decisions
+- Use 1990-1995 as baseline (pre-mitigation) rather than mean across all periods
+- Later periods can validate: plug in partial mitigation levels and check if predicted lambda matches observed trends
+- Fleet mitigation statuses and efficacy rates are all placeholders — to be updated from literature
+
+*Last updated: February 16, 2026*
+
+---
+
+## Session: February 16, 2026
+
+### Overview
+Bug fixes, code reorganization, refinement of mitigation efficacy rates and uncertainty ranges, new fleet-level visualizations including heatmaps, and BPUE source labeling in `WAAL_bycatch_2-13-26.Rmd`.
+
+### Bug Fixes
+
+1. **Variable name typo (line 801)**: `mitigation_eff` → `mit_eff` in the IUU scenario loop.
+
+2. **Efficacy variables defined after use**: Moved efficacy definitions into the blanket scenario chunk so they're defined before `mitigation_scenarios` references them.
+
+3. **RStudio notebook cache issue**: Changed `output: html_notebook` to `output: html_document` in YAML header.
+
+### Mitigation Efficacy Updates
+
+Iteratively refined individual measure efficacy based on literature review. Final values:
+
+| Measure | Value | Source/rationale |
+|---------|-------|-----------------|
+| Tori lines | 0.75 | Bull 2007, Melvin 2014; paired operational ~70-85%, single ~50-65% |
+| Night setting | 0.60 | ACAP review: 60-85% experimental, varies with moon/latitude |
+| Line weighting | 0.65 | Robertson et al. 2006: 50-80% depending on weight type |
+| Hook shielding | 0.35 | Sullivan et al. 2018: ~30-50%, limited data |
+| **2/3 combined** | **90.0%** | tori + night setting |
+| **3/3 combined** | **96.5%** | tori + night + line weighting |
+
+### Uncertainty Simulation: Three-Layer Filtering
+
+Rewrote uncertainty simulations with three layers of constraint enforcement:
+
+1. **Biological hierarchy (re-draw)**: Draw adult survival stages first, then re-draw s_Imm until < min(adult), re-draw s_Juv until < s_Imm. Prevents biologically impossible juvenile > adult survival without discarding sims.
+
+2. **FM clamping**: `clamp_fm()` checks if total FM (legal + IUU) exceeds 95% of the mortality budget (1 - survival). If so — rare — proportionally scales down both DLL and PLL FM. Prevents negative natural mortality.
+
+3. **Baseline lambda filtering (re-draw)**: After computing all parameters, calculates baseline lambda (no mitigation). Re-draws entire parameter set if baseline lambda >= 1 (population known to be declining) OR < 0.95 (observed decline is ~1-2%/yr, not >5%). This is analogous to the WFC script's highfilter + lowfilter, but uses re-drawing instead of discarding sims. Falls back after 50 attempts.
+
+All three layers use **re-drawing** rather than **rejection/skipping**, so all 1000 sims complete and the mean is not systematically biased by asymmetric removal of draws.
+
+### Uncertainty Range Revisions
+
+Widened placeholder CIs to better reflect estimation difficulty:
+
+- **Juvenile survival**: ±0.035 → **±0.065** (hardest to estimate from mark-recapture)
+- **Adult stage-specific survival**: ±0.03 → **±0.04**
+- **Breeding success**: ±0.06 → **±0.09** (high interannual variability)
+- **Fishing mortality**: ±50% → **±100%** (0.33x-2.0x; compounds BPUE, spatial overlap, gap-filling uncertainty)
+
+### New Visualizations
+
+1. **Zoomed blanket scenario plot** — y-axis 0.995-1.005, shows where each scenario crosses lambda=1
+2. **Coverage threshold table** — minimum coverage for each scenario to reach lambda >= 1
+3. **Zoomed uncertainty mean lines** — overlaid scenarios near recovery threshold
+4. **P(lambda >= 1) probability of recovery** — fraction of sims achieving recovery vs coverage
+5. **Zoomed fixed-IUU plots** and **P(recovery) for fixed-IUU** — faceted by IUU × enforcement
+6. **Stacked bar chart** — fleet-level bycatch under each management scenario
+7. **Dodged bar chart** — per-fleet bycatch reduction across key scenarios
+8. **Cumulative fleet adoption curve** — lambda vs cumulative % bycatch mitigated, with fleet labels annotated by BPUE source (observed vs gap-filled, marked with *)
+9. **Management scenarios mapped onto blanket curves** — fleet scenarios positioned by bycatch-weighted effective coverage
+10. **Waterfall chart** — incremental lambda gain per fleet with 3/3 measures; bars colored by BPUE data source (blue = observed, orange = gap-filled)
+11. **Heatmap: lambda surface** — efficacy × coverage colored by lambda (RdBu palette), white contour at lambda=1, fleet scenarios as labeled diamond points
+12. **Heatmap: recovery zone** — binary (lambda >= 1 vs < 1) with fleet scenario diamonds overlaid
+
+### BPUE Source Labeling
+
+Added observed vs gap-filled BPUE classification to fleet-level visualizations:
+- Loaded `coverage_info_03f.csv` to identify which fleets have at least one period with direct BPUE data
+- **Observed BPUE fleets**: PLL Japan (all periods), PLL Brazil (2001-2010), PLL Taiwan (2001-2005), PLL South Africa (1996-2010), DLL CCAMLR (1996-2000), DLL Argentina (1990-2005)
+- **Gap-filled fleets**: All others (Korea, Spain, China, Other, etc.)
+- Waterfall bars colored by data source; cumulative curve fleet labels marked with * for gap-filled
+
+### 7th Scenario: Complete Elimination
+Added "Complete elimination" (efficacy=1.0) to all scenario visualizations, updated all 7-color palettes.
+
+### Stale Comment Cleanup
+Updated inline comments on `mitigation_scenarios` efficacy values to match current rates throughout session.
+
+---
+
+## Session Continuation: February 16, 2026
+
+### Overview
+Resolved persistent issue of uncertainty simulation means being lower than deterministic lambda values. Implemented post-hoc centering approach after iterative investigation of the root cause (Jensen's inequality + constraint-induced bias).
+
+### Uncertainty Simulation Approach — Final Design
+
+**Problem:** Uncertainty simulations consistently produced mean lambda values lower than deterministic values, across multiple attempts to fix via filtering.
+
+**Root cause:** Two compounding factors:
+1. **Jensen's inequality** — lambda is a nonlinear function of vital rates; E[f(x)] ≠ f(E[x])
+2. **Constraint-induced bias** — biological hierarchy re-draws (s_Juv < s_Imm < min(adults)) and FM clamping both act as rejection sampling, which conditions the distribution and shifts the mean
+
+**Previous approach (removed):** Baseline lambda filtering (0.95 ≤ lambda < 1.0) via repeat-loop re-draws. This was a third layer of rejection sampling that further lowered the mean.
+
+**Final approach — three components:**
+1. **Biological hierarchy (kept):** Re-draw s_Imm until < min(adult stages), then re-draw s_Juv until < s_Imm. This enforces a biologically necessary constraint (younger stages must have lower survival).
+2. **FM clamping (kept):** `clamp_fm()` scales fishing mortality proportionally if it would exceed 95% of the mortality budget, ensuring natural mortality remains positive.
+3. **Post-hoc centering (new):** After all sims complete, shift lambda values so the mean matches the deterministic lambda:
+   ```r
+   shift = det_lambda - mean(sim_lambdas)
+   lambda_centered = sim_lambda + shift
+   ```
+   This preserves the variance/shape from the uncertainty simulations but anchors the central tendency to the deterministic value (computed from point-estimate vital rates).
+
+**Why this is biologically reasonable:**
+- The deterministic lambda uses the best point estimates of all vital rates — it's the most defensible central estimate
+- The uncertainty sims capture how much lambda could vary given parameter uncertainty
+- Post-hoc centering separates the question "what is the best estimate of lambda?" from "how uncertain are we about lambda?"
+- Avoids the mathematically inevitable mean-shifting caused by applying nonlinear functions to constrained random draws
+
+### Redraw Diagnostics
+Diagnostic counters retained for biological hierarchy re-draws (s_Imm, s_Juv). Baseline lambda redraw counters removed since that filter was dropped.
+
+### Code Changes (WAAL_bycatch_2-13-26.Rmd)
+- **Sim 1 (main uncertainty):** Removed `repeat` loop and baseline lambda matrix/eigenvalue check. Added post-hoc centering in format chunk using `blanket_results` as deterministic reference.
+- **Sim 2 (fixed-IUU):** Same removal of `repeat` loop. Added post-hoc centering using `iuu_scenario_output` as deterministic reference.
+- Both centering blocks: join on (scenario, coverage) or (scenario, iuu_proportion, coverage, iuu_reduction), compute shift per group, apply to all sim lambdas.
+
+Last updated: February 16, 2026

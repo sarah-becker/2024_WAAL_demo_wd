@@ -1264,4 +1264,56 @@ Diagnostic counters retained for biological hierarchy re-draws (s_Imm, s_Juv). B
 - **Sim 2 (fixed-IUU):** Same removal of `repeat` loop. Added post-hoc centering using `iuu_scenario_output` as deterministic reference.
 - Both centering blocks: join on (scenario, coverage) or (scenario, iuu_proportion, coverage, iuu_reduction), compute shift per group, apply to all sim lambdas.
 
-Last updated: February 16, 2026
+Last updated: February 17, 2026
+
+---
+
+## Session: February 17, 2026
+
+### Overview
+Revised management scenario framework in `WAAL_bycatch_2-13-26.Rmd`: fixed compliance assumptions, expanded scenario structure to cross efficacy × compliance, added full elimination scenario, and integrated IUU into fleet-level heatmaps.
+
+### Compliance Assumption Fix
+
+**Problem:** Scenarios mixed different compliance assumptions — "all PLL" scenarios bumped 0% fleets to 50%, "full compliance" overrode all to 100%, "target top 3" set Taiwan/Japan/Other to 80%. This created inconsistencies (e.g., targeting 3 fleets showed higher coverage than targeting all PLL fleets).
+
+**Fix:** All realistic scenarios now use each fleet's original compliance from the lookup table. Only the efficacy (which measures a fleet adopts) varies between scenarios. Rationale: compliance is hard to improve, so we assume fleets maintain current compliance rates.
+
+### Expanded Scenario Structure
+
+**Before:** 6 efficacy scenarios with ad-hoc compliance overrides.
+
+**After:** 6 efficacy scenarios × 3 compliance levels = 19 combinations (+ 1 full elimination):
+- **Efficacy scenarios:** No mitigation, Current, All PLL 2/3, All PLL 3/3, All fleets 3/3, Target top 3 PLL
+- **Compliance levels:**
+  - Baseline: lookup table values as-is
+  - Improved: close 50% of gap to 100% (e.g., 60% → 80%)
+  - Full: 100% for all fleets
+- **Full elimination:** theoretical upper bound at (1,1)
+
+### Bug Fix: No Mitigation Heatmap Position
+
+`scenario_none` only zeroed `effective_reduction` but left `base_efficacy` intact, causing the heatmap point code to compute a non-zero y-coordinate. Fixed by also zeroing `base_efficacy` and `compliance`. Point now correctly sits at (0, 0).
+
+### IUU-Integrated Heatmaps
+
+Added four new visualization approaches overlaying fleet scenarios on coverage × efficacy heatmaps under varying IUU assumptions:
+
+1. **Option 1 — Faceted by IUU proportion** (0%, 5%, 10%, 20%, no enforcement): Shows how the lambda=1 contour tightens as IUU increases
+2. **Option 2 — 3×3 facet grid** (IUU proportion × IUU enforcement reduction): Full interaction space, + zoomed version cropped to management scenario region
+3. **Option 3 — Arrow trajectories** on single heatmap (IUU=10%): Shows lambda shift from no-enforcement to full-enforcement per scenario
+4. **Option 4 — Two-panel approach**: Panel A = mitigation heatmap at IUU=10%; Panel B = IUU proportion × enforcement heatmap at fixed mitigation (All PLL 3/3)
+
+**Infrastructure added:**
+- `calc_lambda_from_survival()`: shared matrix builder
+- `calc_lambda_iuu_blanket()`: blanket efficacy × coverage under IUU
+- `calc_lambda_fleet_iuu()`: fleet scenario lambda under IUU
+- Pre-computed grid: 51×51 efficacy/coverage × 4 IUU proportions × 3 enforcement levels
+- Pre-computed fleet scenario points under all IUU combinations
+
+### Visualization Updates
+
+- Bar chart now uses `position_dodge` with fill = compliance level (3 bars per efficacy scenario)
+- Heatmap points use shape for compliance level (circle/triangle/square) with connecting lines
+- Labels nudged for overlapping scenarios (Target Top3 PLL vs All PLL 3/3)
+- Zoomed heatmaps auto-calculate bounds from scenario point positions

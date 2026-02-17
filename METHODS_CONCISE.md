@@ -373,13 +373,21 @@ Mitigation measures and combined efficacy (literature-informed operational value
 - 3/3 measures (+ line weighting): 96.5% reduction (consistent with literature: 95-99%)
 - Combined: `1 - (1-eff_a)(1-eff_b)(1-eff_c)` (multiplicative independence)
 
-**Scenarios tested:**
+**Efficacy scenarios** (which measures each fleet adopts):
 0. No mitigation (1990-1995 baseline)
 1. Current fleet-specific mitigation
 2. All PLL adopt 2/3 measures
 3. All PLL adopt 3/3 measures
-4. Full compliance everywhere (3/3, 100%)
+4. All fleets adopt 3/3 measures
 5. Target top 3 PLL fleets only (Taiwan, Japan, Other = ~95% of PLL bycatch)
+6. Full elimination (theoretical upper bound)
+
+**Compliance levels** (crossed with each efficacy scenario):
+- Baseline: each fleet's current compliance from lookup table
+- Improved: 50% of gap to 100% closed (e.g., 60% → 80%)
+- Full: 100% compliance for all fleets
+
+This produces 6 × 3 = 18 realistic scenarios + 1 full elimination = 19 total. Compliance is held constant across efficacy scenarios by default (baseline level), reflecting the assumption that compliance is difficult to improve independently of measure adoption. The improved and full compliance levels test sensitivity to this assumption.
 
 ### Validation Approaches
 - **Demographic**: Per-capita fishing mortality < total mortality for all age classes
@@ -500,7 +508,15 @@ Demographic Model (WAAL_bycatch_2-13-26.Rmd)
 ├── 11-stage matrix with published vital rates
 ├── Three-component mortality: natural + legal FM + IUU FM
 ├── 6 named mitigation scenarios × coverage levels (blanket)
-├── Fleet-level mitigation scenarios (fleet-specific reductions)
+├── Fleet-level scenarios: 6 efficacy × 3 compliance = 19 combinations
+│   ├── Compliance held at baseline (lookup table) by default
+│   ├── Improved (50% gap closure) and full (100%) as sensitivity
+│   └── Heatmaps: coverage × efficacy with scenario points, zoomed views
+├── IUU-integrated heatmaps (fleet scenarios under IUU assumptions):
+│   ├── Option 1: Faceted by IUU proportion (0-20%, no enforcement)
+│   ├── Option 2: 3×3 grid (IUU proportion × enforcement) + zoomed
+│   ├── Option 3: Arrow trajectories (lambda shift with enforcement)
+│   └── Option 4: Two-panel (mitigation at fixed IUU + IUU×enforcement)
 ├── IUU analysis: 2-30% range × enforcement reduction (0/50/100%)
 ├── Uncertainty simulation (1000 sims): beta VRs, beta FM, uniform IUU
 │   ├── Biological constraints (s_Juv < s_Imm < min adult s) via re-draws
@@ -612,4 +628,4 @@ Total across regions:         C_fa = Σ_r C_rfa
 
 *For detailed numerical examples, validation calculations, and step-by-step implementation, see METHODS.md (full version).*
 
-*Document last updated: February 16, 2026*
+*Document last updated: February 17, 2026*

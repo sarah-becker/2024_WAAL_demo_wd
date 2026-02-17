@@ -597,83 +597,83 @@ calc_lambda_from_scenario <- function(scenario_fm) {
 
 **define and run management scenarios**
 ```{r}
-# SCENARIO 0: No mitigation (baseline 1990-1995)
-scenario_none <- fleet_mitigation %>%
-  mutate(effective_reduction = 0)
+# --- Define efficacy scenarios (which measures each fleet adopts) ---
+# These only set base_efficacy; compliance is applied separately below
 
-# SCENARIO 1: Current mitigation (as defined in fleet_mitigation table above)
-scenario_current <- fleet_mitigation
-
-# SCENARIO 2: All PLL fleets adopt 2/3 (current compliance levels)
-scenario_pll_2of3 <- fleet_mitigation %>%
-  mutate(
-    base_efficacy = case_when(
-      fishery == "DLL" ~ base_efficacy,  # keep DLL as is
-      TRUE ~ eff_2of3                     # all PLL get 2/3
-    ),
-    compliance = case_when(
-      fishery == "DLL" ~ compliance,
-      compliance == 0 ~ 0.50,             # fleets with no mitigation get 50% compliance
-      TRUE ~ compliance                   # keep existing compliance
-    ),
-    effective_reduction = base_efficacy * compliance
-  )
-
-# SCENARIO 3: All PLL fleets adopt 3/3 (current compliance levels)
-scenario_pll_3of3 <- fleet_mitigation %>%
-  mutate(
-    base_efficacy = case_when(
+efficacy_scenarios <- list(
+  "no_mitigation" = fleet_mitigation %>%
+    mutate(base_efficacy = 0),
+  "current" = fleet_mitigation,
+  "all_pll_2of3" = fleet_mitigation %>%
+    mutate(base_efficacy = case_when(
+      fishery == "DLL" ~ base_efficacy,
+      TRUE ~ eff_2of3
+    )),
+  "all_pll_3of3" = fleet_mitigation %>%
+    mutate(base_efficacy = case_when(
       fishery == "DLL" ~ base_efficacy,
       TRUE ~ eff_3of3
-    ),
-    compliance = case_when(
-      fishery == "DLL" ~ compliance,
-      compliance == 0 ~ 0.50,
-      TRUE ~ compliance
-    ),
-    effective_reduction = base_efficacy * compliance
-  )
-
-# SCENARIO 4: Full compliance everywhere (3/3, 100% compliance)
-scenario_full <- fleet_mitigation %>%
-  mutate(
-    base_efficacy = eff_3of3,
-    compliance = 1.0,
-    effective_reduction = base_efficacy * compliance
-  )
-
-# SCENARIO 5: Target top 3 PLL fleets only (Taiwan, Japan, Other = ~95% of PLL bycatch)
-# These are the fleets where intervention would have the most impact
-scenario_target_top3 <- fleet_mitigation %>%
-  mutate(
-    base_efficacy = case_when(
+    )),
+  "all_fleets_3of3" = fleet_mitigation %>%
+    mutate(base_efficacy = eff_3of3),
+  "target_top3_pll" = fleet_mitigation %>%
+    mutate(base_efficacy = case_when(
       fishery == "PLL" & fleet %in% c("Taiwan", "Japan", "Other") ~ eff_3of3,
       TRUE ~ base_efficacy
-    ),
-    compliance = case_when(
-      fishery == "PLL" & fleet %in% c("Taiwan", "Japan", "Other") ~ 0.80,
-      TRUE ~ compliance
-    ),
-    effective_reduction = base_efficacy * compliance
-  )
-
-# Run all scenarios
-scenarios <- list(
-  "0_no_mitigation"    = scenario_none,
-  "1_current"          = scenario_current,
-  "2_all_pll_2of3"     = scenario_pll_2of3,
-  "3_all_pll_3of3"     = scenario_pll_3of3,
-  "4_full_compliance"  = scenario_full,
-  "5_target_top3_pll"  = scenario_target_top3
+    ))
 )
 
+# --- Define compliance levels ---
+# baseline: current lookup values
+# improved: close 50% of the gap to 100%
+# full: 100% compliance for all fleets
+compliance_levels <- list(
+  "baseline_compliance" = function(c) c,
+  "improved_compliance" = function(c) c + 0.5 * (1 - c),
+  "full_compliance"     = function(c) 1.0
+)
+
+# --- Cross efficacy scenarios x compliance levels into full scenario list ---
+scenarios <- list()
+for (eff_name in names(efficacy_scenarios)) {
+  for (comp_name in names(compliance_levels)) {
+    eff_df <- efficacy_scenarios[[eff_name]]
+    comp_fn <- compliance_levels[[comp_name]]
+
+    scen_df <- eff_df %>%
+      mutate(
+        compliance = comp_fn(fleet_mitigation$compliance),
+        effective_reduction = base_efficacy * compliance
+      )
+
+    scen_label <- paste0(eff_name, "__", comp_name)
+    scenarios[[scen_label]] <- scen_df
+  }
+}
+
+# Add full elimination as a standalone scenario (theoretical upper bound)
+scenarios[["full_elimination"]] <- fleet_mitigation %>%
+  mutate(base_efficacy = 1.0, compliance = 1.0, effective_reduction = 1.0)
+
+# --- Run all scenarios ---
 scenario_results <- tibble(
   scenario = names(scenarios),
   lambda = NA_real_,
   dll_reduction_pct = NA_real_,
   pll_reduction_pct = NA_real_,
   total_byc_reduction_pct = NA_real_
-)
+) %>%
+  # Parse efficacy and compliance components for downstream plotting
+  mutate(
+    efficacy_scenario = case_when(
+      scenario == "full_elimination" ~ "full_elimination",
+      TRUE ~ str_extract(scenario, "^[^_].*(?=__)")
+    ),
+    compliance_level = case_when(
+      scenario == "full_elimination" ~ "full_compliance",
+      TRUE ~ str_extract(scenario, "(?<=__).+$")
+    )
+  )
 
 for (i in seq_along(scenarios)) {
   fm <- calc_fleet_fm(fleet_percap, scenarios[[i]])
@@ -698,25 +698,50 @@ scenario_results %>%
 
 **plot scenario comparison**
 ```{r}
-ggplot(scenario_results, aes(x = reorder(scenario, lambda), y = lambda)) +
-  geom_col(fill = "#41b6c4", width = 0.6) +
+# Clean labels for plotting
+scenario_plot <- scenario_results %>%
+  mutate(
+    efficacy_label = efficacy_scenario %>%
+      gsub("_", " ", .) %>%
+      tools::toTitleCase(),
+    compliance_label = compliance_level %>%
+      gsub("_", " ", .) %>%
+      tools::toTitleCase(),
+    compliance_label = factor(compliance_label,
+      levels = c("Baseline Compliance", "Improved Compliance", "Full Compliance"))
+  )
+
+ggplot(scenario_plot,
+       aes(x = reorder(efficacy_label, lambda),
+           y = lambda,
+           fill = compliance_label)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6) +
   geom_hline(yintercept = 1, color = "red", alpha = 0.5, linetype = "dashed") +
-  geom_text(aes(label = round(lambda, 4)), hjust = -0.1, size = 3) +
-  labs(x = "", y = "lambda",
-       title = "Population growth rate under fleet-specific mitigation scenarios") +
-  coord_flip(ylim = c(min(scenario_results$lambda) - 0.005, max(max(scenario_results$lambda) + 0.005, 1.005))) +
-  themeo
+  geom_text(aes(label = round(lambda, 4)),
+            position = position_dodge(width = 0.7),
+            hjust = -0.1, size = 2.5) +
+  scale_fill_manual(values = c("Baseline Compliance" = "#41b6c4",
+                                "Improved Compliance" = "#225ea8",
+                                "Full Compliance"     = "#0c2c84"),
+                    name = "Compliance level") +
+  labs(x = "", y = "\u03BB",
+       title = "Population growth rate under mitigation x compliance scenarios",
+       subtitle = "Dashed line = \u03BB = 1 (population stability)") +
+  coord_flip(ylim = c(min(scenario_plot$lambda) - 0.005,
+                       max(max(scenario_plot$lambda) + 0.005, 1.005))) +
+  theme_bw()
 ```
 
 **detailed fleet contribution to bycatch reduction**
 ```{r}
 # Show which fleets contribute most to bycatch and how much each scenario reduces them
-# Using scenario 5 (target top 3) as example
-fm_target <- calc_fleet_fm(fleet_percap, scenario_target_top3)
+# Using target top 3 PLL (baseline compliance) as example
+example_scen <- scenarios[["target_top3_pll__baseline_compliance"]]
+fm_target <- calc_fleet_fm(fleet_percap, example_scen)
 
 # Fleet-level detail
 fleet_detail <- fleet_percap %>%
-  left_join(scenario_target_top3 %>% select(fishery, fleet, effective_reduction, status),
+  left_join(example_scen %>% select(fishery, fleet, effective_reduction, status),
             by = c("fishery", "fleet")) %>%
   mutate(
     effective_reduction = replace_na(effective_reduction, 0),
@@ -803,8 +828,12 @@ ggplot(fleet_byc_scenarios, aes(x = scenario_label, y = byc_mitigated, fill = fl
 **bycatch reduction by fleet across scenarios**
 ```{r, fig.width=12, fig.height=6}
 # Show baseline vs mitigated side by side for the key scenarios
-key_scenarios <- c("0_no_mitigation", "1_current", "3_all_pll_3of3",
-                   "4_full_compliance", "5_target_top3_pll")
+# Show baseline compliance versions of key efficacy scenarios
+key_scenarios <- c("no_mitigation__baseline_compliance",
+                   "current__baseline_compliance",
+                   "all_pll_3of3__baseline_compliance",
+                   "all_fleets_3of3__baseline_compliance",
+                   "target_top3_pll__baseline_compliance")
 
 fleet_byc_scenarios %>%
   filter(scenario %in% key_scenarios) %>%
@@ -1091,32 +1120,71 @@ scenario_heatmap_pts <- map_dfr(seq_along(scenarios), function(i) {
   )
 })
 
-# Clean scenario names for labels
+# Parse scenario names into efficacy and compliance components for labeling
 scenario_heatmap_pts <- scenario_heatmap_pts %>%
-  mutate(label = gsub("^[0-9]+_", "", scenario) %>%
-           gsub("_", " ", .) %>%
-           tools::toTitleCase())
+  mutate(
+    efficacy_scenario = case_when(
+      scenario == "full_elimination" ~ "Full Elimination",
+      TRUE ~ str_extract(scenario, "^[^_].*(?=__)") %>%
+        gsub("_", " ", .) %>%
+        tools::toTitleCase()
+    ),
+    compliance_level = case_when(
+      scenario == "full_elimination" ~ "Full Compliance",
+      TRUE ~ str_extract(scenario, "(?<=__).+$") %>%
+        gsub("_", " ", .) %>%
+        tools::toTitleCase()
+    ),
+    compliance_level = factor(compliance_level,
+      levels = c("Baseline Compliance", "Improved Compliance", "Full Compliance"))
+  )
+
+# Nudged labels for overlapping scenarios
+heatmap_labels <- scenario_heatmap_pts %>%
+  filter(compliance_level == "Baseline Compliance") %>%
+  mutate(
+    nudge_y = case_when(
+      efficacy_scenario == "Target Top3 Pll" ~ -0.02,
+      efficacy_scenario == "All Pll 3Of3"    ~  0.02,
+      TRUE ~ 0
+    )
+  )
 
 # Heatmap: lambda colored by diverging palette centered near lambda=1
+# Shape distinguishes compliance level; connected lines show compliance progression
 ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   # Contour at lambda = 1
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
-  # Overlay fleet scenario points (white outline + black fill for visibility)
+  # Connect compliance levels within each efficacy scenario
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  # Overlay fleet scenario points — shape = compliance level
   geom_point(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy),
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
              inherit.aes = FALSE,
-             size = 3.5, shape = 18, color = "white", stroke = 0.5) +
+             size = 3, color = "white", stroke = 0.8) +
   geom_point(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy),
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
              inherit.aes = FALSE,
-             size = 3, shape = 18, color = "black") +
-  geom_label(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy, label = label),
+             size = 2, color = "black") +
+  # Label only the baseline compliance points, with nudging for overlap
+  geom_label(data = heatmap_labels,
+             aes(x = effective_coverage,
+                 y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.5, fill = "white", alpha = 0.8,
+             size = 2.2, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance level") +
   scale_fill_distiller(direction = 1, palette = "RdBu",
                        limits = range(heatmap_data$lambda)) +
   scale_x_continuous(breaks = seq(0, 1, 0.2),
@@ -1127,7 +1195,7 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
        y = "Mitigation efficacy",
        fill = "\u03BB",
        title = "Population growth rate across mitigation efficacy and coverage",
-       subtitle = "White contour = \u03BB = 1 (stability); diamonds = fleet management scenarios") +
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels within each scenario") +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
@@ -1138,21 +1206,34 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
 # Binary heatmap highlighting where lambda >= 1
 ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
   geom_tile() +
-  # Overlay fleet scenario points
+  # Connect compliance levels within each efficacy scenario
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  # Overlay fleet scenario points — shape = compliance level
   geom_point(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy),
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
              inherit.aes = FALSE,
-             size = 3.5, shape = 18, color = "white") +
+             size = 3, color = "white", stroke = 0.8) +
   geom_point(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy),
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
              inherit.aes = FALSE,
-             size = 3, shape = 18, color = "black") +
-  geom_label(data = scenario_heatmap_pts,
-             aes(x = effective_coverage, y = effective_efficacy, label = label),
+             size = 2, color = "black") +
+  geom_label(data = scenario_heatmap_pts %>%
+               filter(compliance_level == "Baseline Compliance"),
+             aes(x = effective_coverage, y = effective_efficacy,
+                 label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.5, fill = "white", alpha = 0.8,
+             size = 2.2, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance level") +
   scale_fill_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#b2182b"),
                     labels = c("TRUE" = "\u03BB \u2265 1 (recovery)", "FALSE" = "\u03BB < 1 (decline)"),
                     name = "") +
@@ -1163,8 +1244,82 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
   labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
        y = "Mitigation efficacy",
        title = "Recovery zone: efficacy \u00D7 coverage combinations achieving \u03BB \u2265 1",
-       subtitle = "Diamonds = fleet-level management scenarios") +
+       subtitle = "Lines connect compliance levels within each scenario") +
   coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+**Heatmap: zoomed to mitigation scenarios**
+```{r, fig.width=10, fig.height=7}
+# Exclude no mitigation and full elimination from zoomed view
+zoom_pts <- scenario_heatmap_pts %>%
+  filter(!efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
+
+# Determine zoom bounds with padding
+x_range <- range(zoom_pts$effective_coverage)
+y_range <- range(zoom_pts$effective_efficacy)
+x_pad <- diff(x_range) * 0.3
+y_pad <- diff(y_range) * 0.3
+
+# Nudge labels so overlapping scenarios are readable
+# Offset target top 3 and all pll 3of3 labels in opposite directions
+zoom_labels <- zoom_pts %>%
+  filter(compliance_level == "Baseline Compliance") %>%
+  mutate(
+    nudge_y = case_when(
+      efficacy_scenario == "Target Top3 Pll" ~ -0.015,
+      efficacy_scenario == "All Pll 3Of3"    ~  0.015,
+      TRUE ~ 0
+    )
+  )
+
+ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  # Connect compliance levels within each efficacy scenario
+  geom_line(data = zoom_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  # Points
+  geom_point(data = zoom_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE,
+             size = 4, color = "white", stroke = 1) +
+  geom_point(data = zoom_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE,
+             size = 3, color = "black") +
+  # Labels with nudging
+  geom_label(data = zoom_labels,
+             aes(x = effective_coverage,
+                 y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE,
+             size = 2.8, fill = "white", alpha = 0.85,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.1, vjust = 0.5) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance level") +
+  scale_fill_distiller(direction = 1, palette = "RdBu",
+                       limits = range(heatmap_data$lambda)) +
+  scale_x_continuous(breaks = seq(0, 1, 0.1),
+                     labels = paste0(seq(0, 100, 10), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1),
+                     labels = paste0(seq(0, 100, 10), "%")) +
+  labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
+       y = "Mitigation efficacy",
+       fill = "\u03BB",
+       title = "Mitigation scenarios (zoomed)",
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels within each scenario") +
+  coord_cartesian(xlim = c(x_range[1] - x_pad, min(x_range[2] + x_pad, 1)),
+                  ylim = c(y_range[1] - y_pad, min(y_range[2] + y_pad, 1)),
+                  expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
 ```
@@ -1364,7 +1519,543 @@ threshold_summary %>%
   print(n = 20)
 ```
 
+**IUU-integrated heatmaps: fleet scenarios on coverage × efficacy grids under IUU assumptions**
 
+The fleet-level scenarios (efficacy × compliance) are now overlaid on coverage × efficacy heatmaps
+that account for IUU fishing mortality. Four visualization approaches:
+
+1. Faceted by IUU proportion (no enforcement)
+2. Facet grid: IUU proportion × IUU enforcement reduction
+3. Arrow trajectories showing IUU enforcement gains on a single heatmap
+4. Two-panel: mitigation heatmap at best-estimate IUU + separate IUU proportion × reduction heatmap
+
+```{r iuu_heatmap_setup}
+# --- Shared infrastructure for IUU-integrated heatmaps ---
+
+# IUU proportions and enforcement reduction levels to visualize
+iuu_props_plot <- c(0, 0.05, 0.10, 0.20)   # 0% = no IUU (original heatmap)
+iuu_red_plot  <- c(0, 0.50, 1.0)            # % reduction in IUU via enforcement
+
+# Coarser grid for IUU heatmaps (faster computation)
+eff_grid_iuu <- seq(0, 1, by = 0.02)
+cov_grid_iuu <- seq(0, 1, by = 0.02)
+
+# Helper: build matrix and compute lambda given stage-specific survivals
+calc_lambda_from_survival <- function(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF) {
+  n_m <- matrix(data = c(
+    0,     0,      0,      0,      0,                                          0.5*ns_Juv,               0,                        0.5*ns_Juv,               0,                        0,                          0,
+    ns_Juv,0,      0,      0,      0,                                          0,                        0,                        0,                        0,                        0,                          0,
+    0,     ns_Juv, 0,      0,      0,                                          0,                        0,                        0,                        0,                        0,                          0,
+    0,     0,      ns_Imm, 0,      0,                                          0,                        0,                        0,                        0,                        0,                          0,
+    0,     0,      0,      ns_Imm, ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),  0,                        0,                        0,                        0,                        0,                          0,
+    0,     0,      0,      0,      ns_Imm*r_Imm*b_Imm*k_Imm,                  0,                        0,                        0,                        0,                        0,                          0,
+    0,     0,      0,      0,      ns_Imm*r_Imm*b_Imm*(1-k_Imm),              0,                        0,                        0,                        0,                        0,                          0,
+    0,     0,      0,      0,      0,                                          ns_IS*r_IS*b_IS*k_IS,     ns_IF*r_IF*b_IF*k_IF,     ns_ES*r_ES*b_ES*k_ES,     ns_EF*r_EF*b_EF*k_EF,     ns_ENB*r_ENB*b_ENB*k_ENB,   ns_PF*r_PF*b_PF*k_PF,
+    0,     0,      0,      0,      0,                                          ns_IS*r_IS*b_IS*(1-k_IS), ns_IF*r_IF*b_IF*(1-k_IF), ns_ES*r_ES*b_ES*(1-k_ES), ns_EF*r_EF*b_EF*(1-k_EF), ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),
+    0,     0,      0,      0,      0,                                          ns_IS*r_IS*(1-b_IS),      ns_IF*r_IF*(1-b_IF),      ns_ES*r_ES*(1-b_ES),      ns_EF*r_EF*(1-b_EF),      ns_ENB*r_ENB*(1-b_ENB),     ns_PF*r_PF*(1-b_PF),
+    0,     0,      0,      0,      0,                                          ns_IS*(1-r_IS),           ns_IF*(1-r_IF),           ns_ES*(1-r_ES),           ns_EF*(1-r_EF),           ns_ENB*(1-r_ENB),           ns_PF*(1-r_PF)
+  ), nrow = 11, byrow = TRUE)
+  as.numeric(eigen(n_m)$values[1])
+}
+
+# Helper: compute lambda for a blanket mitigation (efficacy × coverage) under IUU
+calc_lambda_iuu_blanket <- function(mit_eff, cov, iuu_p, iuu_red) {
+  # IUU mortality carved from natural mortality
+  iuu_juv <- (dem_fm_juv + pel_fm_juv) * iuu_p
+  iuu_imm <- (dem_fm_imm + pel_fm_imm) * iuu_p
+  iuu_fb  <- (dem_fm_fb  + pel_fm_fb)  * iuu_p
+  iuu_sb  <- (dem_fm_sb  + pel_fm_sb)  * iuu_p
+  iuu_nb  <- (dem_fm_nb  + pel_fm_nb)  * iuu_p
+
+  # Adjusted natural mortality
+  nm_j  <- nm_juv - iuu_juv
+  nm_i  <- nm_imm - iuu_imm
+  nm_ef <- nm_efb - iuu_fb
+  nm_es <- nm_esb - iuu_sb
+  nm_en <- nm_enb - iuu_nb
+  nm_if <- nm_ifb - iuu_fb
+  nm_is <- nm_isb - iuu_sb
+  nm_p  <- nm_pf  - iuu_nb
+
+  # Survival = 1 - natural - mitigated_legal - mitigated_IUU
+  ns_Juv <- 1 - nm_j  - (dem_fm_juv + pel_fm_juv) * (1 - mit_eff * cov) - iuu_juv * (1 - iuu_red)
+  ns_Imm <- 1 - nm_i  - (dem_fm_imm + pel_fm_imm) * (1 - mit_eff * cov) - iuu_imm * (1 - iuu_red)
+  ns_EF  <- 1 - nm_ef - (dem_fm_fb  + pel_fm_fb)  * (1 - mit_eff * cov) - iuu_fb  * (1 - iuu_red)
+  ns_ES  <- 1 - nm_es - (dem_fm_sb  + pel_fm_sb)  * (1 - mit_eff * cov) - iuu_sb  * (1 - iuu_red)
+  ns_ENB <- 1 - nm_en - (dem_fm_nb  + pel_fm_nb)  * (1 - mit_eff * cov) - iuu_nb  * (1 - iuu_red)
+  ns_IF  <- 1 - nm_if - (dem_fm_fb  + pel_fm_fb)  * (1 - mit_eff * cov) - iuu_fb  * (1 - iuu_red)
+  ns_IS  <- 1 - nm_is - (dem_fm_sb  + pel_fm_sb)  * (1 - mit_eff * cov) - iuu_sb  * (1 - iuu_red)
+  ns_PF  <- 1 - nm_p  - (dem_fm_nb  + pel_fm_nb)  * (1 - mit_eff * cov) - iuu_nb  * (1 - iuu_red)
+
+  calc_lambda_from_survival(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF)
+}
+
+# Helper: compute lambda for a fleet scenario under IUU
+calc_lambda_fleet_iuu <- function(fleet_percap_df, scenario_df, iuu_p, iuu_red) {
+  # Get mitigated legal FM from fleet scenario
+  fm <- calc_fleet_fm(fleet_percap_df, scenario_df)
+
+  get_fm <- function(fish, ac) {
+    fm %>% filter(fishery == fish, age_class == ac) %>% pull(percap_mitigated)
+  }
+
+  s_dem_juv <- get_fm("DLL", "j2j3"); s_pel_juv <- get_fm("PLL", "j2j3")
+  s_dem_imm <- get_fm("DLL", "imm");  s_pel_imm <- get_fm("PLL", "imm")
+  s_dem_fb  <- get_fm("DLL", "fb");   s_pel_fb  <- get_fm("PLL", "fb")
+  s_dem_sb  <- get_fm("DLL", "sb");   s_pel_sb  <- get_fm("PLL", "sb")
+  s_dem_nb  <- get_fm("DLL", "nb");   s_pel_nb  <- get_fm("PLL", "nb")
+
+  # IUU mortality (proportion of TOTAL legal FM, before mitigation)
+  iuu_juv <- (dem_fm_juv + pel_fm_juv) * iuu_p
+  iuu_imm <- (dem_fm_imm + pel_fm_imm) * iuu_p
+  iuu_fb  <- (dem_fm_fb  + pel_fm_fb)  * iuu_p
+  iuu_sb  <- (dem_fm_sb  + pel_fm_sb)  * iuu_p
+  iuu_nb  <- (dem_fm_nb  + pel_fm_nb)  * iuu_p
+
+  # Adjusted natural mortality
+  nm_j  <- nm_juv - iuu_juv
+  nm_i  <- nm_imm - iuu_imm
+  nm_ef <- nm_efb - iuu_fb
+  nm_es <- nm_esb - iuu_sb
+  nm_en <- nm_enb - iuu_nb
+  nm_if <- nm_ifb - iuu_fb
+  nm_is <- nm_isb - iuu_sb
+  nm_p  <- nm_pf  - iuu_nb
+
+  # Survival = 1 - natural_adj - mitigated_legal - mitigated_IUU
+  ns_Juv <- 1 - nm_j  - s_dem_juv - s_pel_juv - iuu_juv * (1 - iuu_red)
+  ns_Imm <- 1 - nm_i  - s_dem_imm - s_pel_imm - iuu_imm * (1 - iuu_red)
+  ns_EF  <- 1 - nm_ef - s_dem_fb  - s_pel_fb  - iuu_fb  * (1 - iuu_red)
+  ns_ES  <- 1 - nm_es - s_dem_sb  - s_pel_sb  - iuu_sb  * (1 - iuu_red)
+  ns_ENB <- 1 - nm_en - s_dem_nb  - s_pel_nb  - iuu_nb  * (1 - iuu_red)
+  ns_IF  <- 1 - nm_if - s_dem_fb  - s_pel_fb  - iuu_fb  * (1 - iuu_red)
+  ns_IS  <- 1 - nm_is - s_dem_sb  - s_pel_sb  - iuu_sb  * (1 - iuu_red)
+  ns_PF  <- 1 - nm_p  - s_dem_nb  - s_pel_nb  - iuu_nb  * (1 - iuu_red)
+
+  calc_lambda_from_survival(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF)
+}
+```
+
+```{r iuu_heatmap_grids, cache=TRUE}
+# --- Compute heatmap grids under IUU assumptions ---
+# Grid: efficacy × coverage × IUU proportion × IUU reduction → lambda
+
+iuu_heatmap_grid <- expand.grid(
+  efficacy      = eff_grid_iuu,
+  coverage      = cov_grid_iuu,
+  iuu_prop      = iuu_props_plot,
+  iuu_reduction = iuu_red_plot
+) %>%
+  mutate(lambda = NA_real_)
+
+for (i in 1:nrow(iuu_heatmap_grid)) {
+  iuu_heatmap_grid$lambda[i] <- calc_lambda_iuu_blanket(
+    mit_eff = iuu_heatmap_grid$efficacy[i],
+    cov     = iuu_heatmap_grid$coverage[i],
+    iuu_p   = iuu_heatmap_grid$iuu_prop[i],
+    iuu_red = iuu_heatmap_grid$iuu_reduction[i]
+  )
+}
+
+# --- Compute fleet scenario points under IUU assumptions ---
+# Each of 19 fleet scenarios × IUU proportion × IUU reduction
+
+iuu_fleet_pts <- expand.grid(
+  scen_idx      = seq_along(scenarios),
+  iuu_prop      = iuu_props_plot,
+  iuu_reduction = iuu_red_plot,
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    scenario = names(scenarios)[scen_idx],
+    lambda = NA_real_,
+    effective_coverage = NA_real_,
+    effective_efficacy = NA_real_
+  )
+
+# Reuse the heatmap point positions from the non-IUU calculation
+for (i in 1:nrow(iuu_fleet_pts)) {
+  idx <- iuu_fleet_pts$scen_idx[i]
+
+  # Lambda under IUU
+  iuu_fleet_pts$lambda[i] <- calc_lambda_fleet_iuu(
+    fleet_percap, scenarios[[idx]],
+    iuu_fleet_pts$iuu_prop[i],
+    iuu_fleet_pts$iuu_reduction[i]
+  )
+
+  # Reuse coverage/efficacy positions from original heatmap points
+  iuu_fleet_pts$effective_coverage[i] <- scenario_heatmap_pts$effective_coverage[idx]
+  iuu_fleet_pts$effective_efficacy[i] <- scenario_heatmap_pts$effective_efficacy[idx]
+}
+
+# Add labels
+iuu_fleet_pts <- iuu_fleet_pts %>%
+  mutate(
+    efficacy_scenario = case_when(
+      scenario == "full_elimination" ~ "Full Elimination",
+      TRUE ~ str_extract(scenario, "^[^_].*(?=__)") %>%
+        gsub("_", " ", .) %>%
+        tools::toTitleCase()
+    ),
+    compliance_level = case_when(
+      scenario == "full_elimination" ~ "Full Compliance",
+      TRUE ~ str_extract(scenario, "(?<=__).+$") %>%
+        gsub("_", " ", .) %>%
+        tools::toTitleCase()
+    ),
+    compliance_level = factor(compliance_level,
+      levels = c("Baseline Compliance", "Improved Compliance", "Full Compliance")),
+    iuu_label = paste0("IUU = ", iuu_prop * 100, "%"),
+    iuu_label = factor(iuu_label, levels = paste0("IUU = ", sort(iuu_props_plot) * 100, "%")),
+    iuu_red_label = paste0(iuu_reduction * 100, "% IUU reduction"),
+    iuu_red_label = factor(iuu_red_label,
+      levels = paste0(sort(iuu_red_plot) * 100, "% IUU reduction"))
+  )
+
+# Add facet labels to grid data
+iuu_heatmap_grid <- iuu_heatmap_grid %>%
+  mutate(
+    iuu_label = factor(paste0("IUU = ", iuu_prop * 100, "%"),
+      levels = paste0("IUU = ", sort(iuu_props_plot) * 100, "%")),
+    iuu_red_label = factor(paste0(iuu_reduction * 100, "% IUU reduction"),
+      levels = paste0(sort(iuu_red_plot) * 100, "% IUU reduction"))
+  )
+```
+
+**Option 1: Faceted heatmaps by IUU proportion (no enforcement)**
+How sensitive are mitigation conclusions to the IUU assumption?
+```{r iuu_option1, fig.width=14, fig.height=5}
+# Filter to no IUU enforcement (worst case)
+grid_opt1 <- iuu_heatmap_grid %>% filter(iuu_reduction == 0)
+pts_opt1  <- iuu_fleet_pts %>% filter(iuu_reduction == 0)
+
+# Nudged labels
+labels_opt1 <- pts_opt1 %>%
+  filter(compliance_level == "Baseline Compliance") %>%
+  mutate(nudge_y = case_when(
+    efficacy_scenario == "Target Top3 Pll" ~ -0.03,
+    efficacy_scenario == "All Pll 3Of3"    ~  0.03,
+    TRUE ~ 0
+  ))
+
+ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = pts_opt1,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.4, alpha = 0.6) +
+  geom_point(data = pts_opt1,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "white", stroke = 0.6) +
+  geom_point(data = pts_opt1,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 1.5, color = "black") +
+  geom_label(data = labels_opt1,
+             aes(x = effective_coverage, y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE, size = 1.8, fill = "white", alpha = 0.8,
+             label.padding = unit(0.1, "lines"), hjust = -0.05, vjust = 0.5) +
+  facet_wrap(~ iuu_label, nrow = 1) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy", fill = "\u03BB",
+       title = "Mitigation heatmap under varying IUU assumptions (no enforcement)",
+       subtitle = "White contour = \u03BB = 1; IUU erodes mitigation gains, tightening the recovery window") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold"))
+```
+
+**Option 2: Facet grid — IUU proportion × IUU enforcement reduction**
+Full 4D view: how does IUU enforcement interact with mitigation?
+```{r iuu_option2, fig.width=14, fig.height=12}
+# Use subset of IUU proportions to keep readable
+grid_opt2 <- iuu_heatmap_grid %>% filter(iuu_prop %in% c(0.05, 0.10, 0.20))
+pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0.05, 0.10, 0.20))
+
+# Labels: only baseline compliance, only in top-left panel to reduce clutter
+labels_opt2 <- pts_opt2 %>%
+  filter(compliance_level == "Baseline Compliance",
+         iuu_prop == 0.05, iuu_reduction == 0) %>%
+  mutate(nudge_y = case_when(
+    efficacy_scenario == "Target Top3 Pll" ~ -0.03,
+    efficacy_scenario == "All Pll 3Of3"    ~  0.03,
+    TRUE ~ 0
+  ))
+
+ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = pts_opt2,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.4, alpha = 0.6) +
+  geom_point(data = pts_opt2,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "white", stroke = 0.6) +
+  geom_point(data = pts_opt2,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 1.5, color = "black") +
+  geom_label(data = labels_opt2,
+             aes(x = effective_coverage, y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE, size = 1.6, fill = "white", alpha = 0.8,
+             label.padding = unit(0.1, "lines"), hjust = -0.05, vjust = 0.5) +
+  facet_grid(iuu_label ~ iuu_red_label) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy", fill = "\u03BB",
+       title = "Mitigation × IUU enforcement interaction",
+       subtitle = "Rows = IUU proportion; columns = % IUU reduction via enforcement; contour = \u03BB = 1") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+```
+
+**Option 2b: Facet grid zoomed to management scenarios**
+```{r iuu_option2_zoom, fig.width=14, fig.height=12}
+# Exclude no mitigation and full elimination from zoomed view
+zoom_pts_iuu <- pts_opt2 %>%
+  filter(!efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
+
+# Determine zoom bounds from scenario points with padding
+x_range_iuu <- range(zoom_pts_iuu$effective_coverage)
+y_range_iuu <- range(zoom_pts_iuu$effective_efficacy)
+x_pad_iuu <- diff(x_range_iuu) * 0.35
+y_pad_iuu <- diff(y_range_iuu) * 0.35
+
+# Nudged labels — one set per facet panel
+zoom_labels_iuu <- zoom_pts_iuu %>%
+  filter(compliance_level == "Baseline Compliance") %>%
+  mutate(nudge_y = case_when(
+    efficacy_scenario == "Target Top3 Pll" ~ -0.015,
+    efficacy_scenario == "All Pll 3Of3"    ~  0.015,
+    TRUE ~ 0
+  ))
+
+ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = zoom_pts_iuu,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  geom_point(data = zoom_pts_iuu,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = zoom_pts_iuu,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "black") +
+  geom_label(data = zoom_labels_iuu,
+             aes(x = effective_coverage,
+                 y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE, size = 2.2, fill = "white", alpha = 0.85,
+             label.padding = unit(0.12, "lines"), hjust = -0.05, vjust = 0.5) +
+  facet_grid(iuu_label ~ iuu_red_label) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy", fill = "\u03BB",
+       title = "Mitigation × IUU enforcement interaction (zoomed to management scenarios)",
+       subtitle = "Rows = IUU proportion; columns = % IUU enforcement; lines connect compliance levels") +
+  coord_cartesian(
+    xlim = c(x_range_iuu[1] - x_pad_iuu, min(x_range_iuu[2] + x_pad_iuu, 1)),
+    ylim = c(y_range_iuu[1] - y_pad_iuu, min(y_range_iuu[2] + y_pad_iuu, 1)),
+    expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+```
+
+**Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
+Each scenario shows where it starts (no enforcement) and where it moves with IUU reduction.
+```{r iuu_option3, fig.width=10, fig.height=7}
+# Use a single IUU proportion (best estimate = 10%)
+iuu_best <- 0.10
+grid_opt3 <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
+
+# Fleet points at IUU = 10%, baseline compliance only (to keep arrows readable)
+pts_opt3 <- iuu_fleet_pts %>%
+  filter(iuu_prop == iuu_best,
+         compliance_level == "Baseline Compliance",
+         !efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
+
+# Arrow data: from iuu_reduction = 0 to iuu_reduction = 1
+arrows_opt3 <- pts_opt3 %>%
+  filter(iuu_reduction %in% c(0, 1)) %>%
+  select(efficacy_scenario, iuu_reduction, effective_coverage, effective_efficacy, lambda) %>%
+  pivot_wider(names_from = iuu_reduction, values_from = lambda,
+              names_prefix = "lambda_") %>%
+  rename(lambda_start = lambda_0, lambda_end = lambda_1)
+
+# Points at no enforcement
+pts_start <- pts_opt3 %>% filter(iuu_reduction == 0)
+pts_end   <- pts_opt3 %>% filter(iuu_reduction == 1)
+
+# Labels
+labels_opt3 <- pts_start %>%
+  mutate(nudge_y = case_when(
+    efficacy_scenario == "Target Top3 Pll" ~ -0.02,
+    efficacy_scenario == "All Pll 3Of3"    ~  0.02,
+    TRUE ~ 0
+  ))
+
+ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  # Arrows from no-enforcement to full-enforcement lambda
+  # Since x,y position doesn't change (same mitigation scenario), show lambda change as text
+  # Use vertical offset to show the shift
+  geom_point(data = pts_start,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 3, shape = 16, color = "white", stroke = 0.8) +
+  geom_point(data = pts_start,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2, shape = 16, color = "#d73027") +
+  geom_point(data = pts_end,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 3, shape = 17, color = "white", stroke = 0.8) +
+  geom_point(data = pts_end,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2, shape = 17, color = "#4575b4") +
+  geom_label(data = labels_opt3,
+             aes(x = effective_coverage, y = effective_efficacy + nudge_y,
+                 label = paste0(efficacy_scenario, "\n\u03BB: ",
+                                round(lambda, 4), " \u2192 ",
+                                round(arrows_opt3$lambda_end[match(efficacy_scenario, arrows_opt3$efficacy_scenario)], 4))),
+             inherit.aes = FALSE, size = 2, fill = "white", alpha = 0.85,
+             label.padding = unit(0.15, "lines"), hjust = -0.05, vjust = 0.5,
+             lineheight = 0.9) +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy", fill = "\u03BB",
+       title = paste0("IUU enforcement effect on fleet scenarios (IUU = ", iuu_best * 100, "%)"),
+       subtitle = "Red circle = no enforcement; blue triangle = 100% IUU elimination; labels show \u03BB shift") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+**Option 4: Two-panel approach — mitigation vs enforcement as separate policy levers**
+```{r iuu_option4a, fig.width=10, fig.height=7}
+# Panel A: coverage × efficacy heatmap at best-estimate IUU (10%), no enforcement
+grid_opt4a <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
+pts_opt4a  <- iuu_fleet_pts %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
+
+labels_opt4a <- pts_opt4a %>%
+  filter(compliance_level == "Baseline Compliance") %>%
+  mutate(nudge_y = case_when(
+    efficacy_scenario == "Target Top3 Pll" ~ -0.02,
+    efficacy_scenario == "All Pll 3Of3"    ~  0.02,
+    TRUE ~ 0
+  ))
+
+ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  geom_line(data = pts_opt4a,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  geom_point(data = pts_opt4a,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = pts_opt4a,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "black") +
+  geom_label(data = labels_opt4a,
+             aes(x = effective_coverage, y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE, size = 2.2, fill = "white", alpha = 0.8,
+             label.padding = unit(0.15, "lines"), hjust = -0.1, vjust = 0.5) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy", fill = "\u03BB",
+       title = paste0("Panel A: Mitigation scenarios (IUU = ", iuu_best * 100, "% of legal FM)"),
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
+
+```{r iuu_option4b, fig.width=10, fig.height=7}
+# Panel B: IUU proportion × IUU reduction heatmap at a fixed mitigation scenario
+# Use "all PLL 3/3 at baseline compliance" as the reference mitigation scenario
+ref_scenario <- "all_pll_3of3__baseline_compliance"
+
+# Grid: IUU proportion × IUU reduction → lambda
+iuu_prop_grid_fine <- seq(0, 0.30, by = 0.005)
+iuu_red_grid_fine  <- seq(0, 1, by = 0.02)
+
+# Get the effective coverage and efficacy of the reference scenario
+ref_cov <- scenario_heatmap_pts %>%
+  filter(scenario == ref_scenario) %>%
+  pull(effective_coverage)
+ref_eff <- scenario_heatmap_pts %>%
+  filter(scenario == ref_scenario) %>%
+  pull(effective_efficacy)
+
+iuu_grid_4b <- expand.grid(
+  iuu_prop      = iuu_prop_grid_fine,
+  iuu_reduction = iuu_red_grid_fine
+) %>%
+  mutate(lambda = NA_real_)
+
+for (i in 1:nrow(iuu_grid_4b)) {
+  iuu_grid_4b$lambda[i] <- calc_lambda_fleet_iuu(
+    fleet_percap, scenarios[[ref_scenario]],
+    iuu_grid_4b$iuu_prop[i],
+    iuu_grid_4b$iuu_reduction[i]
+  )
+}
+
+ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  scale_fill_distiller(direction = 1, palette = "RdBu") +
+  scale_x_continuous(breaks = seq(0, 0.3, 0.05),
+                     labels = paste0(seq(0, 30, 5), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "IUU as % of legal fishing mortality",
+       y = "% IUU reduction via enforcement",
+       fill = "\u03BB",
+       title = "Panel B: IUU enforcement effect (mitigation fixed at All PLL 3/3, baseline compliance)",
+       subtitle = "White contour = \u03BB = 1; how much enforcement is needed given the IUU level?") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+```
 
 
 

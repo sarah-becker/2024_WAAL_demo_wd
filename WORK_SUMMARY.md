@@ -1317,3 +1317,30 @@ Added four new visualization approaches overlaying fleet scenarios on coverage �
 - Heatmap points use shape for compliance level (circle/triangle/square) with connecting lines
 - Labels nudged for overlapping scenarios (Target Top3 PLL vs All PLL 3/3)
 - Zoomed heatmaps auto-calculate bounds from scenario point positions
+
+---
+
+## Session: February 18, 2026
+
+### Overview
+Debugging, interpretation, and exploratory mapping.
+
+### 1. Fixed chunk ordering bug in `03f_bycatch_spatial_catchability_v2.Rmd`
+- **Error**: `object 'age_class_props' not found` at line 130
+- **Cause**: `load-demographics` chunk (which defines `age_class_props`) appeared *after* `build-bi-density` chunk that uses it
+- **Fix**: Moved `## Demographic proportions` / `load-demographics` section to run before `## Build BI density rasters`, so demographics are loaded first
+
+### 2. Interpreted cumulative bycatch output table
+- Table shows mean annual BI bycatch × years per period (period_total)
+- Cumulative total 1990–2010: ~6,305 birds; annual rate declined from ~491 birds/yr (1996–2000) to ~98 birds/yr (2006–2010), consistent with mitigation adoption
+- Clarified why the large cumulative total is not in conflict with the 14–30% of total mortality figure: the cumulative spans 21 years and all age classes, while per-capita rates use the full tracked population (all life stages, not just breeding adults)
+
+### 3. Interpreted demographic validation output
+- All age classes pass the biological plausibility check (positive implied natural mortality) even in the worst period (1996–2000)
+- Non-breeders have highest fishing fraction (~33–55% of total mortality depending on period), which is biologically sensible — non-breeders spend 100% of the year at sea
+- Worst-case period is 1996–2000 (consistent with peak annual bycatch rate)
+
+### 4. Created quick map script for Rep Log 17287 BLL effort data
+- New file: `scripts/quick_map_BLL17287.R`
+- Reads `data/Rep Log 17287 BLL effort truncated.csv`, wraps longitudes >180, aggregates total hooks by 5° cell, plots with viridis (magma) log-scale color and Natural Earth land basemap
+- Saves to `output/maps/quick_map_BLL17287.png`

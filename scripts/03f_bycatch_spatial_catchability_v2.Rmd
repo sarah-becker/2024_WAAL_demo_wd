@@ -87,6 +87,37 @@ cat("  FB:", as.vector(ext(clay_raw$fb)), "\n")
 cat("  Total bird density:", as.vector(ext(total_bird_density)), "\n")
 ```
 
+## Demographic proportions
+
+```{r load-demographics}
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+# Use only the 4 individual period rows to calculate means
+# (exclude the 1990-2009 summary row to avoid double-counting)
+dem_props_summary <- dem_props %>%
+  filter(Period != "1990-2009") %>%
+  group_by(Dem_class) %>%
+  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
+
+age_class_props <- c(
+  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
+)
+
+pop_sizes <- c(
+  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
+  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
+  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
+  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
+  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
+)
+```
+
 ## Build BI density rasters from Clay originals
 
 Construct BI age-class density rasters directly from Clay distributions on the
@@ -147,37 +178,6 @@ cat("Expected (prop_BI × sum of age_class_props):",
     round(prop_BI * sum(age_class_props), 6), "\n")
 cat("\nBI density extent:", as.vector(ext(bi_density_total)), "\n")
 cat("Total bird density extent:", as.vector(ext(total_bird_density)), "\n")
-```
-
-## Demographic proportions
-
-```{r load-demographics}
-dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
-                      show_col_types = FALSE) %>%
-  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
-
-# Use only the 4 individual period rows to calculate means
-# (exclude the 1990-2009 summary row to avoid double-counting)
-dem_props_summary <- dem_props %>%
-  filter(Period != "1990-2009") %>%
-  group_by(Dem_class) %>%
-  summarise(mean_prop = mean(Prop), mean_pop = mean(Pop))
-
-age_class_props <- c(
-  fb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "FB"],
-  sb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "SB"],
-  nb = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "NB"],
-  j2j3 = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "J2J3"],
-  imm = dem_props_summary$mean_prop[dem_props_summary$Dem_class == "IMM"]
-)
-
-pop_sizes <- c(
-  fb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "FB"],
-  sb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "SB"],
-  nb = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "NB"],
-  j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
-  imm = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
-)
 ```
 
 ## Basemap

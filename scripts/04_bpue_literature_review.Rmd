@@ -296,6 +296,7 @@ chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"), show_co
 falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"), show_col_types = FALSE)
 namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"), show_col_types = FALSE)
 saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"), show_col_types = FALSE)
+nz_data <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"), show_col_types = FALSE)
 
 # Standardize column names
 standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",

@@ -61,6 +61,9 @@ library(sf)
 library(here)
 library(viridis)
 library(patchwork)
+
+# Date suffix for versioned output files — prevents overwriting previous runs
+date_sfx <- format(Sys.Date(), "%Y-%m-%d")
 ```
 
 # Section 2: Load Base Data
@@ -258,7 +261,19 @@ saf_std <- saf_data %>%
   mutate(fleet = "South Africa") %>%
   select(Year, Month, Lat, Lon, Hooks, fleet)
 
-dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std) %>%
+nz_data <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"), show_col_types = FALSE)
+nz_std <- standardize_dem_data(
+  nz_data, "New Zealand",
+  lon_col = "truncated_long", lat_col = "truncated_lat",
+  hooks_col = "total_hooks", year_col = "year", month_col = "month_number"
+) %>%
+  mutate(
+    Lon = Lon + 2.5,  # Convert from cell corner to cell center (matching other DLL datasets)
+    Lat = Lat + 2.5   # Convert from cell corner to cell center
+  )
+
+dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std, nz_std) %>%
+  filter(!is.na(Lon), !is.na(Lat)) %>%
   mutate(
     Lon = ifelse(Lon > 180, Lon - 360, Lon)
   ) %>%
@@ -295,7 +310,7 @@ make_effort_raster <- function(effort_data, fleet_name, yr_group, template_rast)
   if (n_years == 0) return(NULL)
 
   effort_subset <- effort_data %>%
-    filter(fleet == fleet_name, year_group == yr_group) %>%
+    filter(fleet == fleet_name, year_group == yr_group, !is.na(Lon), !is.na(Lat)) %>%
     group_by(Lon, Lat) %>%
     summarise(total_hooks = sum(Hooks, na.rm = TRUE) / n_years, .groups = "drop")
 
@@ -1393,29 +1408,29 @@ dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
 
 # Save bycatch results (fleet-level detail)
-write_csv(bycatch_results, here("output/bycatch_by_fleet_period_03f.csv"))
+write_csv(bycatch_results, here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")))
 
 # Save fishery x period summaries
-write_csv(byc_by_fp, here("output/bycatch_by_fishery_period_03f.csv"))
+write_csv(byc_by_fp, here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")))
 
 # Save per capita rates
-write_csv(percap_rates, here("output/bycatch_percapita_03f.csv"))
+write_csv(percap_rates, here(paste0("output/bycatch_percapita_03f_", date_sfx, ".csv")))
 
 # Save gap-fill log
-write_csv(gap_fill_log, here("output/gap_fill_log_03f.csv"))
+write_csv(gap_fill_log, here(paste0("output/gap_fill_log_03f_", date_sfx, ".csv")))
 
 # Save coverage info
-write_csv(coverage_info, here("output/coverage_info_03f.csv"))
+write_csv(coverage_info, here(paste0("output/coverage_info_03f_", date_sfx, ".csv")))
 
 # Save beta values for each study
 write_csv(
   bpue_betas %>% select(row_id, fishery_type, fleet, plot_year_group, bpue,
                          beta, B_study, fleet_hooks_in_box, has_effort_match),
-  here("output/bpue_study_betas_03f.csv")
+  here(paste0("output/bpue_study_betas_03f_", date_sfx, ".csv"))
 )
 
 # Save fishery-level beta summary
-write_csv(beta_by_fishery_type, here("output/beta_by_fishery_type_03f.csv"))
+write_csv(beta_by_fishery_type, here(paste0("output/beta_by_fishery_type_03f_", date_sfx, ".csv")))
 
 # Save catchability rasters per fishery x period (effort-weighted mean across fleets)
 for (fi in c("PLL", "DLL")) {
@@ -1445,7 +1460,7 @@ for (fi in c("PLL", "DLL")) {
 
     yg_clean <- str_replace(yg, "-", "_")
     writeRaster(mean_catch,
-                here(paste0("output/rasters/catchability_", tolower(fi), "_", yg_clean, "_03f.tif")),
+                here(paste0("output/rasters/catchability_", tolower(fi), "_", yg_clean, "_03f_", date_sfx, ".tif")),
                 overwrite = TRUE)
   }
 }
@@ -1679,9 +1694,9 @@ cat("Fishing % of all deaths:", round(100 * sum(mortality_budget$annual_bycatch)
 
 ```{r save-validation}
 # Save validation table
-write_csv(validation, here("output/demographic_validation_03f.csv"))
-write_csv(percap_period_combined, here("output/demographic_validation_by_period_03f.csv"))
-write_csv(mortality_budget, here("output/mortality_budget_03f.csv"))
+write_csv(validation, here(paste0("output/demographic_validation_03f_", date_sfx, ".csv")))
+write_csv(percap_period_combined, here(paste0("output/demographic_validation_by_period_03f_", date_sfx, ".csv")))
+write_csv(mortality_budget, here(paste0("output/mortality_budget_03f_", date_sfx, ".csv")))
 ```
 
 # Session Info

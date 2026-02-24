@@ -325,8 +325,16 @@ saf_std <- saf_data %>%
   mutate(fleet = "South Africa") %>%
   select(Year, Month, Lat, Lon, Hooks, fleet)
 
+nz_std <- standardize_dem_data(
+  nz_data, "New Zealand",
+  lon_col = "truncated_long", lat_col = "truncated_lat",
+  hooks_col = "total_hooks", year_col = "year", month_col = "month_number"
+)
+
 # Combine and clean
-dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std) %>%
+# Note: NZ rows with missing coordinates are dropped via filter(!is.na) below
+dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std, nz_std) %>%
+  filter(!is.na(Lon), !is.na(Lat)) %>%
   mutate(
     RFMO = case_when(
       fleet == "CCAMLR" ~ "CCAMLR",

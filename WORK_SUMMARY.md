@@ -1344,3 +1344,40 @@ Debugging, interpretation, and exploratory mapping.
 - New file: `scripts/quick_map_BLL17287.R`
 - Reads `data/Rep Log 17287 BLL effort truncated.csv`, wraps longitudes >180, aggregates total hooks by 5° cell, plots with viridis (magma) log-scale color and Natural Earth land basemap
 - Saves to `output/maps/quick_map_BLL17287.png`
+
+---
+
+## Session: February 23, 2026
+
+### Overview
+Integrated New Zealand BLL data (Rep Log 17287) into scripts 01, 04, and WAAL_bycatch. Fixed overlap map bird density weighting and South Georgia/Falklands gap. Added date-versioned output filenames and discrete-bin overlap maps.
+
+### Changes to `01_fishing_effort_overlap.Rmd`
+
+1. **NZ data integration**: Added NZ BLL load and `nz_std`. NZ uses x.0 cell centers vs x.5 for other DLL sources — rasterized separately on native grid, then bilinear resampled to x.5 reference raster before adding with `subst(NA,0)` to avoid NA propagation.
+
+2. **Mean annual aggregation fix**: Changed from `mean(Hooks)` (mean monthly, wrong) to two-step: `group_by(Lon, Lat, Year) %>% sum()` then `group_by(Lon, Lat) %>% mean()` (mean annual total, correct). Applied to both PLL and DLL (NZ and non-NZ separately).
+
+3. **Overlap map: bird density weighting**: Changed from binary mask (`bird_mask <- bird_resample > 0`) to density-weighted overlap (`fishing * bird_resample`). Bird resample now uses `method="average"` instead of `method="bilinear"` to fix the South Georgia / Falklands gap (bilinear point-samples at 5° cell center near land; average aggregates all fine-res bird cells within each 5° fishing cell).
+
+4. **Discrete-bin overlap maps**: Added `map_overlap_discrete()` function with fixed breaks (0, 10, 100, 1000, 2000, 5000, 10000); 0–10 = white, rest = orange→dark red (`brewer.pal(9, "YlOrRd")[4:8]`). Separate maps for PLL and DLL. Small bottom legend to maximize map area.
+
+5. **Date suffix versioning**: `date_sfx <- format(Sys.Date(), "%Y-%m-%d")` added; all exported raster and CSV filenames include the date suffix.
+
+6. **Grid diagnostic**: Block comparing unique Lon values across DLL sources to detect grid convention mismatches.
+
+### Changes to `04_bpue_literature_review.Rmd`
+
+- Added NZ `nz_std` using `standardize_dem_data()` with NZ column names (`truncated_long`, `truncated_lat`, `total_hooks`); no +2.5 offset (column already in correct grid coords).
+- Updated `bind_rows` to include `nz_std`; added `filter(!is.na(Lon), !is.na(Lat))`.
+
+### Changes to `WAAL_bycatch_2-13-26.Rmd`
+
+- Added `date_sfx` to setup chunk; updated all three `read_csv` paths to use dated filenames matching 03f outputs.
+- Added **New Zealand** to `fleet_mitigation` tribble: DLL fleet, status = "full", compliance = 0.85 ("3/3 measures, ACAP signatory, observer coverage required"). Without this entry, NZ would default to `effective_reduction = 0` in fleet-level scenarios.
+
+### Notes on `03f_bycatch_spatial_catchability_v2.Rmd`
+
+- No changes needed: NZ already added fleet-by-fleet (no grid mixing issue); date suffix already on all outputs; bird density weighting and resample method already correctly handled; `make_effort_raster()` uses correct mean annual aggregation.
+
+*Last updated: February 23, 2026*

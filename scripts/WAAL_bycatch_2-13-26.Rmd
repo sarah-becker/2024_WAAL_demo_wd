@@ -8,6 +8,10 @@ library(here)
 library(tidyverse)
 library(RColorBrewer)
 
+# Date suffix — must match the date on which script 03f was run
+# (both scripts should be run on the same day for filenames to align)
+date_sfx <- format(Sys.Date(), "%Y-%m-%d")
+
 #set up various plotting themes
 themeo <-theme_classic()+
   theme(strip.background = element_blank(),
@@ -184,7 +188,7 @@ Fishing effort, bird distributions, spatial overlap, and BPUE estimation are all
 **load per-capita bycatch rates from 03f (1990-1995 period)**
 ```{r}
 # Load period-specific bycatch totals from 03f
-byc_period <- read_csv(here("output/bycatch_by_fishery_period_03f.csv"), show_col_types = FALSE)
+byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")), show_col_types = FALSE)
 
 # Load period-specific population sizes from Clay demographic data
 dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
@@ -362,7 +366,7 @@ blanket_results <- blanket_results %>%
   mutate(scenario = factor(scenario,
     levels = mitigation_scenarios$scenario))
 
-ggplot(blanket_results) +
+p_blanket <- ggplot(blanket_results) +
   geom_line(aes(x = reduction, y = lambda,
                 group = scenario, color = scenario)) +
   geom_hline(yintercept = 1, color = "darkgrey", alpha = 0.5, linetype = "dashed") +
@@ -373,13 +377,14 @@ ggplot(blanket_results) +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_blanket
 ```
 
 **plot mitigation scenarios — zoomed near lambda = 1 threshold**
 ```{r}
 # Zoom to the ecologically critical range around lambda = 1
 # Small differences in lambda here determine population decline vs recovery
-ggplot(blanket_results) +
+p_blanket_zoom <- ggplot(blanket_results) +
   geom_line(aes(x = reduction, y = lambda,
                 group = scenario, color = scenario),
             linewidth = 0.8) +
@@ -392,6 +397,7 @@ ggplot(blanket_results) +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_blanket_zoom
 ```
 
 **coverage needed to reach lambda >= 1 by scenario**
@@ -429,7 +435,7 @@ The blanket approach above applies uniform mitigation across all fisheries. Belo
 **load fleet-level bycatch and define mitigation scenarios**
 ```{r}
 # Load fleet-level bycatch for the baseline period (1990-1995)
-fleet_byc <- read_csv(here("output/bycatch_by_fleet_period_03f.csv"), show_col_types = FALSE) %>%
+fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")), show_col_types = FALSE) %>%
   filter(year_group == "1990-1995")
 
 # Calculate per-capita rates by fleet
@@ -440,7 +446,7 @@ fleet_percap <- fleet_byc %>%
   mutate(percap = byc / Pop)
 
 # Load BPUE data source info: which fleets have observed vs gap-filled catchability
-coverage_info <- read_csv(here("output/coverage_info_03f.csv"), show_col_types = FALSE)
+coverage_info <- read_csv(here(paste0("output/coverage_info_03f_", date_sfx, ".csv")), show_col_types = FALSE)
 
 # For baseline period (1990-1995), classify each fleet's BPUE source
 # A fleet has "observed" BPUE if it has direct data in ANY period (used for temporal gap-fill)
@@ -476,6 +482,7 @@ fleet_mitigation <- tribble(
   "DLL",    "Chile",         "partial",  0.60,         "some measures adopted",
   "DLL",    "Falklands",     "full",     0.90,         "3/3 measures, good compliance",
   "DLL",    "South Africa",  "full",     0.85,         "3/3 measures",
+  "DLL",    "New Zealand",   "full",     0.85,         "3/3 measures, ACAP signatory, observer coverage required",
   # PLL fleets - many have 2/3 or less
   "PLL",    "Japan",         "partial",  0.80,         "2/3 in most RFMOs",
   "PLL",    "Taiwan",        "partial",  0.60,         "2/3 adopted but variable compliance",
@@ -711,7 +718,7 @@ scenario_plot <- scenario_results %>%
       levels = c("Baseline Compliance", "Improved Compliance", "Full Compliance"))
   )
 
-ggplot(scenario_plot,
+p_scenarios <- ggplot(scenario_plot,
        aes(x = reorder(efficacy_label, lambda),
            y = lambda,
            fill = compliance_label)) +
@@ -730,6 +737,7 @@ ggplot(scenario_plot,
   coord_flip(ylim = c(min(scenario_plot$lambda) - 0.005,
                        max(max(scenario_plot$lambda) + 0.005, 1.005))) +
   theme_bw()
+p_scenarios
 ```
 
 **detailed fleet contribution to bycatch reduction**
@@ -811,7 +819,7 @@ fleet_byc_scenarios <- fleet_byc_scenarios %>%
   mutate(fleet_label = factor(fleet_label, levels = top_fleets$fleet_label))
 
 # Stacked bar: mitigated bycatch by fleet, for each scenario
-ggplot(fleet_byc_scenarios, aes(x = scenario_label, y = byc_mitigated, fill = fleet_label)) +
+p_fleet_stacked <- ggplot(fleet_byc_scenarios, aes(x = scenario_label, y = byc_mitigated, fill = fleet_label)) +
   geom_col() +
   geom_hline(aes(yintercept = sum(top_fleets$max_byc)),
              color = "darkgrey", linetype = "dashed", alpha = 0.5) +
@@ -823,6 +831,7 @@ ggplot(fleet_byc_scenarios, aes(x = scenario_label, y = byc_mitigated, fill = fl
   theme(axis.text.x = element_text(size = 7)) +
   scale_fill_brewer(palette = "Set3") +
   coord_cartesian(expand = FALSE)
+p_fleet_stacked
 ```
 
 **bycatch reduction by fleet across scenarios**
@@ -835,7 +844,7 @@ key_scenarios <- c("no_mitigation__baseline_compliance",
                    "all_fleets_3of3__baseline_compliance",
                    "target_top3_pll__baseline_compliance")
 
-fleet_byc_scenarios %>%
+p_fleet_dodged <- fleet_byc_scenarios %>%
   filter(scenario %in% key_scenarios) %>%
   ggplot(aes(x = fleet_label, y = byc_mitigated, fill = scenario_label)) +
   geom_col(position = "dodge") +
@@ -847,6 +856,7 @@ fleet_byc_scenarios %>%
         legend.text = element_text(size = 7)) +
   scale_fill_brewer(palette = "Blues") +
   coord_cartesian(expand = FALSE)
+p_fleet_dodged
 ```
 
 **cumulative fleet adoption: lambda vs % of bycatch mitigated**
@@ -913,7 +923,7 @@ fleet_labels_for_plot <- fleet_byc_total %>%
                         paste0(fleet_label, " *"),
                         fleet_label))
 
-ggplot(cumul_results, aes(x = cumul_byc_pct, y = lambda,
+p_cumul <- ggplot(cumul_results, aes(x = cumul_byc_pct, y = lambda,
                           group = scenario, color = scenario)) +
   geom_line(linewidth = 0.8) +
   geom_point(size = 1) +
@@ -934,6 +944,7 @@ ggplot(cumul_results, aes(x = cumul_byc_pct, y = lambda,
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_cumul
 ```
 
 **management scenarios mapped onto bycatch-weighted coverage**
@@ -964,7 +975,7 @@ scenario_effective_coverage <- map_dfr(seq_along(scenarios), function(i) {
 })
 
 # Plot blanket curves with scenario points overlaid
-ggplot() +
+p_fleet_on_blanket <- ggplot() +
   # Blanket coverage curves for key scenarios
   geom_line(data = blanket_results %>%
               filter(scenario %in% c("2/3 (tori + night)",
@@ -989,6 +1000,7 @@ ggplot() +
   themeo +
   scale_color_manual(values = c("#225ea8", "#253494", "#081d58")) +
   coord_cartesian(xlim = c(0, 1), expand = FALSE)
+p_fleet_on_blanket
 ```
 
 **waterfall: incremental lambda gain from mitigating each fleet**
@@ -1028,7 +1040,7 @@ waterfall_data <- waterfall_data %>%
     bpue_source = c(NA, fleet_byc_total$bpue_source)
   )
 
-ggplot(waterfall_data %>% filter(step > 0), aes(x = fleet_label, y = lambda_gain)) +
+p_waterfall <- ggplot(waterfall_data %>% filter(step > 0), aes(x = fleet_label, y = lambda_gain)) +
   geom_col(aes(fill = bpue_source), show.legend = TRUE) +
   geom_text(aes(label = paste0(byc_pct, "%\nbyc")),
             vjust = -0.3, size = 2) +
@@ -1039,6 +1051,7 @@ ggplot(waterfall_data %>% filter(step > 0), aes(x = fleet_label, y = lambda_gain
   themeo +
   theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7)) +
   scale_fill_manual(values = c("Observed BPUE" = "#08519c", "Gap-filled BPUE" = "#fc8d59"))
+p_waterfall
 ```
 
 **Heatmap: efficacy x coverage -> lambda**
@@ -1152,7 +1165,7 @@ heatmap_labels <- scenario_heatmap_pts %>%
 
 # Heatmap: lambda colored by diverging palette centered near lambda=1
 # Shape distinguishes compliance level; connected lines show compliance progression
-ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   # Contour at lambda = 1
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
@@ -1199,12 +1212,13 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_heatmap
 ```
 
 **Heatmap: recovery zone (lambda >= 1)**
 ```{r, fig.width=10, fig.height=7}
 # Binary heatmap highlighting where lambda >= 1
-ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
+p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
   geom_tile() +
   # Connect compliance levels within each efficacy scenario
   geom_line(data = scenario_heatmap_pts,
@@ -1248,6 +1262,7 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_heatmap_recovery
 ```
 
 **Heatmap: zoomed to mitigation scenarios**
@@ -1274,7 +1289,7 @@ zoom_labels <- zoom_pts %>%
     )
   )
 
-ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_heatmap_zoom <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
   # Connect compliance levels within each efficacy scenario
@@ -1322,6 +1337,7 @@ ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
                   expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_heatmap_zoom
 ```
 
 
@@ -1479,7 +1495,7 @@ iuu_plot_vals <- c(0.02, 0.10, 0.20, 0.30)
 # Focus on the most policy-relevant scenarios
 mit_plot_scenarios <- c("Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)")
 
-iuu_scenario_output %>%
+p_iuu_lines <- iuu_scenario_output %>%
   filter(iuu_proportion %in% iuu_plot_vals,
          scenario %in% mit_plot_scenarios) %>%
   mutate(
@@ -1499,6 +1515,7 @@ iuu_scenario_output %>%
   themeo +
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#d73027", "#fc8d59", "#fee090", "#91bfdb", "#4575b4"))
+p_iuu_lines
 ```
 
 **summary: at what coverage does each scenario reach lambda >= 1?**
@@ -1739,7 +1756,7 @@ labels_opt1 <- pts_opt1 %>%
     TRUE ~ 0
   ))
 
-ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_iuu_opt1 <- ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
   geom_line(data = pts_opt1,
@@ -1773,6 +1790,7 @@ ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank(), strip.text = element_text(face = "bold"))
+p_iuu_opt1
 ```
 
 **Option 2: Facet grid — IUU proportion × IUU enforcement reduction**
@@ -1792,7 +1810,7 @@ labels_opt2 <- pts_opt2 %>%
     TRUE ~ 0
   ))
 
-ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_iuu_opt2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
   geom_line(data = pts_opt2,
@@ -1826,6 +1844,7 @@ ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+p_iuu_opt2
 ```
 
 **Option 2b: Facet grid zoomed to management scenarios**
@@ -1849,7 +1868,7 @@ zoom_labels_iuu <- zoom_pts_iuu %>%
     TRUE ~ 0
   ))
 
-ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_iuu_opt2b <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
   geom_line(data = zoom_pts_iuu,
@@ -1887,6 +1906,7 @@ ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
     expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+p_iuu_opt2b
 ```
 
 **Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
@@ -1922,7 +1942,7 @@ labels_opt3 <- pts_start %>%
     TRUE ~ 0
   ))
 
-ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_iuu_opt3 <- ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
   # Arrows from no-enforcement to full-enforcement lambda
@@ -1957,6 +1977,7 @@ ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_iuu_opt3
 ```
 
 **Option 4: Two-panel approach — mitigation vs enforcement as separate policy levers**
@@ -1973,7 +1994,7 @@ labels_opt4a <- pts_opt4a %>%
     TRUE ~ 0
   ))
 
-ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)) +
+p_iuu_opt4a <- ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
   geom_line(data = pts_opt4a,
@@ -2006,6 +2027,7 @@ ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_iuu_opt4a
 ```
 
 ```{r iuu_option4b, fig.width=10, fig.height=7}
@@ -2039,7 +2061,7 @@ for (i in 1:nrow(iuu_grid_4b)) {
   )
 }
 
-ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = lambda)) +
+p_iuu_opt4b <- ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = lambda)) +
   geom_tile() +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
   scale_fill_distiller(direction = 1, palette = "RdBu") +
@@ -2055,6 +2077,7 @@ ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = lambda)) +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
+p_iuu_opt4b
 ```
 
 
@@ -2459,7 +2482,7 @@ uncert_long %>%
 
 **plot uncertainty — individual sim runs + mean**
 ```{r, fig.width=14, fig.height=5}
-ggplot(uncert_long) +
+p_uncert_runs <- ggplot(uncert_long) +
   geom_line(aes(x = coverage, y = lambda, group = simrun),
             color = "grey", alpha = 0.1) +
   geom_line(data = uncert_summary,
@@ -2470,11 +2493,12 @@ ggplot(uncert_long) +
   facet_wrap(~scenario, nrow = 1) +
   themeo +
   coord_cartesian(expand = FALSE)
+p_uncert_runs
 ```
 
 **plot uncertainty — ribbon (90% CI + IQR)**
 ```{r, fig.width=14, fig.height=5}
-ggplot(uncert_summary) +
+p_uncert_ribbon <- ggplot(uncert_summary) +
   geom_ribbon(aes(x = coverage, ymin = q05, ymax = q95),
               fill = "lightblue", alpha = 0.4) +
   geom_ribbon(aes(x = coverage, ymin = q25, ymax = q75),
@@ -2487,13 +2511,14 @@ ggplot(uncert_summary) +
   facet_wrap(~scenario, nrow = 1) +
   themeo +
   coord_cartesian(expand = FALSE)
+p_uncert_ribbon
 ```
 
 **plot uncertainty — zoomed near lambda = 1 (mean lines only, all scenarios overlaid)**
 ```{r, fig.width=10, fig.height=5}
 # Overlay all scenarios on one plot, zoomed to the threshold region
 # This makes the difference between 2/3 and 3/3 visible
-ggplot(uncert_summary) +
+p_uncert_zoom <- ggplot(uncert_summary) +
   geom_line(aes(x = coverage, y = mean_lambda,
                 group = scenario, color = scenario),
             linewidth = 0.8) +
@@ -2505,6 +2530,7 @@ ggplot(uncert_summary) +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_uncert_zoom
 ```
 
 **probability of recovery (lambda >= 1) by coverage and scenario**
@@ -2518,7 +2544,7 @@ prob_recovery <- uncert_long %>%
     .groups = "drop"
   )
 
-ggplot(prob_recovery) +
+p_prob_recovery <- ggplot(prob_recovery) +
   geom_line(aes(x = coverage, y = prob_recover,
                 group = scenario, color = scenario),
             linewidth = 0.8) +
@@ -2531,6 +2557,7 @@ ggplot(prob_recovery) +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_prob_recovery
 ```
 
 *UNCERTAINTY SIMULATION WITH FIXED IUU RATES + IUU REDUCTION*
@@ -2803,7 +2830,7 @@ uncert_fixed_iuu_long %>%
 ```{r, fig.width=14, fig.height=10}
 mit_plot_scenarios_fixed <- c("Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)")
 
-uncert_fixed_iuu_summary %>%
+p_fixed_iuu_ribbon <- uncert_fixed_iuu_summary %>%
   filter(scenario %in% mit_plot_scenarios_fixed) %>%
   ggplot() +
   geom_ribbon(aes(x = coverage, ymin = q05, ymax = q95,
@@ -2821,11 +2848,12 @@ uncert_fixed_iuu_summary %>%
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#d73027", "#fee090", "#4575b4")) +
   scale_fill_manual(values = c("#d73027", "#fee090", "#4575b4"))
+p_fixed_iuu_ribbon
 ```
 
 **plot fixed-IUU uncertainty — all 6 mitigation scenarios at each IUU × enforcement combo**
 ```{r, fig.width=14, fig.height=10}
-uncert_fixed_iuu_summary %>%
+p_fixed_iuu_all <- uncert_fixed_iuu_summary %>%
   ggplot() +
   geom_ribbon(aes(x = coverage, ymin = q05, ymax = q95,
                   group = scenario, fill = scenario),
@@ -2843,12 +2871,13 @@ uncert_fixed_iuu_summary %>%
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58")) +
   scale_fill_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+p_fixed_iuu_all
 ```
 
 **plot fixed-IUU — zoomed mean lines (scenario rows × IUU columns), colored by enforcement**
 ```{r, fig.width=14, fig.height=10}
 # Zoomed to lambda = 1 region to show where scenarios cross the recovery threshold
-uncert_fixed_iuu_summary %>%
+p_fixed_iuu_zoom <- uncert_fixed_iuu_summary %>%
   filter(scenario %in% mit_plot_scenarios_fixed) %>%
   ggplot() +
   geom_line(aes(x = coverage, y = mean_lambda,
@@ -2862,6 +2891,7 @@ uncert_fixed_iuu_summary %>%
   themeo +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
   scale_color_manual(values = c("#d73027", "#fee090", "#4575b4"))
+p_fixed_iuu_zoom
 ```
 
 **probability of recovery (lambda >= 1) — fixed IUU × enforcement**
@@ -2875,7 +2905,7 @@ prob_recovery_fixed <- uncert_fixed_iuu_long %>%
     .groups = "drop"
   )
 
-ggplot(prob_recovery_fixed) +
+p_fixed_iuu_prob <- ggplot(prob_recovery_fixed) +
   geom_line(aes(x = coverage, y = prob_recover,
                 group = iuu_red_label, color = iuu_red_label),
             linewidth = 0.8) +
@@ -2888,5 +2918,62 @@ ggplot(prob_recovery_fixed) +
   themeo +
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#d73027", "#fee090", "#4575b4"))
+p_fixed_iuu_prob
+```
+
+---
+
+## Save all outputs
+
+```{r save_all_figures}
+# Create output directory if needed
+dir.create(here("output/figures"), showWarnings = FALSE, recursive = TRUE)
+
+# Helper: build filename with date suffix
+fig_path <- function(name) here("output/figures", paste0(name, "_", date_sfx, ".png"))
+
+# --- Blanket mitigation scenarios ---
+ggsave(fig_path("01_blanket_mitigation"),        p_blanket,          width = 10, height = 6, dpi = 200)
+ggsave(fig_path("02_blanket_mitigation_zoom"),   p_blanket_zoom,     width = 10, height = 6, dpi = 200)
+
+# --- Scenario comparison ---
+ggsave(fig_path("03_scenarios_bar"),             p_scenarios,        width = 10, height = 6, dpi = 200)
+
+# --- Fleet-level bycatch ---
+ggsave(fig_path("04_fleet_stacked"),             p_fleet_stacked,    width = 12, height = 7, dpi = 200)
+ggsave(fig_path("05_fleet_dodged"),              p_fleet_dodged,     width = 12, height = 6, dpi = 200)
+
+# --- Cumulative fleet adoption ---
+ggsave(fig_path("06_cumulative_adoption"),       p_cumul,            width = 10, height = 6, dpi = 200)
+ggsave(fig_path("07_fleet_on_blanket"),          p_fleet_on_blanket, width = 10, height = 6, dpi = 200)
+ggsave(fig_path("08_waterfall"),                 p_waterfall,        width = 12, height = 6, dpi = 200)
+
+# --- Heatmaps: efficacy x coverage ---
+ggsave(fig_path("09_heatmap_lambda"),            p_heatmap,          width = 10, height = 7, dpi = 200)
+ggsave(fig_path("10_heatmap_recovery_zone"),     p_heatmap_recovery, width = 10, height = 7, dpi = 200)
+ggsave(fig_path("11_heatmap_zoom"),              p_heatmap_zoom,     width = 10, height = 7, dpi = 200)
+
+# --- IUU fishing mortality ---
+ggsave(fig_path("12_iuu_lines"),                 p_iuu_lines,        width = 14, height = 10, dpi = 200)
+ggsave(fig_path("13_iuu_opt1_no_enforcement"),   p_iuu_opt1,         width = 14, height = 5,  dpi = 200)
+ggsave(fig_path("14_iuu_opt2_grid"),             p_iuu_opt2,         width = 14, height = 12, dpi = 200)
+ggsave(fig_path("15_iuu_opt2b_grid_zoom"),       p_iuu_opt2b,        width = 14, height = 12, dpi = 200)
+ggsave(fig_path("16_iuu_opt3_arrows"),           p_iuu_opt3,         width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("17_iuu_opt4a_panel_A"),         p_iuu_opt4a,        width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("18_iuu_opt4b_panel_B"),         p_iuu_opt4b,        width = 10, height = 7,  dpi = 200)
+
+# --- Uncertainty simulation (VR + FM + IUU) ---
+ggsave(fig_path("19_uncert_sim_runs"),           p_uncert_runs,      width = 14, height = 5,  dpi = 200)
+ggsave(fig_path("20_uncert_ribbon"),             p_uncert_ribbon,    width = 14, height = 5,  dpi = 200)
+ggsave(fig_path("21_uncert_zoom"),               p_uncert_zoom,      width = 10, height = 5,  dpi = 200)
+ggsave(fig_path("22_prob_recovery"),             p_prob_recovery,    width = 14, height = 5,  dpi = 200)
+
+# --- Fixed-IUU uncertainty simulation ---
+ggsave(fig_path("23_fixed_iuu_ribbon"),          p_fixed_iuu_ribbon, width = 14, height = 10, dpi = 200)
+ggsave(fig_path("24_fixed_iuu_all_scenarios"),   p_fixed_iuu_all,    width = 14, height = 10, dpi = 200)
+ggsave(fig_path("25_fixed_iuu_zoom"),            p_fixed_iuu_zoom,   width = 14, height = 10, dpi = 200)
+ggsave(fig_path("26_fixed_iuu_prob_recovery"),   p_fixed_iuu_prob,   width = 14, height = 10, dpi = 200)
+
+message("All 26 figures saved to output/figures/ with suffix ", date_sfx)
 ```
 

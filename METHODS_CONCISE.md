@@ -78,7 +78,7 @@ These are standard in fisheries science and reasonable for low bycatch rates.
 ### Spatial Data
 - **Bird distributions** by age class (Clay et al. 2019): 1° × 1° grid, year-round
 - **Population distributions** (Carneiro et al. 2020): Crozet, Kerguelen, South Georgia
-- **Fishing effort**: Pelagic and demersal longline hooks per grid cell
+- **Fishing effort**: Pelagic and demersal longline hooks per grid cell; DLL sources include CCAMLR, Argentina, Chile, Falklands, Namibia, South Africa, and New Zealand (Rep Log 17287). NZ rasterized separately on its native x.0 grid convention and resampled to match the x.5 reference before combining.
 
 ### Demographic Data
 - **Age class proportions** from Bird Island population (Clay et al. 2019)
@@ -357,7 +357,7 @@ Mapping 03f age classes to matrix stages:
 
 **Blanket approach** (existing): Uniform reduction across all fisheries, varying % adoption (0-100%) × efficacy (50-100%).
 
-**Fleet-level approach** (new): Disaggregates bycatch by fleet, applies fleet-specific mitigation:
+**Fleet-level approach**: Disaggregates bycatch by fleet, applies fleet-specific mitigation. New Zealand DLL included as a fleet (status = full/3/3, compliance = 0.85, ACAP signatory).
 
 ```
 For each fleet:
@@ -628,4 +628,4 @@ Total across regions:         C_fa = Σ_r C_rfa
 
 *For detailed numerical examples, validation calculations, and step-by-step implementation, see METHODS.md (full version).*
 
-*Document last updated: February 17, 2026*
+*Document last updated: February 23, 2026*

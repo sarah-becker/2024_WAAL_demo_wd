@@ -1,0 +1,1058 @@
+---
+title: "WAAL bycatch — mitigation by fishing effort period (1990–2010)"
+output: html_document
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+library(here)
+library(tidyverse)
+library(RColorBrewer)
+
+# Date suffix — must match the date on which script 03g was run
+date_sfx <- format(Sys.Date(), "%Y-%m-%d")
+
+themeo <- theme_classic() +
+  theme(strip.background = element_blank(),
+        panel.grid.major = element_line(colour = "transparent"),
+        panel.grid.minor = element_line(colour = "transparent"),
+        axis.line = element_blank(),
+        axis.title = element_text(color = "black", size = 10),
+        axis.ticks.length = unit(-0.1, "cm"),
+        axis.ticks = element_line(color = "black", size = .25),
+        axis.ticks.x = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        panel.border = element_rect(colour = "black", fill = NA, size = .5),
+        panel.spacing = unit(1, "lines"),
+        legend.position = "bottom",
+        legend.title = element_text(colour = "black", size = 10, face = "bold"),
+        legend.text = element_text(color = "black", size = 8))
+
+# Figure path helper — all outputs tagged with _by_period_ to avoid overwriting other scripts
+fig_path <- function(name) here("output/figures", paste0(name, "_by_period_", date_sfx, ".png"))
+```
+
+*SET UP DEMO MATRIX, VITAL RATES, LAMBDA*
+
+**set vital rates**
+```{r vital_rates}
+# Breeding probability
+b_EF  <- 0.746
+b_ENB <- 0.589
+b_ES  <- 0.016
+b_IF  <- 0.744
+b_Imm <- 0.101
+b_IS  <- 0.011
+b_PF  <- 0.941
+
+# Success probability
+k_EF  <- 0.631
+k_ENB <- 0.675
+k_ES  <- 0.500
+k_IF  <- 0.627
+k_Imm <- 0.585
+k_IS  <- 0.627
+k_PF  <- 0.791
+
+# Return probability
+r_EF  <- 0.973
+r_ENB <- 0.953
+r_ES  <- 0.292
+r_IF  <- 0.948
+r_Imm <- 0.692
+r_IS  <- 0.459
+r_PF  <- 0.972
+
+# Survival
+s_EF  <- 0.913
+s_ENB <- 0.943
+s_ES  <- 0.895
+s_IF  <- 0.920
+s_Imm <- 0.921
+s_IS  <- 0.892
+s_Juv <- 0.846
+s_PF  <- 0.935
+```
+
+**create baseline matrix**
+```{r baseline_matrix}
+m <- matrix(data = c(
+  0,     0,      0,      0,      0,                                         0.5*s_Juv,              0,                      0.5*s_Juv,              0,                      0,                         0,
+  s_Juv, 0,      0,      0,      0,                                         0,                      0,                      0,                      0,                      0,                         0,
+  0,     s_Juv,  0,      0,      0,                                         0,                      0,                      0,                      0,                      0,                         0,
+  0,     0,      s_Imm,  0,      0,                                         0,                      0,                      0,                      0,                      0,                         0,
+  0,     0,      0,      s_Imm,  s_Imm*r_Imm*(1-b_Imm)+s_Imm*(1-r_Imm),   0,                      0,                      0,                      0,                      0,                         0,
+  0,     0,      0,      0,      s_Imm*r_Imm*b_Imm*k_Imm,                  0,                      0,                      0,                      0,                      0,                         0,
+  0,     0,      0,      0,      s_Imm*r_Imm*b_Imm*(1-k_Imm),              0,                      0,                      0,                      0,                      0,                         0,
+  0,     0,      0,      0,      0,                                         s_IS*r_IS*b_IS*k_IS,    s_IF*r_IF*b_IF*k_IF,    s_ES*r_ES*b_ES*k_ES,    s_EF*r_EF*b_EF*k_EF,    s_ENB*r_ENB*b_ENB*k_ENB,  s_PF*r_PF*b_PF*k_PF,
+  0,     0,      0,      0,      0,                                         s_IS*r_IS*b_IS*(1-k_IS),s_IF*r_IF*b_IF*(1-k_IF),s_ES*r_ES*b_ES*(1-k_ES),s_EF*r_EF*b_EF*(1-k_EF),s_ENB*r_ENB*b_ENB*(1-k_ENB),s_PF*r_PF*b_PF*(1-k_PF),
+  0,     0,      0,      0,      0,                                         s_IS*r_IS*(1-b_IS),     s_IF*r_IF*(1-b_IF),     s_ES*r_ES*(1-b_ES),     s_EF*r_EF*(1-b_EF),     s_ENB*r_ENB*(1-b_ENB),    s_PF*r_PF*(1-b_PF),
+  0,     0,      0,      0,      0,                                         s_IS*(1-r_IS),          s_IF*(1-r_IF),          s_ES*(1-r_ES),          s_EF*(1-r_EF),          s_ENB*(1-r_ENB),           s_PF*(1-r_PF)
+), nrow = 11, byrow = TRUE)
+
+m_eig   <- eigen(m)
+lambda0 <- as.numeric(m_eig$values[1])
+cat(sprintf("Baseline lambda (no fishing mortality): %.7f\n", lambda0))
+```
+
+**helper: build 11-stage matrix and return lambda from stage-specific survivals**
+```{r lambda_helper}
+calc_lambda_from_survival <- function(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF) {
+  n_m <- matrix(data = c(
+    0,      0,       0,       0,       0,                                              0.5*ns_Juv,                0,                         0.5*ns_Juv,                0,                         0,                            0,
+    ns_Juv, 0,       0,       0,       0,                                              0,                         0,                         0,                         0,                         0,                            0,
+    0,      ns_Juv,  0,       0,       0,                                              0,                         0,                         0,                         0,                         0,                            0,
+    0,      0,       ns_Imm,  0,       0,                                              0,                         0,                         0,                         0,                         0,                            0,
+    0,      0,       0,       ns_Imm,  ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),      0,                         0,                         0,                         0,                         0,                            0,
+    0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*k_Imm,                      0,                         0,                         0,                         0,                         0,                            0,
+    0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*(1-k_Imm),                  0,                         0,                         0,                         0,                         0,                            0,
+    0,      0,       0,       0,       0,                                              ns_IS*r_IS*b_IS*k_IS,      ns_IF*r_IF*b_IF*k_IF,      ns_ES*r_ES*b_ES*k_ES,      ns_EF*r_EF*b_EF*k_EF,      ns_ENB*r_ENB*b_ENB*k_ENB,    ns_PF*r_PF*b_PF*k_PF,
+    0,      0,       0,       0,       0,                                              ns_IS*r_IS*b_IS*(1-k_IS),  ns_IF*r_IF*b_IF*(1-k_IF),  ns_ES*r_ES*b_ES*(1-k_ES),  ns_EF*r_EF*b_EF*(1-k_EF),  ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),
+    0,      0,       0,       0,       0,                                              ns_IS*r_IS*(1-b_IS),       ns_IF*r_IF*(1-b_IF),       ns_ES*r_ES*(1-b_ES),       ns_EF*r_EF*(1-b_EF),       ns_ENB*r_ENB*(1-b_ENB),      ns_PF*r_PF*(1-b_PF),
+    0,      0,       0,       0,       0,                                              ns_IS*(1-r_IS),            ns_IF*(1-r_IF),             ns_ES*(1-r_ES),            ns_EF*(1-r_EF),             ns_ENB*(1-r_ENB),             ns_PF*(1-r_PF)
+  ), nrow = 11, byrow = TRUE)
+  as.numeric(eigen(n_m)$values[1])
+}
+```
+
+*LOAD BYCATCH MORTALITY FROM SCRIPT 03g — ALL FOUR PERIODS*
+
+Fishing mortality rates are loaded for each of the four 5-year periods (1990–2010).
+Each period is treated as an independent baseline, allowing us to compare how
+declining fishing effort alters the lambda response to mitigation.
+
+**load per-capita bycatch rates and compute total fishing mortality by period**
+```{r load_bycatch_by_period}
+# Period-level bycatch totals (DLL + PLL, each as a separate row)
+byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03g_", date_sfx, ".csv")),
+                       show_col_types = FALSE)
+
+# Clay demographic data: period-specific population sizes
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+# Map bycatch periods (fishing effort) to Clay population periods
+period_pop_map <- tibble(
+  year_group = c("1990-1995", "1996-2000", "2001-2005", "2006-2010"),
+  pop_period = c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
+)
+
+# Population size by demographic class and Clay period
+pop_by_period <- dem_props %>%
+  filter(Dem_class != "J1", Period != "1990-2009") %>%
+  select(Period, Dem_class, Pop) %>%
+  mutate(age_class = case_when(
+    Dem_class == "J2J3" ~ "j2j3",
+    Dem_class == "IMM"  ~ "imm",
+    Dem_class == "FB"   ~ "fb",
+    Dem_class == "SB"   ~ "sb",
+    Dem_class == "NB"   ~ "nb"
+  )) %>%
+  left_join(period_pop_map, by = c("Period" = "pop_period"))
+
+# Per-capita fishing mortality by fishery × period × age class
+byc_long <- byc_period %>%
+  pivot_longer(cols = c(fb, sb, nb, j2j3, imm),
+               names_to = "age_class", values_to = "annual_byc") %>%
+  left_join(pop_by_period %>% select(year_group, age_class, Pop),
+            by = c("year_group", "age_class")) %>%
+  mutate(percap = annual_byc / Pop)
+
+byc_long %>%
+  group_by(year_group, fishery, age_class) %>%
+  summarise(percap = sum(percap), .groups = "drop") %>%
+  pivot_wider(names_from = age_class, values_from = percap) %>%
+  arrange(year_group, fishery) %>%
+  mutate(across(where(is.numeric), ~round(.x, 6))) %>%
+  print(n = 40)
+
+# Total FM per period × age class (sum across DLL and PLL)
+total_fm_wide <- byc_long %>%
+  group_by(year_group, age_class) %>%
+  summarise(total_fm = sum(percap, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = age_class, values_from = total_fm)
+
+cat("\n=== Total per-capita fishing mortality by period ===\n")
+total_fm_wide %>%
+  mutate(across(where(is.numeric), ~round(.x, 6))) %>%
+  print()
+```
+
+---
+
+*PERIOD-SPECIFIC VITAL RATES*
+
+Two VRs vary meaningfully across periods (from Clay et al. fig): juvenile survival
+(strong declining trend) and pooled adult/imm survival (moderate variation). Return,
+breeding, and success probabilities are stable and held at mean values throughout.
+
+All adult and imm stages receive the same pooled survival value (s_adult_pooled),
+since annual estimates are not disaggregated by stage.
+
+s_Juv data end around 2003; the 2006-2010 period uses the mean of available periods
+as a placeholder — replace with digitized values when available.
+
+CSV format (one row per year): `year, s_Juv, s_adult_pooled`
+s_Juv is NA for years with no data (will be filled with available-year mean per period).
+
+```{r load_period_vrs}
+# Set vr_file to the CSV filename in data/ once PlotDigitizer values are ready.
+# Current values are visual estimates from Clay et al. figure — replace when digitized.
+vr_file <- NULL  # e.g. vr_file <- "annual_vital_rates.csv"
+
+if (!is.null(vr_file) && file.exists(here("data", vr_file))) {
+  annual_vr <- read_csv(here("data", vr_file), show_col_types = FALSE)
+
+  # Aggregate annual VRs to 5-year periods (mean of available years per period)
+  vr_by_period <- annual_vr %>%
+    mutate(year_group = case_when(
+      year >= 1990 & year <= 1995 ~ "1990-1995",
+      year >= 1996 & year <= 2000 ~ "1996-2000",
+      year >= 2001 & year <= 2005 ~ "2001-2005",
+      year >= 2006 & year <= 2010 ~ "2006-2010",
+      TRUE ~ NA_character_
+    )) %>%
+    filter(!is.na(year_group)) %>%
+    group_by(year_group) %>%
+    summarise(
+      s_Juv          = mean(s_Juv,          na.rm = TRUE),
+      s_adult_pooled = mean(s_adult_pooled,  na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  cat("Period-specific VRs loaded from file:\n")
+
+} else {
+  # Visual estimates from Clay et al. figure — replace with PlotDigitizer values
+  # s_Juv: strong declining trend; missing after ~2003
+  #   2006-2010 gap filled with mean of available periods (0.84, 0.76, 0.68) = 0.76
+  # s_adult_pooled: moderate variation around long-term mean (~0.935)
+  vr_by_period <- tibble(
+    year_group     = c("1990-1995", "1996-2000", "2001-2005", "2006-2010"),
+    s_Juv          = c(0.84,         0.76,         0.68,         0.76),   # 2006-2010: mean of available periods
+    s_adult_pooled = c(0.935,        0.925,        0.915,        0.930)
+  )
+  cat("Using visual estimates from Clay et al. figure — replace with PlotDigitizer values.\n")
+  cat("s_Juv for 2006-2010 gap-filled with mean of available-period values (0.76).\n\n")
+}
+
+cat("Period VRs:\n")
+vr_by_period %>% mutate(across(where(is.numeric), ~round(.x, 4))) %>% print()
+
+# VR model choice for how to handle stage-specific adult/imm survival:
+#   "pooled" — same s_adult_pooled value applied to all 7 adult/imm stages (simpler)
+#   "scaled" — s_adult_pooled scaled by stage-specific ratios from the mean VRs,
+#              preserving relative stage differences while applying the temporal trend
+#              e.g. s_EF_period = s_adult_pooled × (mean_s_EF / mean_pooled_adult)
+vr_model <- "pooled"  # change to "scaled" to try the alternative
+
+# Mean stage-specific adult/imm survival from the vital_rates chunk (used for scaling)
+mean_pooled_adult <- mean(c(s_EF, s_ENB, s_ES, s_IF, s_IS, s_PF, s_Imm))
+
+# Build vr_effective: one row per period with all stage-specific rates resolved.
+# r, b, k held at mean values (stable across periods — from vital_rates chunk above).
+if (vr_model == "scaled") {
+  vr_effective <- vr_by_period %>%
+    mutate(
+      s_Juv_use  = s_Juv,
+      s_Imm_use  = s_adult_pooled * (s_Imm / mean_pooled_adult),
+      s_EF_use   = s_adult_pooled * (s_EF  / mean_pooled_adult),
+      s_ENB_use  = s_adult_pooled * (s_ENB / mean_pooled_adult),
+      s_ES_use   = s_adult_pooled * (s_ES  / mean_pooled_adult),
+      s_IF_use   = s_adult_pooled * (s_IF  / mean_pooled_adult),
+      s_IS_use   = s_adult_pooled * (s_IS  / mean_pooled_adult),
+      s_PF_use   = s_adult_pooled * (s_PF  / mean_pooled_adult)
+    )
+  cat("\nvr_model = 'scaled': stage-specific survival = s_adult_pooled × (mean_stage / mean_pooled)\n")
+} else {
+  vr_effective <- vr_by_period %>%
+    mutate(
+      s_Juv_use  = s_Juv,
+      s_Imm_use  = s_adult_pooled,
+      s_EF_use   = s_adult_pooled,
+      s_ENB_use  = s_adult_pooled,
+      s_ES_use   = s_adult_pooled,
+      s_IF_use   = s_adult_pooled,
+      s_IS_use   = s_adult_pooled,
+      s_PF_use   = s_adult_pooled
+    )
+  cat("\nvr_model = 'pooled': same s_adult_pooled applied to all adult/imm stages\n")
+}
+
+cat("Effective survival rates by period:\n")
+vr_effective %>%
+  select(year_group, s_Juv_use, s_Imm_use, s_EF_use, s_ES_use, s_ENB_use) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print()
+```
+
+---
+
+**partition mortality — natural mortality per period**
+```{r natural_mortality_by_period}
+# Natural mortality = total mortality - fishing mortality (unique to each period)
+# Uses period-specific survival from vr_effective (populated above).
+nm_by_period <- total_fm_wide %>%
+  left_join(vr_effective, by = "year_group") %>%
+  mutate(
+    nm_juv = (1 - s_Juv_use)  - j2j3,
+    nm_imm = (1 - s_Imm_use)  - imm,
+    nm_efb = (1 - s_EF_use)   - fb,
+    nm_esb = (1 - s_ES_use)   - sb,
+    nm_enb = (1 - s_ENB_use)  - nb,
+    nm_ifb = (1 - s_IF_use)   - fb,
+    nm_isb = (1 - s_IS_use)   - sb,
+    nm_pf  = (1 - s_PF_use)   - nb
+  )
+
+# Verify natural mortality is positive for all periods
+cat("=== Natural mortality check by period ===\n")
+nm_check <- nm_by_period %>%
+  select(year_group, starts_with("nm_")) %>%
+  pivot_longer(cols = starts_with("nm_"), names_to = "class", values_to = "nm")
+
+nm_check %>%
+  mutate(flag = ifelse(nm < 0, "*** NEGATIVE ***", "OK")) %>%
+  mutate(across(where(is.numeric), ~round(.x, 6))) %>%
+  print(n = 40)
+```
+
+*MITIGATION SCENARIOS*
+
+**define mitigation efficacy rates**
+```{r mitigation_efficacy}
+# Efficacy of individual mitigation measures
+eff_tori_lines  <- 0.75
+eff_night_set   <- 0.60
+eff_line_weight <- 0.65
+eff_hook_shield <- 0.35
+
+# Combined efficacy: independent measures
+eff_2of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set)
+eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)
+
+cat(sprintf("2/3 combined efficacy: %.1f%%\n", eff_2of3 * 100))
+cat(sprintf("3/3 combined efficacy: %.1f%%\n", eff_3of3 * 100))
+
+mitigation_scenarios <- tibble(
+  scenario = c("Hook shielding only",
+               "Line weighting only",
+               "Night setting only",
+               "Tori lines only",
+               "2/3 (tori + night)",
+               "3/3 (tori + night + weight)",
+               "Complete elimination"),
+  efficacy = c(eff_hook_shield, eff_line_weight, eff_night_set, eff_tori_lines,
+               eff_2of3, eff_3of3, 1.0)
+)
+
+mitigation_scenarios %>% mutate(efficacy_pct = round(efficacy * 100, 1)) %>% print()
+```
+
+**run mitigation loop across all periods × scenarios × coverage levels**
+```{r run_period_mitigation_loop}
+target_periods <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+coverage_seq   <- seq(0, 1, by = 0.01)
+
+# Full grid: period × scenario × coverage
+period_results <- expand.grid(
+  year_group   = target_periods,
+  scenario_idx = 1:nrow(mitigation_scenarios),
+  reduction    = coverage_seq,
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    lambda   = NA_real_,
+    scenario = mitigation_scenarios$scenario[scenario_idx],
+    efficacy = mitigation_scenarios$efficacy[scenario_idx]
+  )
+
+for (i in 1:nrow(period_results)) {
+  pg      <- period_results$year_group[i]
+  mit_eff <- period_results$efficacy[i]
+  red     <- period_results$reduction[i]
+
+  fm <- total_fm_wide %>% filter(year_group == pg)
+  nm <- nm_by_period  %>% filter(year_group == pg)
+
+  ns_Juv <- 1 - ((fm$j2j3 * (1 - mit_eff * red)) + nm$nm_juv)
+  ns_Imm <- 1 - ((fm$imm  * (1 - mit_eff * red)) + nm$nm_imm)
+  ns_EF  <- 1 - ((fm$fb   * (1 - mit_eff * red)) + nm$nm_efb)
+  ns_ES  <- 1 - ((fm$sb   * (1 - mit_eff * red)) + nm$nm_esb)
+  ns_ENB <- 1 - ((fm$nb   * (1 - mit_eff * red)) + nm$nm_enb)
+  ns_IF  <- 1 - ((fm$fb   * (1 - mit_eff * red)) + nm$nm_ifb)
+  ns_IS  <- 1 - ((fm$sb   * (1 - mit_eff * red)) + nm$nm_isb)
+  ns_PF  <- 1 - ((fm$nb   * (1 - mit_eff * red)) + nm$nm_pf)
+
+  period_results$lambda[i] <- calc_lambda_from_survival(
+    ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF
+  )
+}
+
+# Order scenario factor by efficacy for consistent legend ordering
+period_results <- period_results %>%
+  mutate(scenario = factor(scenario, levels = mitigation_scenarios$scenario),
+         year_group = factor(year_group, levels = target_periods))
+
+cat(sprintf("Period results computed: %d rows\n", nrow(period_results)))
+```
+
+*VISUALIZE RESULTS*
+
+**plot 1: baseline lambda by period (zero mitigation)**
+This shows how declining fishing effort alone changed population growth rate across periods,
+before any mitigation is applied.
+```{r plot_baseline_by_period, fig.width=7, fig.height=5}
+# Lambda at zero mitigation for each period × scenario
+# Only need the complete elimination scenario at reduction=0 (all scenarios give same value at zero coverage)
+baseline_lambda <- period_results %>%
+  filter(reduction == 0, scenario == "Complete elimination") %>%
+  select(year_group, lambda) %>%
+  mutate(period_label = paste0(year_group, "\n(", round(lambda, 4), ")"))
+
+# Also add the no-fishing-mortality baseline for reference
+p_baselines <- ggplot(baseline_lambda, aes(x = year_group, y = lambda)) +
+  geom_col(fill = "#1d91c0", alpha = 0.8, width = 0.6) +
+  geom_hline(yintercept = 1,       color = "darkgrey", linetype = "dashed", alpha = 0.7) +
+  geom_hline(yintercept = lambda0, color = "#08519c",  linetype = "dotted", alpha = 0.7) +
+  geom_text(aes(label = round(lambda, 4)), vjust = -0.4, size = 3.5) +
+  annotate("text", x = 0.5, y = lambda0 + 0.0005,
+           label = paste0("No FM: ", round(lambda0, 4)),
+           hjust = 0, size = 2.8, color = "#08519c") +
+  labs(x = "Fishing effort period",
+       y = expression(lambda),
+       title = "Population growth rate under unmitigated fishing mortality",
+       subtitle = "Each bar = period-specific FM rate, no mitigation applied; dotted = theoretical no-FM baseline") +
+  themeo +
+  coord_cartesian(ylim = c(min(baseline_lambda$lambda) - 0.002, max(lambda0 + 0.002, 1.002)),
+                  expand = FALSE)
+p_baselines
+```
+
+**plot 2: lambda vs coverage by period — all scenarios**
+```{r plot_lambda_by_period, fig.width=14, fig.height=10}
+# Period-level color palette — sequential blue-to-orange showing temporal change
+period_colors <- c("1990-1995" = "#2166ac",
+                   "1996-2000" = "#4dac26",
+                   "2001-2005" = "#d01c8b",
+                   "2006-2010" = "#f4a582")
+
+p_by_period <- ggplot(period_results) +
+  geom_line(aes(x = reduction, y = lambda,
+                group = year_group, color = year_group),
+            linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "darkgrey", alpha = 0.5, linetype = "dashed") +
+  facet_wrap(~ scenario, nrow = 2) +
+  labs(x = "% fisheries with bycatch mitigation",
+       y = expression(lambda),
+       color = "Fishing effort period",
+       title = "Population growth rate by fishing effort period and mitigation scenario",
+       subtitle = "Each curve = one 5-year effort period used as independent baseline FM; dashed = \u03BB = 1") +
+  themeo +
+  theme(strip.text = element_text(face = "bold")) +
+  coord_cartesian(expand = FALSE) +
+  scale_color_manual(values = period_colors) +
+  guides(color = guide_legend(nrow = 1))
+p_by_period
+```
+
+**plot 3: zoom near lambda = 1 threshold**
+```{r plot_lambda_zoom, fig.width=14, fig.height=10}
+p_by_period_zoom <- ggplot(period_results) +
+  geom_line(aes(x = reduction, y = lambda,
+                group = year_group, color = year_group),
+            linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "darkgrey", alpha = 0.5, linetype = "dashed") +
+  facet_wrap(~ scenario, nrow = 2) +
+  labs(x = "% fisheries with bycatch mitigation",
+       y = expression(lambda),
+       color = "Fishing effort period",
+       title = "Population growth rate — zoomed to recovery threshold",
+       subtitle = "Zoomed to \u03BB = 1; curves that cross threshold indicate achievable recovery under that period's effort level") +
+  themeo +
+  theme(strip.text = element_text(face = "bold")) +
+  coord_cartesian(ylim = c(0.993, 1.005), expand = FALSE) +
+  scale_color_manual(values = period_colors) +
+  guides(color = guide_legend(nrow = 1))
+p_by_period_zoom
+```
+
+**plot 4: minimum coverage to reach lambda >= 1 by period × scenario**
+```{r plot_threshold_by_period, fig.width=10, fig.height=7}
+# For each period × scenario, find minimum coverage at which lambda crosses 1
+threshold_by_period <- period_results %>%
+  filter(lambda >= 1) %>%
+  group_by(year_group, scenario) %>%
+  summarise(min_coverage = min(reduction), .groups = "drop")
+
+# Identify period × scenario combinations that never recover
+all_combos <- expand.grid(year_group = target_periods,
+                          scenario   = mitigation_scenarios$scenario,
+                          stringsAsFactors = FALSE)
+
+threshold_by_period_full <- all_combos %>%
+  left_join(threshold_by_period, by = c("year_group", "scenario")) %>%
+  mutate(
+    year_group = factor(year_group, levels = target_periods),
+    scenario   = factor(scenario,   levels = mitigation_scenarios$scenario),
+    recovers   = !is.na(min_coverage),
+    label      = ifelse(recovers,
+                        paste0(round(min_coverage * 100), "%"),
+                        "No recovery")
+  )
+
+threshold_by_period_full %>%
+  select(year_group, scenario, min_coverage, recovers) %>%
+  mutate(min_coverage_pct = ifelse(recovers,
+                                   paste0(round(min_coverage * 100), "%"),
+                                   "No recovery")) %>%
+  print(n = 40)
+
+p_threshold_period <- ggplot(threshold_by_period_full,
+                             aes(x = year_group, y = scenario)) +
+  geom_tile(aes(fill = min_coverage), color = "white", linewidth = 0.5) +
+  geom_text(aes(label = label), size = 3,
+            color = ifelse(threshold_by_period_full$min_coverage > 0.6 | !threshold_by_period_full$recovers,
+                           "white", "black")) +
+  scale_fill_distiller(palette = "Blues", direction = 1, na.value = "#b2182b",
+                       labels = scales::percent,
+                       name = "Min coverage\nto recover") +
+  labs(x = "Fishing effort period",
+       y = "Mitigation scenario",
+       title = "Minimum fishery coverage required for population recovery (\u03BB \u2265 1)",
+       subtitle = "Red = no recovery achievable under that period's effort level at any coverage; % = coverage threshold") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(face = "bold"),
+        axis.text.y = element_text(size = 9))
+p_threshold_period
+```
+
+## Save all figures
+
+```{r save_figures}
+dir.create(here("output/figures"), showWarnings = FALSE, recursive = TRUE)
+
+ggsave(fig_path("01_baseline_lambda_by_period"),  p_baselines,         width = 7,  height = 5,  dpi = 200)
+ggsave(fig_path("02_lambda_curves_by_period"),    p_by_period,         width = 14, height = 10, dpi = 200)
+ggsave(fig_path("03_lambda_curves_zoom"),         p_by_period_zoom,    width = 14, height = 10, dpi = 200)
+ggsave(fig_path("04_threshold_heatmap"),          p_threshold_period,  width = 10, height = 7,  dpi = 200)
+
+message("4 figures saved to output/figures/ with suffix _by_period_", date_sfx)
+```
+
+---
+
+*SENSITIVITY: POOLED vs SCALED ADULT SURVIVAL*
+
+Compares lambda results under the two `vr_model` options. Runs the alternative model
+(whichever was not chosen above) and overlays both sets of lambda curves.
+If the two lines are indistinguishable, the pooled model is sufficient.
+
+```{r vr_sensitivity}
+# Build the alternative vr_effective (opposite of what vr_model chose above)
+if (vr_model == "pooled") {
+  vr_effective_alt <- vr_by_period %>%
+    mutate(
+      s_Juv_use  = s_Juv,
+      s_Imm_use  = s_adult_pooled * (s_Imm / mean_pooled_adult),
+      s_EF_use   = s_adult_pooled * (s_EF  / mean_pooled_adult),
+      s_ENB_use  = s_adult_pooled * (s_ENB / mean_pooled_adult),
+      s_ES_use   = s_adult_pooled * (s_ES  / mean_pooled_adult),
+      s_IF_use   = s_adult_pooled * (s_IF  / mean_pooled_adult),
+      s_IS_use   = s_adult_pooled * (s_IS  / mean_pooled_adult),
+      s_PF_use   = s_adult_pooled * (s_PF  / mean_pooled_adult)
+    )
+  alt_label <- "scaled"
+} else {
+  vr_effective_alt <- vr_by_period %>%
+    mutate(
+      s_Juv_use  = s_Juv,
+      s_Imm_use  = s_adult_pooled,
+      s_EF_use   = s_adult_pooled,
+      s_ENB_use  = s_adult_pooled,
+      s_ES_use   = s_adult_pooled,
+      s_IF_use   = s_adult_pooled,
+      s_IS_use   = s_adult_pooled,
+      s_PF_use   = s_adult_pooled
+    )
+  alt_label <- "pooled"
+}
+
+# Recompute natural mortality under the alternative model
+nm_alt <- total_fm_wide %>%
+  left_join(vr_effective_alt, by = "year_group") %>%
+  mutate(
+    nm_juv = (1 - s_Juv_use)  - j2j3,
+    nm_imm = (1 - s_Imm_use)  - imm,
+    nm_efb = (1 - s_EF_use)   - fb,
+    nm_esb = (1 - s_ES_use)   - sb,
+    nm_enb = (1 - s_ENB_use)  - nb,
+    nm_ifb = (1 - s_IF_use)   - fb,
+    nm_isb = (1 - s_IS_use)   - sb,
+    nm_pf  = (1 - s_PF_use)   - nb
+  )
+
+# Run mitigation loop under alternative model
+period_results_alt <- expand.grid(
+  year_group   = target_periods,
+  scenario_idx = 1:nrow(mitigation_scenarios),
+  reduction    = coverage_seq,
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    lambda   = NA_real_,
+    scenario = mitigation_scenarios$scenario[scenario_idx],
+    efficacy = mitigation_scenarios$efficacy[scenario_idx]
+  )
+
+for (i in 1:nrow(period_results_alt)) {
+  pg      <- period_results_alt$year_group[i]
+  mit_eff <- period_results_alt$efficacy[i]
+  red     <- period_results_alt$reduction[i]
+
+  fm <- total_fm_wide %>% filter(year_group == pg)
+  nm <- nm_alt         %>% filter(year_group == pg)
+
+  ns_Juv <- 1 - ((fm$j2j3 * (1 - mit_eff * red)) + nm$nm_juv)
+  ns_Imm <- 1 - ((fm$imm  * (1 - mit_eff * red)) + nm$nm_imm)
+  ns_EF  <- 1 - ((fm$fb   * (1 - mit_eff * red)) + nm$nm_efb)
+  ns_ES  <- 1 - ((fm$sb   * (1 - mit_eff * red)) + nm$nm_esb)
+  ns_ENB <- 1 - ((fm$nb   * (1 - mit_eff * red)) + nm$nm_enb)
+  ns_IF  <- 1 - ((fm$fb   * (1 - mit_eff * red)) + nm$nm_ifb)
+  ns_IS  <- 1 - ((fm$sb   * (1 - mit_eff * red)) + nm$nm_isb)
+  ns_PF  <- 1 - ((fm$nb   * (1 - mit_eff * red)) + nm$nm_pf)
+
+  period_results_alt$lambda[i] <- calc_lambda_from_survival(
+    ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB, ns_IF, ns_IS, ns_PF
+  )
+}
+
+period_results_alt <- period_results_alt %>%
+  mutate(scenario  = factor(scenario,  levels = mitigation_scenarios$scenario),
+         year_group = factor(year_group, levels = target_periods))
+```
+
+```{r plot_vr_sensitivity, fig.width=14, fig.height=10}
+# Combine both model results for comparison
+sens_combined <- bind_rows(
+  period_results     %>% mutate(vr_model_label = vr_model),
+  period_results_alt %>% mutate(vr_model_label = alt_label)
+) %>%
+  mutate(vr_model_label = factor(vr_model_label, levels = c("pooled", "scaled")))
+
+# Compare baseline lambdas (no mitigation) by period × vr_model
+sens_baseline <- sens_combined %>%
+  filter(reduction == 0, scenario == "Complete elimination") %>%
+  select(year_group, vr_model_label, lambda)
+
+cat("=== Baseline lambda by period: pooled vs scaled ===\n")
+sens_baseline %>%
+  pivot_wider(names_from = vr_model_label, values_from = lambda) %>%
+  mutate(
+    across(c(pooled, scaled), ~round(.x, 5)),
+    diff = round(scaled - pooled, 5)
+  ) %>%
+  print()
+
+# Overlay lambda curves for 3/3 scenario (most demanding — shows biggest differences)
+p_sens <- ggplot(
+  sens_combined %>% filter(scenario == "3/3 (tori + night + weight)"),
+  aes(x = reduction, y = lambda,
+      color = year_group, linetype = vr_model_label, group = interaction(year_group, vr_model_label))
+) +
+  geom_line(linewidth = 0.85) +
+  geom_hline(yintercept = 1, color = "darkgrey", linetype = "dashed", alpha = 0.6) +
+  scale_color_manual(values = period_colors, name = "Period") +
+  scale_linetype_manual(values = c(pooled = "solid", scaled = "dashed"),
+                        name = "VR model") +
+  labs(
+    x       = "% fisheries with bycatch mitigation",
+    y       = expression(lambda),
+    title   = "Sensitivity: pooled vs scaled adult/imm survival",
+    subtitle = "3/3 mitigation scenario; solid = pooled, dashed = scaled; overlap = no sensitivity"
+  ) +
+  themeo +
+  coord_cartesian(expand = FALSE)
+
+p_sens
+
+ggsave(fig_path("sensitivity_vr_pooled_vs_scaled"), p_sens, width = 10, height = 6, dpi = 200)
+```
+
+---
+
+*FM DECOMPOSITION — EFFORT vs CATCHABILITY*
+
+Load counterfactual bycatch tables from script 03g (baseline beta × current effort,
+and current beta × baseline effort) and decompose the FM change between 1990-1995
+and each later period into two components:
+
+- **Effort factor**: how much FM changed due to reduced fishing effort (fewer hooks)
+- **Beta factor**: how much FM changed due to reduced catchability (fishing practices)
+
+```{r load_decomposition_tables}
+# Observed bycatch by fishery × period
+byc_obs <- byc_period   # already loaded above (bycatch_by_fishery_period_03g)
+
+# Counterfactual: baseline beta × current effort (effort-only change)
+byc_eff_only <- read_csv(
+  here(paste0("output/bycatch_effort_only_03g_", date_sfx, ".csv")),
+  show_col_types = FALSE
+)
+
+# Counterfactual: current beta × baseline effort (catchability-only change)
+byc_catch_only <- read_csv(
+  here(paste0("output/bycatch_catchability_only_03g_", date_sfx, ".csv")),
+  show_col_types = FALSE
+)
+
+cat("Decomposition tables loaded:\n")
+cat("  Effort-only rows:", nrow(byc_eff_only), "\n")
+cat("  Catchability-only rows:", nrow(byc_catch_only), "\n")
+```
+
+```{r compute_decomposition}
+baseline_period <- "1990-1995"
+age_cols <- c("fb", "sb", "nb", "j2j3", "imm")
+
+# Population sizes for the baseline period (for per-capita conversion)
+pop_baseline <- pop_by_period %>%
+  filter(year_group == baseline_period) %>%
+  select(age_class, Pop)
+
+pop_vec <- setNames(pop_baseline$Pop, pop_baseline$age_class)
+
+# Helper: sum DLL + PLL bycatch for each age class × period, then compute per-capita FM
+to_percap <- function(byc_df, period_filter = NULL) {
+  df <- byc_df
+  if (!is.null(period_filter)) df <- df %>% filter(year_group %in% period_filter)
+  df %>%
+    group_by(year_group) %>%
+    summarise(across(all_of(age_cols), sum, na.rm = TRUE), .groups = "drop") %>%
+    pivot_longer(cols = all_of(age_cols), names_to = "age_class", values_to = "bycatch") %>%
+    # Use baseline population sizes for per-capita (keeps denominators consistent)
+    mutate(
+      pop = pop_vec[age_class],
+      fm  = bycatch / pop
+    )
+}
+
+# Observed FM for baseline and later periods
+fm_obs_base <- to_percap(byc_obs, period_filter = baseline_period) %>%
+  rename(fm_obs_base = fm) %>% select(age_class, fm_obs_base)
+
+fm_obs_later <- to_percap(byc_obs,
+  period_filter = c("1996-2000", "2001-2005", "2006-2010")) %>%
+  rename(fm_obs = fm)
+
+# Effort-only counterfactual FM (only exists for later periods)
+fm_eff_only <- to_percap(byc_eff_only) %>% rename(fm_eff_only = fm)
+
+# Catchability-only counterfactual FM
+fm_catch_only <- to_percap(byc_catch_only) %>% rename(fm_catch_only = fm)
+
+# Combine and compute factors
+decomp <- fm_obs_later %>%
+  left_join(fm_obs_base,  by = "age_class") %>%
+  left_join(fm_eff_only  %>% select(year_group, age_class, fm_eff_only),
+            by = c("year_group", "age_class")) %>%
+  left_join(fm_catch_only %>% select(year_group, age_class, fm_catch_only),
+            by = c("year_group", "age_class")) %>%
+  mutate(
+    # Effort factor: how much FM changed through effort reduction alone (< 1 = fewer hooks)
+    effort_factor = fm_eff_only / fm_obs_base,
+    # Beta factor: remaining FM change after effort accounted for (< 1 = lower catchability)
+    beta_factor   = fm_obs / fm_eff_only,
+    # Overall factor (should equal effort_factor × beta_factor ≈ fm_obs / fm_obs_base)
+    overall_factor = fm_obs / fm_obs_base
+  )
+
+cat("\n=== FM DECOMPOSITION: EFFORT vs CATCHABILITY FACTORS ===\n")
+cat("effort_factor: fraction of baseline FM explained by effort change alone\n")
+cat("beta_factor:   fraction of effort-adjusted FM explained by catchability change\n")
+cat("overall_factor = effort_factor × beta_factor = fm_obs / fm_baseline\n\n")
+
+decomp %>%
+  select(year_group, age_class, fm_obs_base, fm_eff_only, fm_obs,
+         effort_factor, beta_factor, overall_factor) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  arrange(year_group, age_class) %>%
+  print(n = 50)
+
+# Aggregate to bycatch-weighted scalar per period (across age classes)
+# Weight = observed FM for that age class (larger FM classes dominate the average)
+decomp_by_period <- decomp %>%
+  group_by(year_group) %>%
+  summarise(
+    effort_ratio = weighted.mean(effort_factor, w = fm_obs_base, na.rm = TRUE),
+    beta_ratio   = weighted.mean(beta_factor,   w = fm_obs_base, na.rm = TRUE),
+    overall_ratio = weighted.mean(overall_factor, w = fm_obs_base, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(year_group = baseline_period, effort_ratio = 1, beta_ratio = 1, overall_ratio = 1)
+  ) %>%
+  arrange(year_group)
+
+cat("\n=== PERIOD-LEVEL DECOMPOSITION SUMMARY ===\n")
+cat("effort_ratio: bycatch-weighted mean effort factor (relative to 1990-1995)\n")
+cat("beta_ratio:   bycatch-weighted mean beta factor (relative to effort-adjusted baseline)\n\n")
+decomp_by_period %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print()
+```
+
+---
+
+*FIGURE 05: FM DECOMPOSITION BAR CHART*
+
+For each later period relative to 1990-1995 baseline, show the decomposition of
+total FM change into effort-driven and catchability-driven components.
+
+```{r plot_decomposition_bars, fig.width=9, fig.height=6}
+# Percent reduction in overall FM by period
+decomp_plot <- decomp_by_period %>%
+  filter(year_group != baseline_period) %>%
+  mutate(
+    overall_pct  = (1 - overall_ratio) * 100,
+    effort_pct   = (1 - effort_ratio)  * 100,
+    beta_pct_of_remaining = (1 - beta_ratio) * 100,
+    # Additive decomposition: effort contribution + beta contribution = overall change
+    # effort_contribution = 1 - effort_ratio
+    # beta_contribution   = effort_ratio - overall_ratio = effort_ratio*(1 - beta_ratio)
+    effort_contrib = (1 - effort_ratio) * 100,
+    beta_contrib   = (effort_ratio - overall_ratio) * 100,
+    year_group = factor(year_group, levels = c("1996-2000", "2001-2005", "2006-2010"))
+  ) %>%
+  pivot_longer(cols = c(effort_contrib, beta_contrib),
+               names_to = "component", values_to = "pct_reduction") %>%
+  mutate(component = recode(component,
+    effort_contrib = "Effort reduction",
+    beta_contrib   = "Catchability reduction (\u03b2)"
+  ))
+
+p_decomp_bars <- ggplot(decomp_plot,
+                        aes(x = year_group, y = pct_reduction, fill = component)) +
+  geom_col(position = "stack", width = 0.6, alpha = 0.85) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.3) +
+  scale_fill_manual(
+    values = c("Effort reduction" = "#2166ac",
+               "Catchability reduction (\u03b2)" = "#d6604d"),
+    name = "FM reduction component"
+  ) +
+  labs(
+    x       = "Fishing effort period",
+    y       = "% reduction in FM relative to 1990\u20131995 baseline",
+    title   = "Decomposition of fishing mortality decline by period",
+    subtitle = "FM change split into effort-driven (fewer hooks) and catchability-driven (\u03b2; fishing practices) components"
+  ) +
+  themeo +
+  theme(legend.position = "right")
+
+p_decomp_bars
+```
+
+---
+
+*FIGURE 06: LAMBDA HEATMAP WITH PERIOD RECOVERY THRESHOLDS*
+
+Same format as the mean-effort heatmap: coverage × efficacy lambda surface, with
+points showing where each mitigation scenario crosses the recovery threshold (lambda = 1)
+for each time period. Within each scenario (fixed y = efficacy), points shift leftward
+over time as declining FM means less fleet coverage is needed for recovery.
+This mirrors the old compliance-level visualization but uses time period as the grouping variable.
+Note: each period's FM already embeds real-world mitigation that occurred during that period.
+
+```{r build_heatmap_surface, fig.width=10, fig.height=7}
+# --- 1990-1995 baseline FM and nm (also used by Figure 07 decomp heatmap) ---
+fm_base <- total_fm_wide %>% filter(year_group == "1990-1995")
+nm_base <- nm_by_period  %>% filter(year_group == "1990-1995")
+
+# --- Lambda surface: coverage (x) × efficacy (y) → lambda, using 1990-1995 baseline ---
+heatmap_grid <- expand.grid(coverage = seq(0, 1, by = 0.02),
+                            efficacy = seq(0, 1, by = 0.02)) %>%
+  rowwise() %>%
+  mutate(lambda = calc_lambda_from_survival(
+    ns_Juv = 1 - ((fm_base$j2j3 * (1 - efficacy * coverage)) + nm_base$nm_juv),
+    ns_Imm = 1 - ((fm_base$imm  * (1 - efficacy * coverage)) + nm_base$nm_imm),
+    ns_EF  = 1 - ((fm_base$fb   * (1 - efficacy * coverage)) + nm_base$nm_efb),
+    ns_ES  = 1 - ((fm_base$sb   * (1 - efficacy * coverage)) + nm_base$nm_esb),
+    ns_ENB = 1 - ((fm_base$nb   * (1 - efficacy * coverage)) + nm_base$nm_enb),
+    ns_IF  = 1 - ((fm_base$fb   * (1 - efficacy * coverage)) + nm_base$nm_ifb),
+    ns_IS  = 1 - ((fm_base$sb   * (1 - efficacy * coverage)) + nm_base$nm_isb),
+    ns_PF  = 1 - ((fm_base$nb   * (1 - efficacy * coverage)) + nm_base$nm_pf)
+  )) %>%
+  ungroup()
+
+# --- Recovery threshold points: min coverage to reach lambda >= 1 per period × scenario ---
+# threshold_by_period already computed in Figure 04 chunk; join scenario efficacy
+threshold_heat_pts <- threshold_by_period %>%
+  left_join(mitigation_scenarios %>% select(scenario, efficacy), by = "scenario") %>%
+  mutate(
+    year_group = factor(year_group, levels = target_periods),
+    scenario   = factor(scenario,   levels = mitigation_scenarios$scenario)
+  )
+
+# Labels: show scenario name at the 1990-1995 point (rightmost — needs most coverage)
+threshold_labels <- threshold_heat_pts %>%
+  filter(year_group == "1990-1995")
+
+p_heatmap_periods <- ggplot(heatmap_grid, aes(x = coverage, y = efficacy)) +
+  geom_tile(aes(fill = lambda)) +
+  # Lambda = 1 recovery threshold contour (bold white)
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  # Lines connecting periods within each scenario (temporal trajectory)
+  geom_line(data = threshold_heat_pts,
+            aes(x = min_coverage, y = efficacy, group = scenario),
+            color = "white", linewidth = 0.5, alpha = 0.6,
+            inherit.aes = FALSE) +
+  # White halo for visibility
+  geom_point(data = threshold_heat_pts,
+             aes(x = min_coverage, y = efficacy),
+             shape = 16, size = 5, color = "white",
+             inherit.aes = FALSE) +
+  # Points colored by period
+  geom_point(data = threshold_heat_pts,
+             aes(x = min_coverage, y = efficacy, color = year_group),
+             shape = 16, size = 3.5,
+             inherit.aes = FALSE) +
+  # Scenario labels at the 1990-1995 point (rightmost per scenario)
+  geom_label(data = threshold_labels,
+             aes(x = min_coverage + 0.02, y = efficacy, label = scenario),
+             hjust = 0, size = 2.4, fill = "white", alpha = 0.85,
+             label.padding = unit(0.12, "lines"), label.size = 0.2,
+             inherit.aes = FALSE) +
+  scale_fill_distiller(palette = "RdBu", direction = 1,
+                       limits = range(heatmap_grid$lambda),
+                       name = expression(lambda)) +
+  scale_color_manual(values = period_colors, name = "Period") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(
+    x        = "Proportion of fleet with mitigation (coverage)",
+    y        = "Per-hook bycatch reduction (efficacy)",
+    title    = "Minimum fleet coverage for population recovery, by period and mitigation scenario",
+    subtitle = paste0(
+      "Surface = 1990\u20131995 FM and vital rates; white contour = \u03bb = 1.\n",
+      "Points = minimum coverage to achieve \u03bb \u2265 1 for each period (colored) and scenario (y-position).\n",
+      "Lines connect periods within each scenario \u2014 leftward shift = less coverage needed as FM declined."
+    )
+  ) +
+  coord_cartesian(expand = FALSE) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid = element_blank(), legend.position = "right")
+
+p_heatmap_periods
+```
+
+---
+
+*FIGURE 07: EFFORT × CATCHABILITY DECOMPOSITION HEATMAP*
+
+A new lambda surface where axes represent the fraction of baseline fishing effort
+and baseline catchability (β) remaining. Period observations are placed at their
+decomposed (effort_ratio, beta_ratio) coordinates. Theoretical scenarios lie along
+the right edge (effort_ratio = 1), since they change β via mitigation without
+altering the number of hooks.
+
+```{r build_decomp_heatmap, fig.width=10, fig.height=7}
+# Build lambda surface: effort_ratio × beta_ratio, using 1990-1995 FM
+eff_r_seq  <- seq(0, 1, by = 0.02)  # effort_ratio: fraction of baseline effort remaining
+beta_r_seq <- seq(0, 1, by = 0.02)  # beta_ratio:   fraction of baseline beta remaining
+
+decomp_grid <- expand.grid(effort_ratio = eff_r_seq, beta_ratio = beta_r_seq) %>%
+  rowwise() %>%
+  mutate(lambda = calc_lambda_from_survival(
+    ns_Juv = 1 - ((fm_base$j2j3 * effort_ratio * beta_ratio) + nm_base$nm_juv),
+    ns_Imm = 1 - ((fm_base$imm  * effort_ratio * beta_ratio) + nm_base$nm_imm),
+    ns_EF  = 1 - ((fm_base$fb   * effort_ratio * beta_ratio) + nm_base$nm_efb),
+    ns_ES  = 1 - ((fm_base$sb   * effort_ratio * beta_ratio) + nm_base$nm_esb),
+    ns_ENB = 1 - ((fm_base$nb   * effort_ratio * beta_ratio) + nm_base$nm_enb),
+    ns_IF  = 1 - ((fm_base$fb   * effort_ratio * beta_ratio) + nm_base$nm_ifb),
+    ns_IS  = 1 - ((fm_base$sb   * effort_ratio * beta_ratio) + nm_base$nm_isb),
+    ns_PF  = 1 - ((fm_base$nb   * effort_ratio * beta_ratio) + nm_base$nm_pf)
+  )) %>%
+  ungroup()
+
+# Observed period points at their decomposed coordinates
+obs_pts <- decomp_by_period %>%
+  mutate(
+    label      = year_group,
+    year_group = factor(year_group, levels = c("1990-1995", "1996-2000", "2001-2005", "2006-2010"))
+  )
+
+# Theoretical scenario points: effort_ratio = 1 (no effort change), beta_ratio = 1 - eff*cov
+# Use full coverage (cov = 1) for each scenario to place them along the right edge
+scenario_edge_pts <- mitigation_scenarios %>%
+  mutate(
+    effort_ratio = 1,
+    beta_ratio   = 1 - efficacy * 1
+  )
+
+period_colors_all <- c("1990-1995" = "#2166ac",
+                       "1996-2000" = "#4dac26",
+                       "2001-2005" = "#d01c8b",
+                       "2006-2010" = "#f4a582")
+
+p_decomp_heatmap <- ggplot(decomp_grid, aes(x = effort_ratio, y = beta_ratio)) +
+  geom_raster(aes(fill = lambda), interpolate = TRUE) +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white",
+               linewidth = 1.2, linetype = "solid") +
+  # Theoretical scenario points along right edge (effort_ratio = 1)
+  geom_point(data = scenario_edge_pts,
+             aes(x = effort_ratio, y = beta_ratio),
+             shape = 22, fill = "white", color = "black", size = 2.5) +
+  # Observed period points
+  geom_point(data = obs_pts,
+             aes(x = effort_ratio, y = beta_ratio, color = year_group),
+             size = 4, shape = 21, fill = "white", stroke = 1.5) +
+  geom_text(data = obs_pts,
+            aes(x = effort_ratio, y = beta_ratio, label = label, color = year_group),
+            hjust = -0.15, vjust = 0, size = 3, show.legend = FALSE) +
+  scale_fill_distiller(
+    palette = "RdYlBu", direction = 1,
+    name    = expression(lambda)
+  ) +
+  scale_color_manual(values = period_colors_all, name = "Period") +
+  labs(
+    x       = "Effort ratio (fraction of 1990\u20131995 effort remaining)",
+    y       = expression(paste(beta, " ratio (fraction of 1990\u20131995 catchability remaining)")),
+    title   = "FM decomposition: effort vs catchability factors",
+    subtitle = paste0("Surface = \u03bb under 1990\u20131995 FM \u00d7 effort_ratio \u00d7 \u03b2_ratio; ",
+                      "circles = observed periods; squares = theoretical scenarios at full coverage")
+  ) +
+  coord_cartesian(xlim = c(0, 1.05), ylim = c(0, 1.05), expand = FALSE) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "right",
+        panel.grid = element_blank())
+
+p_decomp_heatmap
+```
+
+**plot 8: decomposition heatmap zoomed to recovery threshold**
+```{r plot_decomp_heatmap_zoom, fig.width=10, fig.height=7}
+p_decomp_heatmap_zoom <- p_decomp_heatmap +
+  coord_cartesian(
+    xlim = c(min(obs_pts$effort_ratio, na.rm = TRUE) - 0.05, 1.05),
+    ylim = c(min(obs_pts$beta_ratio,   na.rm = TRUE) - 0.05, 1.05),
+    expand = FALSE
+  ) +
+  labs(title   = "FM decomposition heatmap — zoomed to observed range",
+       subtitle = "Zoomed to region containing observed period points; white contour = \u03bb = 1")
+
+p_decomp_heatmap_zoom
+```
+
+## Save new figures (05–08)
+
+```{r save_new_figures}
+ggsave(fig_path("05_fm_decomposition_bars"),   p_decomp_bars,          width = 9,  height = 6,  dpi = 200)
+ggsave(fig_path("06_observed_on_heatmap"),     p_heatmap_periods,      width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("07_decomp_heatmap"),          p_decomp_heatmap,       width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("08_decomp_heatmap_zoom"),     p_decomp_heatmap_zoom,  width = 10, height = 7,  dpi = 200)
+
+message("Figures 05-08 saved to output/figures/ with suffix _by_period_", date_sfx)
+```

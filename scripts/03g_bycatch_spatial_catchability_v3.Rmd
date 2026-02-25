@@ -1,5 +1,5 @@
 ---
-title: "Wandering Albatross Bycatch - Spatial Catchability v2 (Fleet-by-Period)"
+title: "Wandering Albatross Bycatch - Spatial Catchability v3 (Fleet-by-Period, Counterfactuals)"
 author: "WAAL Bycatch Project"
 date: "`r Sys.Date()`"
 output: html_document
@@ -1066,6 +1066,97 @@ bycatch_results %>%
   print(n = 100)
 ```
 
+# Section 9b: Counterfactual Bycatch for FM Decomposition
+
+Compute two counterfactual bycatch estimates for each later period relative to the
+1990-1995 baseline, to decompose the observed FM change into effort-driven and
+catchability-driven components.
+
+- **(a) effort_only**: use 1990-1995 beta rasters × current-period effort rasters.
+  Holds catchability fixed at baseline; change reflects effort reduction only.
+- **(b) catchability_only**: use current-period beta rasters × 1990-1995 effort rasters.
+  Holds effort fixed at baseline; change reflects catchability (beta) reduction only.
+
+Only fleet × fishery combinations that have BOTH baseline AND current-period rasters
+are included, ensuring a fair comparison.
+
+```{r calculate-bycatch-counterfactuals}
+baseline_period <- "1990-1995"
+later_periods   <- c("1996-2000", "2001-2005", "2006-2010")
+
+bycatch_effort_only       <- tibble()
+bycatch_catchability_only <- tibble()
+
+for (yg in later_periods) {
+  combos_yg <- fleet_fp_combos %>% filter(year_group == yg)
+
+  for (i in 1:nrow(combos_yg)) {
+    fi <- combos_yg$fishery[i]
+    fl <- combos_yg$fleet[i]
+
+    key_current  <- paste(fi, fl, yg,              sep = "|")
+    key_baseline <- paste(fi, fl, baseline_period, sep = "|")
+
+    effort_current  <- effort_rasters[[key_current]]
+    effort_baseline <- effort_rasters[[key_baseline]]
+    catch_current   <- catchability_rasters[[key_current]]
+    catch_baseline  <- catchability_rasters[[key_baseline]]
+
+    # Skip if either current OR baseline rasters are missing
+    if (is.null(effort_current)  || is.null(catch_current))  next
+    if (is.null(effort_baseline) || is.null(catch_baseline)) next
+    if (is.logical(catch_current)  && is.na(catch_current))  next
+    if (is.logical(catch_baseline) && is.na(catch_baseline)) next
+
+    # (a) Effort-only: baseline beta × current effort
+    byc_eff_only <- map_dbl(names(bi_dists_aligned), function(age) {
+      global(catch_baseline * effort_current * bi_dists_aligned[[age]], "sum", na.rm = TRUE)[1, 1]
+    })
+    names(byc_eff_only) <- names(bi_dists_aligned)
+
+    bycatch_effort_only <- bind_rows(bycatch_effort_only, tibble(
+      fishery  = fi, fleet = fl, year_group = yg,
+      bi_total = sum(byc_eff_only),
+      fb       = byc_eff_only["fb"],
+      sb       = byc_eff_only["sb"],
+      nb       = byc_eff_only["nb"],
+      j2j3     = byc_eff_only["j2j3"],
+      imm      = byc_eff_only["imm"]
+    ))
+
+    # (b) Catchability-only: current beta × baseline effort
+    byc_catch_only <- map_dbl(names(bi_dists_aligned), function(age) {
+      global(catch_current * effort_baseline * bi_dists_aligned[[age]], "sum", na.rm = TRUE)[1, 1]
+    })
+    names(byc_catch_only) <- names(bi_dists_aligned)
+
+    bycatch_catchability_only <- bind_rows(bycatch_catchability_only, tibble(
+      fishery  = fi, fleet = fl, year_group = yg,
+      bi_total = sum(byc_catch_only),
+      fb       = byc_catch_only["fb"],
+      sb       = byc_catch_only["sb"],
+      nb       = byc_catch_only["nb"],
+      j2j3     = byc_catch_only["j2j3"],
+      imm      = byc_catch_only["imm"]
+    ))
+  }
+}
+
+cat("\n=== COUNTERFACTUAL BYCATCH: EFFORT-ONLY ===\n")
+bycatch_effort_only %>%
+  group_by(fishery, year_group) %>%
+  summarise(across(c(bi_total, fb, sb, nb, j2j3, imm), sum), .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print(n = 30)
+
+cat("\n=== COUNTERFACTUAL BYCATCH: CATCHABILITY-ONLY ===\n")
+bycatch_catchability_only %>%
+  group_by(fishery, year_group) %>%
+  summarise(across(c(bi_total, fb, sb, nb, j2j3, imm), sum), .groups = "drop") %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print(n = 30)
+```
+
 # Section 10: Summary Tables
 
 ## Annual bycatch by fishery x period
@@ -1309,7 +1400,7 @@ percap_by_period_table %>%
 
 # Save
 write_csv(percap_by_period_table,
-          here(paste0("output/percap_rates_by_period_03f_", date_sfx, ".csv")))
+          here(paste0("output/percap_rates_by_period_03g_", date_sfx, ".csv")))
 ```
 
 ```{r percap-by-period-plot, fig.width = 10, fig.height = 6}
@@ -1362,7 +1453,7 @@ p_percap_period <- ggplot(plot_percap_time,
     panel.grid.minor = element_blank()
   )
 print(p_percap_period)
-ggsave(here(paste0("output/maps/percap_by_period_03f_", date_sfx, ".png")),
+ggsave(here(paste0("output/maps/percap_by_period_03g_", date_sfx, ".png")),
        plot = p_percap_period, width = 10, height = 6, dpi = 300)
 ```
 
@@ -1480,7 +1571,7 @@ annual_percap_by_age %>%
 
 write_csv(
   annual_percap_by_age %>% select(year, age_class, population, annual_byc, percap),
-  here(paste0("output/percap_rates_by_year_03f_", date_sfx, ".csv"))
+  here(paste0("output/percap_rates_by_year_03g_", date_sfx, ".csv"))
 )
 ```
 
@@ -1506,7 +1597,7 @@ p_percap_year <- ggplot(annual_percap_by_age,
     panel.grid.minor = element_line(color = "grey92")
   )
 print(p_percap_year)
-ggsave(here(paste0("output/maps/percap_by_year_03f_", date_sfx, ".png")),
+ggsave(here(paste0("output/maps/percap_by_year_03g_", date_sfx, ".png")),
        plot = p_percap_year, width = 11, height = 6, dpi = 300)
 ```
 
@@ -1591,7 +1682,7 @@ for (fi in c("PLL", "DLL")) {
   combined <- wrap_plots(catch_maps, ncol = 2) +
     plot_annotation(title = paste(fi, "- Effort-Weighted Mean Catchability by Period"))
   print(combined)
-  ggsave(here(paste0("output/maps/catchability_", tolower(fi), "_03f_", date_sfx, ".png")),
+  ggsave(here(paste0("output/maps/catchability_", tolower(fi), "_03g_", date_sfx, ".png")),
          plot = combined, width = 14, height = 12, dpi = 300)
 }
 ```
@@ -1641,7 +1732,7 @@ for (fi in c("PLL", "DLL")) {
   combined <- wrap_plots(byc_maps, ncol = 2) +
     plot_annotation(title = paste(fi, "- Bird Island Bycatch Density by Period"))
   print(combined)
-  ggsave(here(paste0("output/maps/bycatch_density_", tolower(fi), "_03f_", date_sfx, ".png")),
+  ggsave(here(paste0("output/maps/bycatch_density_", tolower(fi), "_03g_", date_sfx, ".png")),
          plot = combined, width = 14, height = 12, dpi = 300)
 }
 ```
@@ -1710,7 +1801,7 @@ for (fi in c("PLL", "DLL")) {
       subtitle = "Mean annual bycatch (1990\u20132010), independent color scales per age class"
     )
   print(combined_age)
-  ggsave(here(paste0("output/maps/bycatch_by_age_", tolower(fi), "_03f_", date_sfx, ".png")),
+  ggsave(here(paste0("output/maps/bycatch_by_age_", tolower(fi), "_03g_", date_sfx, ".png")),
          plot = combined_age, width = 16, height = 10, dpi = 300)
 }
 ```
@@ -1763,7 +1854,7 @@ combined_age_all <- wrap_plots(age_maps_comb[age_order_map], ncol = 3) +
     subtitle = "Mean annual bycatch (1990\u20132010), independent color scales per age class"
   )
 print(combined_age_all)
-ggsave(here(paste0("output/maps/bycatch_by_age_combined_03f_", date_sfx, ".png")),
+ggsave(here(paste0("output/maps/bycatch_by_age_combined_03g_", date_sfx, ".png")),
        plot = combined_age_all, width = 16, height = 10, dpi = 300)
 ```
 
@@ -1774,29 +1865,29 @@ dir.create(here("output/rasters"), showWarnings = FALSE, recursive = TRUE)
 dir.create(here("output/maps"), showWarnings = FALSE, recursive = TRUE)
 
 # Save bycatch results (fleet-level detail)
-write_csv(bycatch_results, here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")))
+write_csv(bycatch_results, here(paste0("output/bycatch_by_fleet_period_03g_", date_sfx, ".csv")))
 
 # Save fishery x period summaries
-write_csv(byc_by_fp, here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")))
+write_csv(byc_by_fp, here(paste0("output/bycatch_by_fishery_period_03g_", date_sfx, ".csv")))
 
 # Save per capita rates
-write_csv(percap_rates, here(paste0("output/bycatch_percapita_03f_", date_sfx, ".csv")))
+write_csv(percap_rates, here(paste0("output/bycatch_percapita_03g_", date_sfx, ".csv")))
 
 # Save gap-fill log
-write_csv(gap_fill_log, here(paste0("output/gap_fill_log_03f_", date_sfx, ".csv")))
+write_csv(gap_fill_log, here(paste0("output/gap_fill_log_03g_", date_sfx, ".csv")))
 
 # Save coverage info
-write_csv(coverage_info, here(paste0("output/coverage_info_03f_", date_sfx, ".csv")))
+write_csv(coverage_info, here(paste0("output/coverage_info_03g_", date_sfx, ".csv")))
 
 # Save beta values for each study
 write_csv(
   bpue_betas %>% select(row_id, fishery_type, fleet, plot_year_group, bpue,
                          beta, B_study, fleet_hooks_in_box, has_effort_match),
-  here(paste0("output/bpue_study_betas_03f_", date_sfx, ".csv"))
+  here(paste0("output/bpue_study_betas_03g_", date_sfx, ".csv"))
 )
 
 # Save fishery-level beta summary
-write_csv(beta_by_fishery_type, here(paste0("output/beta_by_fishery_type_03f_", date_sfx, ".csv")))
+write_csv(beta_by_fishery_type, here(paste0("output/beta_by_fishery_type_03g_", date_sfx, ".csv")))
 
 # Save catchability rasters per fishery x period (effort-weighted mean across fleets)
 for (fi in c("PLL", "DLL")) {
@@ -1826,12 +1917,42 @@ for (fi in c("PLL", "DLL")) {
 
     yg_clean <- str_replace(yg, "-", "_")
     writeRaster(mean_catch,
-                here(paste0("output/rasters/catchability_", tolower(fi), "_", yg_clean, "_03f_", date_sfx, ".tif")),
+                here(paste0("output/rasters/catchability_", tolower(fi), "_", yg_clean, "_03g_", date_sfx, ".tif")),
                 overwrite = TRUE)
   }
 }
 
 cat("\nAll outputs saved\n")
+```
+
+## Decomposition tables (new in 03g)
+
+```{r export-decomposition-tables}
+# Scalar beta summary per fleet × period (from Section 8 gap-fill setup)
+write_csv(beta_by_fleet_period,
+          here(paste0("output/beta_by_fleet_period_03g_", date_sfx, ".csv")))
+
+# Counterfactual bycatch: effort-only (baseline beta × current effort), summed by fishery × period
+write_csv(
+  bycatch_effort_only %>%
+    group_by(fishery, year_group) %>%
+    summarise(across(c(bi_total, fb, sb, nb, j2j3, imm), sum), .groups = "drop"),
+  here(paste0("output/bycatch_effort_only_03g_", date_sfx, ".csv"))
+)
+
+# Counterfactual bycatch: catchability-only (current beta × baseline effort), summed by fishery × period
+write_csv(
+  bycatch_catchability_only %>%
+    group_by(fishery, year_group) %>%
+    summarise(across(c(bi_total, fb, sb, nb, j2j3, imm), sum), .groups = "drop"),
+  here(paste0("output/bycatch_catchability_only_03g_", date_sfx, ".csv"))
+)
+
+# Total mean annual hooks per fleet × fishery × period (already computed in diagnostic section)
+write_csv(hooks_by_fp,
+          here(paste0("output/hooks_by_fleet_period_03g_", date_sfx, ".csv")))
+
+cat("Decomposition tables saved.\n")
 ```
 
 # Diagnostics
@@ -1878,12 +1999,12 @@ cat("Ratio ~ 1 → BI bird distribution aligns with total WAAL distribution\n")
 
 # Section 13: Demographic Validation — Implied Natural Mortality Check
 
-Compare 03f per-capita fishing mortality against known survival rates from the
+Compare 03g per-capita fishing mortality against known survival rates from the
 demographic model (WAAL_bycatch_5-27-25.Rmd). If fishing mortality exceeds total
 mortality (1 - survival), natural mortality would be negative — an impossibility
 that flags overestimated bycatch.
 
-Mapping from 03f age classes to demographic model survival rates:
+Mapping from 03g age classes to demographic model survival rates:
 
 - **j2j3** → s_Juv = 0.846 (J2, J3 stages)
 - **imm** → s_Imm = 0.921 (Imm4, Imm5, PB stages)
@@ -1895,7 +2016,7 @@ Mapping from 03f age classes to demographic model survival rates:
 # Known survival rates from demographic model (Clay et al. / Pardo et al.)
 known_survival <- tibble(
   age_class = c("j2j3", "imm", "fb", "sb", "nb"),
-  # Use mean survival across the stages that map to each 03f age class
+  # Use mean survival across the stages that map to each 03g age class
   s_observed = c(
     0.846,                          # s_Juv
     0.921,                          # s_Imm
@@ -1912,7 +2033,7 @@ known_survival <- tibble(
   )
 )
 
-# Combine DLL + PLL per capita rates from 03f
+# Combine DLL + PLL per capita rates from 03g
 percap_combined <- percap_rates %>%
   group_by(age_class) %>%
   summarise(
@@ -1938,7 +2059,7 @@ validation <- known_survival %>%
   )
 
 cat("\n=== DEMOGRAPHIC VALIDATION: IMPLIED NATURAL MORTALITY ===\n")
-cat("If fishing mortality from 03f exceeds total mortality, natural mortality\n")
+cat("If fishing mortality from 03g exceeds total mortality, natural mortality\n")
 cat("goes negative — meaning the bycatch estimate is too high.\n\n")
 
 validation %>%
@@ -1954,7 +2075,7 @@ n_suspicious <- sum(validation$implied_natural_mort >= 0 & validation$implied_na
 
 if (n_impossible > 0) {
   cat("WARNING:", n_impossible, "age class(es) have NEGATIVE implied natural mortality.\n")
-  cat("  → 03f fishing mortality exceeds observed total mortality for these classes.\n")
+  cat("  → 03g fishing mortality exceeds observed total mortality for these classes.\n")
   cat("  → Bycatch estimates are almost certainly too high.\n")
 } else if (n_suspicious > 0) {
   cat("CAUTION:", n_suspicious, "age class(es) have near-zero natural mortality.\n")
@@ -2013,11 +2134,11 @@ Same validation expressed as actual numbers of birds dying per year,
 which is more intuitive than per-capita rates.
 
 - **Total deaths/yr** = (1 - s_observed) × population size
-- **Bycatch deaths/yr** = annual bycatch from 03f (DLL + PLL)
+- **Bycatch deaths/yr** = annual bycatch from 03g (DLL + PLL)
 - **Other deaths/yr** = total - bycatch (implied natural mortality)
 
 The observed survival rates (from mark-recapture monitoring at Bird Island)
-already include all sources of mortality. Bycatch from 03f should represent
+already include all sources of mortality. Bycatch from 03g should represent
 a biologically reasonable fraction of total deaths — not all of them.
 
 ```{r mortality-budget-birds}
@@ -2039,7 +2160,7 @@ mortality_budget <- validation %>%
 
 cat("\n=== MORTALITY BUDGET: BIRD COUNTS PER YEAR ===\n")
 cat("Total deaths = observed mortality rate × population size\n")
-cat("Bycatch deaths = 03f estimate (DLL + PLL, mean annual)\n")
+cat("Bycatch deaths = 03g estimate (DLL + PLL, mean annual)\n")
 cat("Other deaths = total - bycatch (implied natural causes)\n\n")
 
 mortality_budget %>%
@@ -2052,7 +2173,7 @@ mortality_budget %>%
 cat("\n--- Totals across all age classes ---\n")
 cat("Total BI population:   ", round(sum(mortality_budget$population), 0), "birds\n")
 cat("Total deaths/year:     ", round(sum(mortality_budget$total_deaths_yr), 0), "birds\n")
-cat("Bycatch deaths/year:   ", round(sum(mortality_budget$annual_bycatch), 0), "birds (03f estimate)\n")
+cat("Bycatch deaths/year:   ", round(sum(mortality_budget$annual_bycatch), 0), "birds (03g estimate)\n")
 cat("Other deaths/year:     ", round(sum(mortality_budget$other_deaths_yr), 0), "birds\n")
 cat("Fishing % of all deaths:", round(100 * sum(mortality_budget$annual_bycatch) /
                                        sum(mortality_budget$total_deaths_yr), 1), "%\n")
@@ -2060,9 +2181,9 @@ cat("Fishing % of all deaths:", round(100 * sum(mortality_budget$annual_bycatch)
 
 ```{r save-validation}
 # Save validation table
-write_csv(validation, here(paste0("output/demographic_validation_03f_", date_sfx, ".csv")))
-write_csv(percap_period_combined, here(paste0("output/demographic_validation_by_period_03f_", date_sfx, ".csv")))
-write_csv(mortality_budget, here(paste0("output/mortality_budget_03f_", date_sfx, ".csv")))
+write_csv(validation, here(paste0("output/demographic_validation_03g_", date_sfx, ".csv")))
+write_csv(percap_period_combined, here(paste0("output/demographic_validation_by_period_03g_", date_sfx, ".csv")))
+write_csv(mortality_budget, here(paste0("output/mortality_budget_03g_", date_sfx, ".csv")))
 ```
 
 # Session Info

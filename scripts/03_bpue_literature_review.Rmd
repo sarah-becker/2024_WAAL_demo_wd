@@ -270,14 +270,14 @@ pll_data <- pll_data %>%
   ))
 
 # Assign year groups
-year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+year_groups <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
 
 pll_data <- pll_data %>%
   mutate(year_group = case_when(
-    Year >= 1990 & Year <= 1995 ~ "1990-1995",
-    Year >= 1996 & Year <= 2000 ~ "1996-2000",
-    Year >= 2001 & Year <= 2005 ~ "2001-2005",
-    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009",
     TRUE ~ NA_character_
   )) %>%
   filter(!is.na(year_group))
@@ -342,12 +342,12 @@ dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf
     ),
     Lon = ifelse(Lon > 180, Lon - 360, Lon)
   ) %>%
-  filter(Year >= 1990, Year <= 2010) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
   mutate(year_group = case_when(
-    Year >= 1990 & Year <= 1995 ~ "1990-1995",
-    Year >= 1996 & Year <= 2000 ~ "1996-2000",
-    Year >= 2001 & Year <= 2005 ~ "2001-2005",
-    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009",
     TRUE ~ NA_character_
   )) %>%
   filter(!is.na(year_group))
@@ -412,10 +412,10 @@ BPUE entries that span multiple year groups (e.g., "2001-2005, 2006-2010")
 get duplicated so they appear on each relevant year group panel.
 
 ```{r expand-periods}
-target_year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+target_year_groups <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
 
 # Parse the year_group field, which may contain comma-separated periods
-# Also handle non-standard periods like "1995-2000" -> map to "1996-2000"
+# Also handle non-standard periods like "1995-2000" -> map to nearest target group(s)
 expand_to_target_periods <- function(yg_string) {
   if (is.na(yg_string) | yg_string == "") return(character(0))
 
@@ -426,10 +426,13 @@ expand_to_target_periods <- function(yg_string) {
   matched <- map(periods, function(p) {
     # Direct match
     if (p %in% target_year_groups) return(p)
-    # Handle non-standard ranges by checking overlap
-    if (p == "1995-2000") return("1996-2000")
-    if (p == "2005-2010") return("2006-2010")
-    if (p == " 1996-2000") return("1996-2000")
+    # Handle non-standard ranges by checking overlap with target periods
+    # "1995-2000" spans both 1995-1999 and 2000-2004
+    if (p == "1995-2000") return(c("1995-1999", "2000-2004"))
+    # "2005-2010" maps to 2005-2009 (2010 is outside analysis period)
+    if (p == "2005-2010") return("2005-2009")
+    # leading-space variants
+    if (p == " 1996-2000") return(c("1995-1999", "2000-2004"))
     if (p == " 2011-2015") return(character(0))
     if (p == "2011-2015") return(character(0))
     # If it contains a target, match it

@@ -1381,3 +1381,207 @@ Integrated New Zealand BLL data (Rep Log 17287) into scripts 01, 04, and WAAL_by
 - No changes needed: NZ already added fleet-by-fleet (no grid mixing issue); date suffix already on all outputs; bird density weighting and resample method already correctly handled; `make_effort_raster()` uses correct mean annual aggregation.
 
 *Last updated: February 23, 2026*
+
+---
+
+## Session: February 24, 2026
+
+### Overview
+Extended `03f_bycatch_spatial_catchability_v2.Rmd` with per-capita temporal analysis and age-class maps.
+Created two new standalone demographic model scripts.
+
+### Changes to `03f_bycatch_spatial_catchability_v2.Rmd`
+
+1. **Per-capita rates by period**: Added `percap-by-period` chunk computing PLL + DLL per-capita FM for each 5-year period, saved to `output/percap_rates_by_period_03f_<date>.csv`. Line plot saved to `output/maps/percap_by_period_03f_<date>.png`.
+
+2. **Per-capita rates by year**: Added `percap-by-year` section with a triple-nested loop (year × fishery × fleet) that applies period-level catchability (β) to individual-year effort data. Saved to `output/percap_rates_by_year_03f_<date>.csv` and `output/maps/percap_by_year_03f_<date>.png`. Subtitle notes β is period-fixed.
+
+3. **ggsave calls added to all 6 previously unsaved figures**: percap-by-period, percap-by-year, catchability maps (loop), bycatch density maps (loop). All saved to `output/maps/` with date suffix, 300 dpi.
+
+4. **Bycatch density maps by age class**: Added `map-bycatch-by-age` and `map-bycatch-by-age-combined` chunks. For each fishery (PLL/DLL) and combined, produces a 5-panel patchwork (j2j3, imm, fb, sb, nb) of mean annual bycatch density across all periods. Saved to `output/maps/bycatch_by_age_<fishery>_03f_<date>.png`.
+
+### New script: `WAAL_bycatch_mean_effort_2-24-26.Rmd`
+
+Copy of original demo script modified to use mean annual fishing effort across all four 5-year periods (1990–2010) instead of the 1990–1995 period only.
+
+- Title updated to indicate mean annual effort
+- Bycatch loading: averages per-capita FM across all four periods
+- Population sizes: averaged across the four Clay periods
+- Fleet bycatch: averaged across all periods
+- All figure filenames use `_mean1990_2010_<date>` suffix to avoid overwriting original
+
+**Key finding**: Full bycatch elimination under mean annual effort does not push lambda > 1. This is because mean annual FM (averaged across declining 1990–2010 effort) is lower than the 1990–1995 FM — resulting in a smaller survival gain at full elimination. Not a bug — reflects that mean effort is not the highest-effort baseline.
+
+### New script: `WAAL_bycatch_by_period_2-24-26.Rmd`
+
+Third standalone demographic model script. Runs blanket mitigation scenarios independently for each of the four 5-year fishing effort periods. Key concept: period-specific FM rates are used as independent baselines, allowing comparison of how lambda response curves shift as fishing effort declined from 1990–1995 through 2006–2010.
+
+**Structure:**
+- Same vital rates and matrix as original demo
+- Loads bycatch from all 4 periods via `bycatch_by_fishery_period_03f_<date>.csv`
+- Period ↔ population mapping: 1990–1995 byc → 1990–1994 Clay pop, etc.
+- Computes period-specific total FM and natural mortality
+- Runs `expand.grid(year_group × scenario_idx × reduction)` loop (~2828 rows)
+- Figure names use `_by_period_<date>` suffix
+
+**Figures produced (4):**
+1. `01_baseline_lambda_by_period` — lambda at zero mitigation by period (bar chart; shows effort reduction effect alone)
+2. `02_lambda_curves_by_period` — lambda vs coverage, faceted by mitigation scenario, colored by period
+3. `03_lambda_curves_zoom` — same, zoomed to lambda = 1 threshold
+4. `04_threshold_heatmap` — tile heatmap: minimum coverage to reach lambda >= 1 by scenario × period; red = never recovers
+
+*Last updated: February 24, 2026 (session 1)*
+
+---
+
+## Session: February 24, 2026 (session 2)
+
+### New script: `scripts/03g_bycatch_spatial_catchability_v3.Rmd`
+
+Copy of `03f_bycatch_spatial_catchability_v2.Rmd` with additions to support FM decomposition into effort-driven vs catchability-driven components. All `_03f_` file/figure names changed to `_03g_`.
+
+**New Section 9b** (`calculate-bycatch-counterfactuals`): for each later period vs 1990–1995 baseline, computes:
+- `bycatch_effort_only`: baseline β rasters × current effort (effort change only)
+- `bycatch_catchability_only`: current β rasters × baseline effort (catchability change only)
+Only fleet × fishery combinations present in BOTH baseline and current period are included.
+
+**New Section 12b** (`export-decomposition-tables`): saves four new CSVs — `beta_by_fleet_period_03g`, `bycatch_effort_only_03g`, `bycatch_catchability_only_03g`, `hooks_by_fleet_period_03g`.
+
+### Updated script: `scripts/WAAL_bycatch_by_period_2-24-26.Rmd`
+
+Extended from 432 to ~900 lines. Key updates:
+
+**Period-specific vital rates** (`load_period_vrs` chunk):
+- Two VRs vary across periods: `s_Juv` (strong declining trend) and `s_adult_pooled` (moderate variation); r/b/k stable and held at mean values
+- Inline estimates from Clay et al. figure (to be replaced with PlotDigitizer values):
+  - s_Juv: 0.84 / 0.76 / 0.68 / 0.76 (2006–2010 gap-filled with mean of available periods)
+  - s_adult_pooled: 0.935 / 0.925 / 0.915 / 0.930
+- `vr_model` toggle: `"pooled"` (same pooled survival for all adult/imm stages) or `"scaled"` (stage-specific values scaled by ratio to mean, preserving relative stage structure); change one line to switch between approaches
+- `vr_effective` table built from chosen model; used downstream in `nm_by_period`
+- To activate digitized values: set `vr_file` to CSV filename in `data/`; CSV format: `year, s_Juv, s_adult_pooled`
+
+**FM decomposition sections** (`load_decomposition_tables`, `compute_decomposition`):
+- Loads 03g counterfactual outputs and computes per-period effort_factor and beta_factor
+- Aggregates to bycatch-weighted scalar ratios per period
+
+**New figures (05–08 + sensitivity):**
+5. `05_fm_decomposition_bars` — FM reduction split into effort vs β components by period
+6. `06_observed_on_heatmap` — original coverage × efficacy surface with iso-lambda contours for each observed later period
+7. `07_decomp_heatmap` — effort_ratio × β_ratio surface; period points at decomposed coordinates; theoretical scenarios along right edge
+8. `08_decomp_heatmap_zoom` — Figure 07 zoomed to observed range
+9. `sensitivity_vr_pooled_vs_scaled` — overlay of lambda curves under both VR model options for the 3/3 scenario; also prints a table of baseline lambda differences by period
+
+**VR model sensitivity** (`vr_sensitivity` + `plot_vr_sensitivity` chunks):
+- After the main figures, runs the mitigation loop under the alternative `vr_model` (whichever was not chosen by the `vr_model` toggle)
+- Prints a table comparing baseline lambda by period under pooled vs scaled
+- Plots overlaid lambda curves (solid = pooled, dashed = scaled) for the 3/3 scenario
+- If lines overlap, the simpler pooled model is sufficient; divergence indicates stage structure matters
+
+*Last updated: February 24, 2026 (session 2)*
+
+---
+
+## Session: February 24, 2026 (session 3)
+
+### Overview
+Bug fix for `vr_effective` not found error in `WAAL_bycatch_by_period_2-24-26.Rmd`. Revised Figure 06 twice to better match the old heatmap format. Clarified two conceptual questions about the period-based analysis.
+
+### Bug fix: duplicate `load_period_vrs` section removed
+
+**Problem:** `vr_effective` not found at line 185 (`natural_mortality_by_period` chunk).
+**Cause:** The `load_period_vrs` chunk (which defines `vr_effective`) had been inserted in the correct location (before `natural_mortality_by_period`) during session 2, but the original copy of the chunk was not removed from its old location (~line 685, after `plot_vr_sensitivity`). The duplicate was unreachable before `nm_by_period` ran.
+**Fix:** Removed the full duplicate `*PERIOD-SPECIFIC VITAL RATES*` section (including `load_period_vrs` chunk and surrounding narrative) from its old post-sensitivity location. The section now exists only once, correctly placed before `natural_mortality_by_period`.
+
+### Figure 06 revised — final format
+
+Figure 06 (`06_observed_on_heatmap`) was revised to match the format of the old `WAAL_bycatch_mean_effort_2-24-26.Rmd` heatmap, with **time period** playing the role that **compliance level** played in the old script.
+
+**Final structure:**
+- Same RdBu lambda surface on coverage × efficacy axes with percent labels and white λ=1 contour (identical to old heatmap)
+- For each mitigation scenario × time period: a colored dot at `(min_coverage_to_recover, scenario_efficacy)` — the minimum fleet coverage at which lambda crosses 1 for that period's FM
+- White lines connect the four period points within each scenario (temporal trajectory)
+- Scenario names labeled at the 1990–1995 point (rightmost, needs most coverage)
+- Period color legend matches `period_colors` used throughout the script
+
+**How to read it:** Within each scenario (fixed y-position = efficacy), points shift leftward over time as FM declined and less additional fleet coverage was needed to achieve recovery. The 1990–1995 points land on or near the white λ=1 contour (same FM used for both surface and threshold); later period points fall to its left.
+
+**Key data used:** `threshold_by_period` (already computed for Figure 04 tile chart) joined with `mitigation_scenarios` to get efficacy values. No new computation required.
+
+### Conceptual clarifications
+
+**1. Do later periods account for already-occurring mitigation?**
+Yes — `total_fm_wide` for each period contains the *observed* FM for that period, which already reflects whatever real-world mitigation occurred (lower β from changed fishing practices, fewer hooks). `reduction = 0` in `period_results` means "no *additional* mitigation beyond what already happened in that period," not "no mitigation at all." The 2006–2010 period curves start from a better baseline precisely because some mitigation was in place. The script correctly treats each period's FM as the starting point.
+
+**2. Are there old compliance assumptions that need updating?**
+No — the by-period script has no compliance tiers. `reduction` is simply the proportion of the entire fleet that adopts mitigation (0–100%), the same framing as the blanket mitigation coverage in the original demo. No fleet-level compliance table is used in this script.
+
+*Last updated: February 24, 2026 (session 3)*
+
+---
+
+## Session: February 25, 2026
+
+### Overview
+Completed and corrected all 4 period-specific bycatch scripts (06a–06d). Discussed and resolved the conceptual approach to vital rates across periods. Updated uncertainty simulation parameters to match period-specific survival values. Created a new diagnostic figure script (07).
+
+---
+
+### Key Work Done
+
+#### 1. Completed 06b, 06c, 06d edits
+Applied the same structural changes to all four scripts:
+- Title updated to reflect period
+- `target_period_byc` and `target_period_pop` set to matching period string
+- `surv_params` simplified to 2 parameters (`s_Juv`, `s_Adult`)
+- Main uncertainty sim loop: draws `sim_s_Adult` once → assigns to all adult `sim_s_*` → draws `sim_s_Juv` with hierarchy enforcement (`s_Juv < s_Adult`)
+- Diagnostic counters simplified to `diag_juv_redraws` / `diag_juv_capped` only
+- `clamp_fm`: all adult/immature budgets use `(1 - sim_s_Adult)` uniformly
+- Same pattern applied to fixed-IUU loop
+
+#### 2. Vital rate approach — period-specific survival (user-set)
+The user manually updated survival VRs in each script to match period-specific values read from a published figure. The final structure is:
+- **Survival:** Two pooled parameters (`s_Juv`, `s_Adult`), **period-specific**
+- **Behavioral rates (b\*, r\*, k\*):** Stage-specific, **fixed across periods** (from literature; no period-specific empirical estimates available)
+- **Rationale:** Stage-specific behavioral rates are structurally required (collapsing to means inflates lambda); survival varies empirically by period and is the primary demographic signal
+
+**Period-specific survival values:**
+| Script | Period | `s_Juv` | `s_Adult` |
+|--------|--------|---------|-----------|
+| 06a | 1990–1994 | 0.78 | 0.96 |
+| 06b | 1995–1999 | 0.725 | 0.940 |
+| 06c | 2000–2004 | 0.78 | 0.92 |
+| 06d | 2005–2009 | 0.78 | 0.92 |
+
+#### 3. surv_params updated to match period-specific values
+All four `surv_params` blocks updated so uncertainty simulation is centered on the correct period mean, with CI widths matching original absolute widths (s_Juv ±0.075/0.070; s_Adult −0.040/+0.030):
+
+| Script | `s_Juv` CI | `s_Adult` CI |
+|--------|------------|--------------|
+| 06a | (0.705, 0.850) | (0.920, 0.990) |
+| 06b | (0.650, 0.795) | (0.900, 0.970) |
+| 06c | (0.705, 0.850) | (0.880, 0.950) |
+| 06d | (0.705, 0.850) | (0.880, 0.950) |
+
+#### 4. Conceptual discussion: is decreased fishing effort captured?
+Yes — the survival rates (read from a figure of observed survival) already reflect the net outcome of all changes: effort, catchability, and natural mortality combined. The period-specific per-capita FM rates in the bycatch CSVs similarly embed the combined effect. The model does not separately attribute changes to effort vs. catchability — that distinction requires a counterfactual analysis (pending).
+
+#### 5. Script 07 — diagnostic figures
+Created `scripts/07_diagnostic_figures.Rmd` with three dual y-axis plots:
+- **Plot 1 (PLL):** Mean annual hooks (bars, left axis) + BI bycatch per 1,000 hooks (line, right axis)
+- **Plot 2 (DLL):** Same structure as plot 1 for demersal longline
+- **Plot 3:** s_Juv and s_Adult survival (lines, left axis) + mean per-capita FM averaged across age classes (dashed line, right axis)
+
+Data sources used:
+- `hooks_by_fleet_period_03g_2026-02-24.csv` — fishing effort (5-year total hooks by fleet; ÷5 for mean annual)
+- `bycatch_by_fishery_period_03f_2026-02-25.csv` — mean annual BI bycatch (bi_total column)
+- `percap_rates_by_period_03f_2026-02-25.csv` — per-capita FM by period and age class
+- Survival rates hardcoded from 06a–06d VR sections
+
+Note: hooks file uses period labels "1990-1995" vs bycatch model's "1990-1994" — mapped explicitly in script.
+
+---
+
+### Pending Tasks (future sessions)
+1. **Counterfactual analysis:** For periods 1995–1999, 2000–2004, 2005–2009, compare observed mortality vs: (a) what it would have been with 1990–1994 baseline catchability held constant; (b) what it would have been with 1990–1994 baseline fishing effort held constant
+
+*Last updated: February 25, 2026 (session 4)*

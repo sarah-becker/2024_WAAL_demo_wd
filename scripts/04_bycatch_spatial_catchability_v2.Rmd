@@ -208,14 +208,14 @@ pll_data <- pll_data %>%
   ))
 
 # Assign year groups
-target_year_groups <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+target_year_groups <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
 
 pll_data <- pll_data %>%
   mutate(year_group = case_when(
-    Year >= 1990 & Year <= 1995 ~ "1990-1995",
-    Year >= 1996 & Year <= 2000 ~ "1996-2000",
-    Year >= 2001 & Year <= 2005 ~ "2001-2005",
-    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009",
     TRUE ~ NA_character_
   )) %>%
   filter(!is.na(year_group))
@@ -277,12 +277,12 @@ dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf
   mutate(
     Lon = ifelse(Lon > 180, Lon - 360, Lon)
   ) %>%
-  filter(Year >= 1990, Year <= 2010) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
   mutate(year_group = case_when(
-    Year >= 1990 & Year <= 1995 ~ "1990-1995",
-    Year >= 1996 & Year <= 2000 ~ "1996-2000",
-    Year >= 2001 & Year <= 2005 ~ "2001-2005",
-    Year >= 2006 & Year <= 2010 ~ "2006-2010",
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009",
     TRUE ~ NA_character_
   )) %>%
   filter(!is.na(year_group))
@@ -427,9 +427,9 @@ assign_best_period <- function(yg_string) {
   periods <- str_trim(str_split(yg_string, ",")[[1]])
   matched <- map(periods, function(p) {
     if (p %in% target_year_groups) return(p)
-    if (p == "1995-2000") return("1996-2000")
-    if (p == "2005-2010") return("2006-2010")
-    if (p == " 1996-2000") return("1996-2000")
+    if (p == "1995-2000") return("1995-1999")
+    if (p == "2005-2010") return("2005-2009")
+    if (p == " 1996-2000") return("1995-1999")
     if (p == " 2011-2015") return(character(0))
     if (p == "2011-2015") return(character(0))
     matches <- target_year_groups[map_lgl(target_year_groups, ~str_detect(p, .x))]
@@ -808,7 +808,7 @@ bpue_period_means <- bpue_by_period %>%
   select(fishery_type, plot_year_group, mean_bpue)
 
 # Define period ordering for "nearest" lookup
-period_order <- c("1990-1995", "1996-2000", "2001-2005", "2006-2010")
+period_order <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
 
 cat("Gap-fill reference tables computed:\n")
 cat("  Fleet x period betas:", nrow(beta_by_fleet_period), "entries\n")
@@ -1114,17 +1114,14 @@ byc_by_period %>%
   print()
 
 # Grand total: sum of (annual bycatch * years in period) across all periods
-# Each period spans 5 years (except 1990-1995 = 6 years)
+# All periods span 5 years
 byc_cumulative <- byc_by_period %>%
   mutate(
-    n_years = case_when(
-      year_group == "1990-1995" ~ 6,
-      TRUE ~ 5
-    ),
+    n_years = 5,
     period_total = bi_total * n_years
   )
 
-cat("\n=== CUMULATIVE BI BYCATCH OVER FULL STUDY PERIOD (1990-2010) ===\n")
+cat("\n=== CUMULATIVE BI BYCATCH OVER FULL STUDY PERIOD (1990-2009) ===\n")
 cat("Annual rate * years in each period:\n")
 byc_cumulative %>%
   mutate(across(where(is.numeric), ~round(.x, 2))) %>%
@@ -1325,10 +1322,10 @@ age_labels <- c(
 
 # Period midpoints for continuous x-axis
 period_midpoints <- c(
-  "1990-1995" = 1992.5,
-  "1996-2000" = 1998.0,
-  "2001-2005" = 2003.0,
-  "2006-2010" = 2008.0
+  "1990-1994" = 1992.0,
+  "1995-1999" = 1997.0,
+  "2000-2004" = 2002.0,
+  "2005-2009" = 2007.0
 )
 
 plot_percap_time <- percap_by_period_table %>%
@@ -1382,10 +1379,10 @@ distributions are also static (Clay et al. 1990–2009 average).
 # Helper: map a calendar year to its 5-year period (for β lookup)
 year_to_period <- function(year) {
   dplyr::case_when(
-    year >= 1990 & year <= 1995 ~ "1990-1995",
-    year >= 1996 & year <= 2000 ~ "1996-2000",
-    year >= 2001 & year <= 2005 ~ "2001-2005",
-    year >= 2006 & year <= 2010 ~ "2006-2010",
+    year >= 1990 & year <= 1994 ~ "1990-1994",
+    year >= 1995 & year <= 1999 ~ "1995-1999",
+    year >= 2000 & year <= 2004 ~ "2000-2004",
+    year >= 2005 & year <= 2009 ~ "2005-2009",
     TRUE ~ NA_character_
   )
 }

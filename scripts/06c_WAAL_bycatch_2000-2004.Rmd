@@ -1,5 +1,5 @@
 ---
-title: "WAAL bycatch 5-27-25"
+title: "WAAL Bycatch — Period 2000–2004"
 output: html_document
 ---
 
@@ -62,15 +62,16 @@ r_Imm	<- 0.692 #immature
 r_IS	<- 0.459 #inexperienced successful
 r_PF	<- 0.972 #sabbatical 
 
-#survival
-s_EF	<- 0.913 #experienced failed
-s_ENB	<- 0.943 #experienced non breeding
-s_ES	<- 0.895 #experienced successful
-s_IF	<- 0.920 #inexperienced failed
-s_Imm	<- 0.921 #immature
-s_IS	<- 0.892 #inexperienced successful
-s_Juv	<- 0.846 #juvenile
-s_PF	<- 0.935 #sabbatical        
+#survival (pooled: s_Adult applied uniformly to all adult/immature stages)
+s_Juv <- 0.78   # juvenile survival
+s_Adult <- 0.92 # pooled adult survival
+s_EF  <- s_Adult #experienced failed
+s_ENB <- s_Adult #experienced non breeding
+s_ES  <- s_Adult #experienced successful
+s_IF  <- s_Adult #inexperienced failed
+s_Imm <- s_Adult #immature
+s_IS  <- s_Adult #inexperienced successful
+s_PF  <- s_Adult #sabbatical
 
 
 #mean VRs
@@ -185,7 +186,7 @@ dem_props_obs %>%
 
 Fishing effort, bird distributions, spatial overlap, and BPUE estimation are all handled in script 03f (spatial catchability approach). Here we load the mean annual per-capita bycatch rates and use them in the demographic model.
 
-**load per-capita bycatch rates from 03f (1990-1995 period)**
+**load per-capita bycatch rates from 03f (1990-1994 period)**
 ```{r}
 # Load period-specific bycatch totals from 03f
 byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")), show_col_types = FALSE)
@@ -195,9 +196,9 @@ dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
                       show_col_types = FALSE) %>%
   mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
 
-# Use 1990-1995 bycatch with 1990-1994 population (closest matching period)
-target_period_byc <- "1990-1995"
-target_period_pop <- "1990-1994"
+# Use 2000-2004 bycatch with 2000-2004 population (matching periods)
+target_period_byc <- "2000-2004"
+target_period_pop <- "2000-2004"
 
 pop_1990 <- dem_props %>%
   filter(Period == target_period_pop, Dem_class != "J1") %>%
@@ -211,7 +212,7 @@ pop_1990 <- dem_props %>%
     age_class == "nb" ~ "nb"
   ))
 
-# Get 1990-1995 bycatch by fishery and calculate per-capita
+# Get 1990-1994 bycatch by fishery and calculate per-capita
 byc_1990 <- byc_period %>%
   filter(year_group == target_period_byc) %>%
   select(fishery, fb, sb, nb, j2j3, imm) %>%
@@ -434,9 +435,9 @@ The blanket approach above applies uniform mitigation across all fisheries. Belo
 
 **load fleet-level bycatch and define mitigation scenarios**
 ```{r}
-# Load fleet-level bycatch for the baseline period (1990-1995)
+# Load fleet-level bycatch for the baseline period (1990-1994)
 fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")), show_col_types = FALSE) %>%
-  filter(year_group == "1990-1995")
+  filter(year_group == "1990-1994")
 
 # Calculate per-capita rates by fleet
 fleet_percap <- fleet_byc %>%
@@ -448,7 +449,7 @@ fleet_percap <- fleet_byc %>%
 # Load BPUE data source info: which fleets have observed vs gap-filled catchability
 coverage_info <- read_csv(here(paste0("output/coverage_info_03f_", date_sfx, ".csv")), show_col_types = FALSE)
 
-# For baseline period (1990-1995), classify each fleet's BPUE source
+# For baseline period (1990-1994), classify each fleet's BPUE source
 # A fleet has "observed" BPUE if it has direct data in ANY period (used for temporal gap-fill)
 fleet_bpue_source <- coverage_info %>%
   group_by(fishery, fleet) %>%
@@ -2119,19 +2120,12 @@ calc_beta_params <- function(mean_val, lower_ci, upper_ci) {
   return(list(alpha = alpha, beta = beta))
 }
 
-# === SURVIVAL RATES ===
-# PLACEHOLDER CIs — update from Pardo et al. / Clay et al. when available
-# Juvenile/immature: wider CIs (harder to estimate, fewer resightings)
-# Adult stage-specific: moderate CIs (well-studied but stage distinctions uncertain)
+# === SURVIVAL RATES (simplified pooled) ===
+# Pooled survival: s_Juv for juveniles, s_Adult for all adult/immature stages
+# Behavioral rates (b_*, r_*, k_*) retain full stage-specific structure
 surv_params <- list(
-  s_Juv = calc_beta_params(0.846, 0.78, 0.91),    # juvenile — wide, hardest to estimate
-  s_Imm = calc_beta_params(0.921, 0.88, 0.96),    # immature — moderate
-  s_EF  = calc_beta_params(0.913, 0.87, 0.95),    # experienced failed
-  s_ES  = calc_beta_params(0.895, 0.85, 0.94),    # experienced successful
-  s_ENB = calc_beta_params(0.943, 0.91, 0.97),    # experienced non-breeding
-  s_IF  = calc_beta_params(0.920, 0.88, 0.96),    # inexperienced failed
-  s_IS  = calc_beta_params(0.892, 0.85, 0.94),    # inexperienced successful
-  s_PF  = calc_beta_params(0.935, 0.90, 0.97)     # sabbatical
+  s_Juv   = calc_beta_params(0.780, 0.705, 0.850),  # juvenile survival — wide CI
+  s_Adult = calc_beta_params(0.920, 0.880, 0.950)   # pooled adult survival — moderate CI
 )
 
 # === BREEDING PROBABILITY ===
@@ -2236,9 +2230,7 @@ coverage_seq <- seq(0, 1, by = 0.01)
 full_output_uncert <- vector("list", nrow(mitigation_scenarios))
 
 # Diagnostic counters for redraws (tracked across all scenarios, reported once)
-diag_imm_redraws <- 0     # times s_Imm was redrawn to satisfy s_Imm < min(adult)
-diag_juv_redraws <- 0     # times s_Juv was redrawn to satisfy s_Juv < s_Imm
-diag_imm_capped <- 0      # times s_Imm hit 100-redraw fallback cap
+diag_juv_redraws <- 0     # times s_Juv was redrawn to satisfy s_Juv < s_Adult
 diag_juv_capped <- 0      # times s_Juv hit 100-redraw fallback cap
 
 set.seed(123)
@@ -2256,36 +2248,26 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     set.seed(j * 1000 + 1)
 
     # --- Draw all vital rates freely from their distributions ---
-    # Survival: draw adults first, then enforce hierarchy via conditional re-draws
-    # Hierarchy: s_Juv < s_Imm < min(adult stages)
-    sim_s_EF  <- rbeta(1, surv_params$s_EF$alpha,  surv_params$s_EF$beta)
-    sim_s_ES  <- rbeta(1, surv_params$s_ES$alpha,  surv_params$s_ES$beta)
-    sim_s_ENB <- rbeta(1, surv_params$s_ENB$alpha, surv_params$s_ENB$beta)
-    sim_s_IF  <- rbeta(1, surv_params$s_IF$alpha,  surv_params$s_IF$beta)
-    sim_s_IS  <- rbeta(1, surv_params$s_IS$alpha,  surv_params$s_IS$beta)
-    sim_s_PF  <- rbeta(1, surv_params$s_PF$alpha,  surv_params$s_PF$beta)
+    # Survival: draw pooled adult first, assign to all adult stages, then draw juvenile
+    # Hierarchy: s_Juv < s_Adult
+    sim_s_Adult <- rbeta(1, surv_params$s_Adult$alpha, surv_params$s_Adult$beta)
+    sim_s_EF  <- sim_s_Adult
+    sim_s_ES  <- sim_s_Adult
+    sim_s_ENB <- sim_s_Adult
+    sim_s_IF  <- sim_s_Adult
+    sim_s_IS  <- sim_s_Adult
+    sim_s_PF  <- sim_s_Adult
+    sim_s_Imm <- sim_s_Adult
 
-    # Enforce s_Imm < min(adult survival): re-draw until satisfied
-    min_adult_s <- min(sim_s_EF, sim_s_ES, sim_s_ENB, sim_s_IF, sim_s_IS, sim_s_PF)
-    sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
-    redraw_count <- 0
-    while (sim_s_Imm >= min_adult_s && redraw_count < 100) {
-      sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
-      redraw_count <- redraw_count + 1
-    }
-    diag_imm_redraws <- diag_imm_redraws + redraw_count
-    # Fallback: if still violated after 100 tries, cap just below adult min
-    if (sim_s_Imm >= min_adult_s) { sim_s_Imm <- min_adult_s - 0.001; diag_imm_capped <- diag_imm_capped + 1 }
-
-    # Enforce s_Juv < s_Imm: re-draw until satisfied
+    # Enforce s_Juv < s_Adult: re-draw until satisfied
     sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
     redraw_count <- 0
-    while (sim_s_Juv >= sim_s_Imm && redraw_count < 100) {
+    while (sim_s_Juv >= sim_s_Adult && redraw_count < 100) {
       sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
       redraw_count <- redraw_count + 1
     }
     diag_juv_redraws <- diag_juv_redraws + redraw_count
-    if (sim_s_Juv >= sim_s_Imm) { sim_s_Juv <- sim_s_Imm - 0.001; diag_juv_capped <- diag_juv_capped + 1 }
+    if (sim_s_Juv >= sim_s_Adult) { sim_s_Juv <- sim_s_Adult - 0.001; diag_juv_capped <- diag_juv_capped + 1 }
 
     # Breeding probability
     sim_b_EF  <- rbeta(1, breed_params$b_EF$alpha,  breed_params$b_EF$beta)
@@ -2331,11 +2313,11 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
 
     # Clamp FM to mortality budget for each stage (only triggers on rare extreme draws)
-    fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv), sim_iuu_p)
-    fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm), sim_iuu_p)
-    fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  min(1 - sim_s_IF, 1 - sim_s_EF), sim_iuu_p)
-    fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  min(1 - sim_s_IS, 1 - sim_s_ES), sim_iuu_p)
-    fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  min(1 - sim_s_ENB, 1 - sim_s_PF), sim_iuu_p)
+    fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),   sim_iuu_p)
+    fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Adult), sim_iuu_p)
+    fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - sim_s_Adult), sim_iuu_p)
+    fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - sim_s_Adult), sim_iuu_p)
+    fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - sim_s_Adult), sim_iuu_p)
 
     sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
     sim_dem_fm_imm <- fm_imm$dll; sim_pel_fm_imm <- fm_imm$pll
@@ -2422,9 +2404,7 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
 total_draws <- nrow(mitigation_scenarios) * n_sims
 cat("=== UNCERTAINTY SIMULATION REDRAW DIAGNOSTICS ===\n")
 cat(sprintf("Total sim draws: %d (across %d scenarios x %d sims)\n", total_draws, nrow(mitigation_scenarios), n_sims))
-cat(sprintf("s_Imm redraws (s_Imm >= min adult): %d (%.1f per sim)\n", diag_imm_redraws, diag_imm_redraws / total_draws))
-cat(sprintf("s_Imm fallback caps (100 redraws exhausted): %d\n", diag_imm_capped))
-cat(sprintf("s_Juv redraws (s_Juv >= s_Imm): %d (%.1f per sim)\n", diag_juv_redraws, diag_juv_redraws / total_draws))
+cat(sprintf("s_Juv redraws (s_Juv >= s_Adult): %d (%.1f per sim)\n", diag_juv_redraws, diag_juv_redraws / total_draws))
 cat(sprintf("s_Juv fallback caps (100 redraws exhausted): %d\n", diag_juv_capped))
 # Note: baseline lambda filtering removed — post-hoc centering used instead
 ```
@@ -2579,9 +2559,7 @@ full_output_fixed_iuu <- vector("list",
   length(fixed_iuu_vals) * length(fixed_iuu_red_vals) * nrow(mitigation_scenarios))
 
 # Diagnostic counters for fixed-IUU simulation
-diag2_imm_redraws <- 0
 diag2_juv_redraws <- 0
-diag2_imm_capped <- 0
 diag2_juv_capped <- 0
 
 set.seed(123)
@@ -2606,34 +2584,26 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         set.seed(j * 1000 + 1)
 
         # --- Draw all vital rates freely ---
-        # Survival: draw adults first, then enforce hierarchy via conditional re-draws
-        sim_s_EF  <- rbeta(1, surv_params$s_EF$alpha,  surv_params$s_EF$beta)
-        sim_s_ES  <- rbeta(1, surv_params$s_ES$alpha,  surv_params$s_ES$beta)
-        sim_s_ENB <- rbeta(1, surv_params$s_ENB$alpha, surv_params$s_ENB$beta)
-        sim_s_IF  <- rbeta(1, surv_params$s_IF$alpha,  surv_params$s_IF$beta)
-        sim_s_IS  <- rbeta(1, surv_params$s_IS$alpha,  surv_params$s_IS$beta)
-        sim_s_PF  <- rbeta(1, surv_params$s_PF$alpha,  surv_params$s_PF$beta)
+        # Survival: draw pooled adult first, assign to all adult stages, then draw juvenile
+        # Hierarchy: s_Juv < s_Adult
+        sim_s_Adult <- rbeta(1, surv_params$s_Adult$alpha, surv_params$s_Adult$beta)
+        sim_s_EF  <- sim_s_Adult
+        sim_s_ES  <- sim_s_Adult
+        sim_s_ENB <- sim_s_Adult
+        sim_s_IF  <- sim_s_Adult
+        sim_s_IS  <- sim_s_Adult
+        sim_s_PF  <- sim_s_Adult
+        sim_s_Imm <- sim_s_Adult
 
-        # Enforce s_Imm < min(adult survival)
-        min_adult_s <- min(sim_s_EF, sim_s_ES, sim_s_ENB, sim_s_IF, sim_s_IS, sim_s_PF)
-        sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
-        redraw_count <- 0
-        while (sim_s_Imm >= min_adult_s && redraw_count < 100) {
-          sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
-          redraw_count <- redraw_count + 1
-        }
-        diag2_imm_redraws <- diag2_imm_redraws + redraw_count
-        if (sim_s_Imm >= min_adult_s) { sim_s_Imm <- min_adult_s - 0.001; diag2_imm_capped <- diag2_imm_capped + 1 }
-
-        # Enforce s_Juv < s_Imm
+        # Enforce s_Juv < s_Adult
         sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
         redraw_count <- 0
-        while (sim_s_Juv >= sim_s_Imm && redraw_count < 100) {
+        while (sim_s_Juv >= sim_s_Adult && redraw_count < 100) {
           sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
           redraw_count <- redraw_count + 1
         }
         diag2_juv_redraws <- diag2_juv_redraws + redraw_count
-        if (sim_s_Juv >= sim_s_Imm) { sim_s_Juv <- sim_s_Imm - 0.001; diag2_juv_capped <- diag2_juv_capped + 1 }
+        if (sim_s_Juv >= sim_s_Adult) { sim_s_Juv <- sim_s_Adult - 0.001; diag2_juv_capped <- diag2_juv_capped + 1 }
 
         sim_b_EF  <- rbeta(1, breed_params$b_EF$alpha,  breed_params$b_EF$beta)
         sim_b_ENB <- rbeta(1, breed_params$b_ENB$alpha, breed_params$b_ENB$beta)
@@ -2672,11 +2642,11 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         sim_pel_fm_sb  <- rbeta(1, fm_params_pll$sb$alpha,  fm_params_pll$sb$beta)
         sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
 
-        fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv), fixed_iuu_p)
-        fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm), fixed_iuu_p)
-        fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  min(1 - sim_s_IF, 1 - sim_s_EF), fixed_iuu_p)
-        fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  min(1 - sim_s_IS, 1 - sim_s_ES), fixed_iuu_p)
-        fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  min(1 - sim_s_ENB, 1 - sim_s_PF), fixed_iuu_p)
+        fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),   fixed_iuu_p)
+        fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Adult), fixed_iuu_p)
+        fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - sim_s_Adult), fixed_iuu_p)
+        fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - sim_s_Adult), fixed_iuu_p)
+        fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - sim_s_Adult), fixed_iuu_p)
 
         sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
         sim_dem_fm_imm <- fm_imm$dll; sim_pel_fm_imm <- fm_imm$pll
@@ -2766,9 +2736,7 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
 total_draws2 <- length(fixed_iuu_vals) * length(fixed_iuu_red_vals) * nrow(mitigation_scenarios) * n_sims_fixed
 cat("=== FIXED-IUU SIMULATION REDRAW DIAGNOSTICS ===\n")
 cat(sprintf("Total sim draws: %d\n", total_draws2))
-cat(sprintf("s_Imm redraws: %d (%.1f per sim)\n", diag2_imm_redraws, diag2_imm_redraws / total_draws2))
-cat(sprintf("s_Imm fallback caps: %d\n", diag2_imm_capped))
-cat(sprintf("s_Juv redraws: %d (%.1f per sim)\n", diag2_juv_redraws, diag2_juv_redraws / total_draws2))
+cat(sprintf("s_Juv redraws (s_Juv >= s_Adult): %d (%.1f per sim)\n", diag2_juv_redraws, diag2_juv_redraws / total_draws2))
 cat(sprintf("s_Juv fallback caps: %d\n", diag2_juv_capped))
 # Note: baseline lambda filtering removed — post-hoc centering used instead
 ```

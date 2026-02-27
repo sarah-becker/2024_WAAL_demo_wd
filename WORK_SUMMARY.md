@@ -1,5 +1,108 @@
 # Work Summary - WAAL Bycatch Analysis
 
+## Session: February 27, 2026
+
+### Overview
+Built and iteratively refined **Figure P8** in `scripts/07_diagnostic_figures.Rmd` — a single-panel heatmap placing all four periods' reference points and future scenario lines on the shared 1990–1994 FM baseline surface. Also added a mean vs median fishing effort diagnostic to script 07.
+
+### Changes made
+
+**Script 07 — Figure P8 (`{r p8-single-panel-all-periods}`)**
+
+1. **New P8 chunk added** after Figure P7
+   - Builds 1990–1994 lambda surface (same formula as P5/P7, coverage × efficacy → λ)
+   - Uses same `lambda_range` as P7 for consistent cross-figure color scale
+   - `geom_tile` for heatmap, white λ=1 contour
+
+2. **Reference points** (`ref_named_p8`)
+   - Four "Current regs (XXXX effort)" circles: same regulations applied to each period's bycatch-weighted fleet composition (`fleet_percap`), so coverage/efficacy shifts across periods as fleets change
+   - Historical (1990–1994) labeled `"Historical (1990–1994)\n(no mitigation)"` — 06a has no historical mitigation so this point sits at (0,0)
+   - No separate "No mitigation" anchor point; the Historical label carries that information
+   - Markers: `shape = 19, size = 2.5` (small solid circles) so points do not extend past panel boundary
+
+3. **Scenario lines** (`scen_p8`)
+   - Filtered to 1990–1994 period only (`str_detect(scenario, "^(all_pll_2of3|all_pll_3of3|all_fleets_3of3)__")`)
+   - Grey lines (`color = "grey85"`) — single period so no color ambiguity
+   - Scenarios shown: 2/3 PLL, 3/3 PLL, 3/3 all fleets, full elimination
+   - Labels at Full Compliance endpoint, positioned to right of lines
+
+4. **Grey border fix** (`oob = scales::squish` in `scale_fill_distiller`)
+   - Root cause: heatmap_p8 lambda recomputed from scratch in script 07; floating-point differences from pre-saved 06a values meant bottom/left edge cells (where `eff × cov = 0`) fell just below `lambda_range[1]`, rendering as `na.value = "grey50"` (default `oob = censor`)
+   - Fix: `oob = scales::squish` clamps out-of-range values to nearest color instead of NA
+
+5. **Saved to** `output/figures/07_p8_single_panel_all_periods.png`
+
+**Script 07 — Mean vs Median Effort Diagnostic**
+
+- Added `{r mean-vs-median-effort}` chunk after Plot 2
+- Loads raw annual PLL (`Pel_LL_effort.csv`) and all 7 DLL source files
+- Aggregates to annual totals per year; computes mean, median, CV%, mean/median ratio per period
+- Summary table + jitter plot overlaid with mean (circle) and median (square) per period
+- Purpose: assess whether within-period year-to-year variability makes median more appropriate than mean for the 06 scripts
+
+### Key conceptual clarification documented
+The four "Current regs (XXXX effort)" points use the same `fleet_mitigation` table but are plotted at different (effective_coverage, effective_efficacy) positions because each period's bycatch-weighted coverage/efficacy is computed from that period's `fleet_percap` (bycatch distribution across fleets). Plotting all four on the 1990–1994 surface answers: "if this period's regulatory coverage/efficacy were applied to 1990–1994 effort levels, what would λ be?" — isolating the mitigation signal from effort reduction.
+
+---
+
+## Session: February 26, 2026
+
+### Overview
+Completed a major batch of structural improvements to all four period bycatch scripts (06a–06d) and script 07.
+
+### Changes made
+
+**All four 06 scripts (06a/b/c/d)**
+
+1. **Variable renames (replace_all)**
+   - `pop_1990` → `pop_period` (3 occurrences per script)
+   - `byc_1990` → `byc_percap` (14 occurrences per script)
+
+2. **Mortality partition table** (new `{r mortality-partition}` chunk, after NM check)
+   - Builds a tibble with stage, survival, fm_dll, fm_pll, fm_total, nm, pct_fm, pct_nm
+   - Saved to `output/mortality_partition_{period}_{date_sfx}.csv`
+
+3. **Historical fleet mitigation** (`hist_fleet_mitigation` tribble, after `fleet_mitigation`)
+   - Period-specific placeholder compliance values (all "none" in 1990-1994; early CCAMLR in 1995-1999; improving DLL in 2000-2004; approaching current in 2005-2009)
+   - Same eff_2of3/eff_3of3 efficacy mapping as `fleet_mitigation`
+
+4. **Reference points** (computed just before `heatmap_labels`)
+   - `reference_pts` tibble: no-mitigation, historical (period), current
+   - Saved to `output/heatmap_ref_pts_{period}_{date_sfx}.csv`
+   - Historical point computed via `calc_fleet_fm(fleet_percap, hist_fleet_mitigation)`
+
+5. **Heatmap grid save**
+   - `heatmap_data` saved to `output/heatmap_data_{period}_{date_sfx}.csv` after loop
+
+6. **Scenario heatmap points save**
+   - `scenario_heatmap_pts` saved to `output/scenario_heatmap_pts_{period}_{date_sfx}.csv` before reference_pts block
+
+7. **Gold diamond overlays** added to both `p_heatmap` and `p_heatmap_recovery`
+   - Shape 23 (diamond), fill = "gold"
+   - Labels with ref_label; subtitle updated to note reference points
+
+**Script 07**
+- Added **Figure P7**: combined 2×2 faceted heatmap (`p7-combined-heatmap` chunk)
+  - Loads `heatmap_data_*`, `heatmap_ref_pts_*`, `scenario_heatmap_pts_*` from all four periods
+  - Shared lambda color scale across all panels
+  - Gold diamonds = reference points; white points/lines = hypothetical scenarios
+  - Saved to `output/figures/07_p7_combined_heatmap_all_periods.png`
+
+### Data flow produced
+- Each 06 script now writes 4 CSVs to `output/`:
+  1. `mortality_partition_{period}_{date_sfx}.csv`
+  2. `heatmap_data_{period}_{date_sfx}.csv`
+  3. `scenario_heatmap_pts_{period}_{date_sfx}.csv`
+  4. `heatmap_ref_pts_{period}_{date_sfx}.csv`
+- Script 07 loads all of these for the combined P7 figure
+
+### Bug fix — figure overwrite prevention
+- `fig_path()` helper in all four 06 scripts was generating period-independent filenames (e.g., `01_blanket_mitigation_2026-02-25.png`), meaning each script overwrote the previous one's output.
+- Fixed by adding `target_period_byc` to the filename: `paste0(name, "_", target_period_byc, "_", date_sfx, ".png")`
+- Each script now writes 26 figures with names like `01_blanket_mitigation_1990-1994_2026-02-25.png`
+
+---
+
 ## Session: January 12, 2026
 
 ### Overview
@@ -1585,3 +1688,68 @@ Note: hooks file uses period labels "1990-1995" vs bycatch model's "1990-1994" �
 1. **Counterfactual analysis:** For periods 1995–1999, 2000–2004, 2005–2009, compare observed mortality vs: (a) what it would have been with 1990–1994 baseline catchability held constant; (b) what it would have been with 1990–1994 baseline fishing effort held constant
 
 *Last updated: February 25, 2026 (session 4)*
+
+---
+
+## Session: February 26, 2026
+
+### Overview
+Resolved the λ > 1 problem in the 1990–1994 baseline (06a) and updated all four period scripts to use stage-specific survival rates from Pardo's directly shared data, replacing figure-digitized pooled values. Updated Monte Carlo simulation sections accordingly.
+
+---
+
+### Key Work Done
+
+#### 1. Identified root cause of λ > 1 in 06a
+- 06a used pooled `s_Adult = 0.96` (figure-digitized from Pardo), giving NM_adult ≈ 0.04 − FM ≈ 0.015 ≈ 0.025 (unrealistically low)
+- At full mitigation, effective survival reached ~0.985, driving λ > 1
+- Root cause: Pardo figure shows **population-weighted mean** (~0.94); Pardo's directly shared data gives **conditional stage-specific rates** averaging ~0.916
+- Resolution: use stage-specific values from Pardo shared data (used in script 05) rather than figure-digitized values
+
+#### 2. Updated deterministic VR blocks in all four scripts (06a–06d)
+Replaced pooled `s_Juv = 0.78`, `s_Adult = 0.96` with stage-specific values:
+
+| Stage | Survival |
+|-------|----------|
+| s_Juv | 0.846 |
+| s_EF  | 0.913 |
+| s_ENB | 0.943 |
+| s_ES  | 0.895 |
+| s_IF  | 0.920 |
+| s_Imm | 0.921 |
+| s_IS  | 0.892 |
+| s_PF  | 0.935 |
+
+Also updated `mean_a_s` and `mean_s` calculations in 06a and 06b to compute actual means of the stage-specific values.
+
+#### 3. Updated `surv_params` in all four scripts
+Replaced 2-entry pooled list with 8-entry stage-specific list. All four scripts now use the same values (survival is treated as fixed across periods; only FM varies by period).
+
+#### 4. Updated MC simulation draw blocks in all four scripts
+- **Before:** draw pooled `sim_s_Adult` once → assign to all adult stage variables → enforce `s_Juv < s_Adult`
+- **After:** draw each adult stage independently (`sim_s_EF`, `sim_s_ENB`, `sim_s_ES`, `sim_s_IF`, `sim_s_Imm`, `sim_s_IS`, `sim_s_PF`) → compute `sim_min_adult` → enforce `s_Juv < sim_min_adult`
+- Applied to both the main simulation loop and the fixed-IUU loop in each script
+
+#### 5. Updated clamp_fm calls in all four scripts
+- **Before:** all adult/immature stages used `(1 - sim_s_Adult)` uniformly
+- **After:** stage-specific budgets:
+  - `fm_imm`: `(1 - sim_s_Imm)`
+  - `fm_fb` (EF+IF): `(1 - max(sim_s_EF, sim_s_IF))`
+  - `fm_sb` (ES+IS): `(1 - max(sim_s_ES, sim_s_IS))`
+  - `fm_nb` (ENB+PF): `(1 - max(sim_s_ENB, sim_s_PF))`
+- Applied in both simulation loops in each script
+
+#### 6. Updated script 07 (07_diagnostic_figures.Rmd)
+- Added `p-fleet-effort-year` chunk: reads raw PLL (`Pel_LL_effort.csv`) and 7 DLL source files, sums annual hooks by fleet, collapses to top_n_fleets=7 + "Other", produces by-year version of fleet effort plots (kept alongside existing by-period version)
+- Redesigned `surv_rates` tibble: from period-varying (period × pooled stages) to constant stage-specific values (8 stages, no period dimension)
+- Redesigned `p3` plot: replaced period-varying survival lines with constant horizontal reference lines + period-varying FM bars
+- Updated `period-fm-nm` chunk: now uses stage-specific base survivals to compute stage-specific NM
+- Updated interpretation chunk: prints stage-specific survival table instead of period-comparison
+
+---
+
+### Pending Tasks (future sessions)
+1. **Counterfactual analysis:** Compare observed mortality vs. counterfactuals with baseline catchability or effort held constant
+2. **Verify λ values:** Re-run 06a–06d with corrected stage-specific VRs to confirm λ < 1 at baseline and sensible mitigation response curves
+
+*Last updated: February 26, 2026*

@@ -336,22 +336,36 @@ Summed across fleets within each fishery × period, then partitioned by age clas
 
 Vital rates: survival (s), return (r), breeding probability (b), breeding success (k) per stage.
 
+### Multi-Period Demographic Analysis (Scripts 06a–06d)
+
+The demographic model runs separately for each 5-year period (1990-1994, 1995-1999, 2000-2004, 2005-2009), each using period-matched bycatch rates and population sizes from script 03f. This structure allows comparison of lambda and mitigation requirements across periods as fishing effort and catchability changed over time.
+
+Each period script (06a–06d) produces:
+- Full mitigation scenario analysis (blanket + fleet-level)
+- Mortality partitioning table (see below)
+- Historical mitigation reference point
+- Efficacy × coverage heatmap with reference points
+- CSVs saved for cross-period comparison in script 07
+
 ### Mortality Partitioning
 
-Using 1990-1995 (pre-mitigation baseline) per-capita bycatch rates from 03f:
+Per-period partitioning of total mortality into fishing and natural components. Applied within each period script using that period's per-capita bycatch rates from 03f:
 
 ```
 total_mortality = 1 - s_observed
-fishing_mortality = dem_fm + pel_fm    (from 03f, per age class)
+fishing_mortality = dem_fm + pel_fm    (from 03f, per age class, per period)
 natural_mortality = total_mortality - fishing_mortality
+pct_fm = fm_total / (1 - s_observed) × 100
 ```
 
 Mapping 03f age classes to matrix stages:
 - j2j3 → J2, J3 (s_Juv = 0.846)
 - imm → Imm4, Imm5, PB (s_Imm = 0.921)
-- fb → IF, EF (mean of s_IF=0.920, s_EF=0.913)
-- sb → IS, ES (mean of s_IS=0.892, s_ES=0.895)
-- nb → ENB, Sabb (mean of s_ENB=0.943, s_PF=0.935)
+- fb → IF, EF (s_IF=0.920, s_EF=0.913)
+- sb → IS, ES (s_IS=0.892, s_ES=0.895)
+- nb → ENB, Sabb (s_ENB=0.943, s_PF=0.935)
+
+Output saved per period to `output/mortality_partition_{period}_{date_sfx}.csv` for cross-period comparison in script 07.
 
 ### Mitigation Scenario Testing
 
@@ -388,6 +402,24 @@ Mitigation measures and combined efficacy (literature-informed operational value
 - Full: 100% compliance for all fleets
 
 This produces 6 × 3 = 18 realistic scenarios + 1 full elimination = 19 total. Compliance is held constant across efficacy scenarios by default (baseline level), reflecting the assumption that compliance is difficult to improve independently of measure adoption. The improved and full compliance levels test sensitivity to this assumption.
+
+**Historical fleet mitigation (`hist_fleet_mitigation`):** Each period script also defines a period-specific historical mitigation lookup table reflecting the regulatory environment of that period (placeholders to be updated from RFMO literature). Values escalate from all-none in 1990-1994 to CCAMLR near-full by 2005-2009:
+
+| Period | CCAMLR | Falklands | PLL fleets |
+|--------|--------|-----------|------------|
+| 1990–1994 | none (0.0) | none (0.0) | all none |
+| 1995–1999 | partial (0.30) | partial (0.20) | all none |
+| 2000–2004 | partial (0.60) | partial (0.50) | all none |
+| 2005–2009 | full (0.80) | full (0.70) | Japan/Spain/Portugal partial |
+
+**Heatmap reference points:** Three reference points (gold diamonds, shape 23) are overlaid on all efficacy × coverage heatmaps:
+- **No mitigation**: effective_coverage = 0, efficacy = 0 (lambda from `no_mitigation__baseline_compliance` scenario)
+- **Historical**: weighted bycatch-coverage and efficacy from `hist_fleet_mitigation`; lambda computed via `calc_fleet_fm()` + `calc_lambda_from_scenario()`
+- **Current**: from `current__baseline_compliance` scenario point
+
+Reference points saved to `output/heatmap_ref_pts_{period}_{date_sfx}.csv`.
+
+**Cross-period combined heatmap (script 07, Figure P7):** Loads `heatmap_data_*`, `heatmap_ref_pts_*`, and `scenario_heatmap_pts_*` CSVs from all four periods and produces a 2×2 faceted plot with shared lambda color scale, showing no-mitigation/historical/current reference points and hypothetical scenarios for each period simultaneously.
 
 ### Validation Approaches
 - **Demographic**: Per-capita fishing mortality < total mortality for all age classes
@@ -593,11 +625,17 @@ The nonlinear relationship between vital rates and lambda means that even unbias
 6. **IUU integration** — three-component mortality partition (natural + legal FM + IUU FM), IUU carved from natural mortality, range 2-30%, enforcement reduction scenarios (0%, 50%, 100%)
 7. **Named mitigation scenarios** — 6 scenarios (individual measures through 3/3 combined) tested across coverage levels with uncertainty
 8. **Probability of recovery** — P(lambda >= 1) plots to visualize where small lambda differences determine population decline vs recovery
+9. **Multi-period demographic model** (scripts 06a–06d) — each period uses matched bycatch rates and population sizes; full mitigation analysis run independently per period
+10. **Mortality partitioning table** — per-stage breakdown of % fishing mortality vs % natural mortality, saved per period for cross-period comparison
+11. **Historical fleet mitigation lookup** (`hist_fleet_mitigation`) — period-specific placeholder compliance values reflecting known regulatory history; to be updated from RFMO literature
+12. **Heatmap reference points** — no-mitigation, historical, and current points as gold diamonds on all efficacy × coverage heatmaps; saved to CSV for script 07
+13. **Cross-period combined heatmap** (script 07, Figure P7) — 2×2 faceted plot across all four periods with shared lambda color scale, reference points, and hypothetical scenarios
+14. **Figure overwrite prevention** — `fig_path()` helper updated to embed `target_period_byc` in all 26 figure filenames per script, preventing cross-script file overwriting
 
 ### Future Development
 
-9. **Period-specific demographic model** — use period-specific bycatch rates rather than single baseline
-10. **Refine FM uncertainty** — currently ±100% proportional; update from BPUE confidence intervals once available
+15. **Update hist_fleet_mitigation** from RFMO literature review (current values are placeholders)
+16. **Refine FM uncertainty** — currently ±100% proportional; update from BPUE confidence intervals once available
 
 ---
 
@@ -628,4 +666,4 @@ Total across regions:         C_fa = Σ_r C_rfa
 
 *For detailed numerical examples, validation calculations, and step-by-step implementation, see METHODS.md (full version).*
 
-*Document last updated: February 23, 2026*
+*Document last updated: February 26, 2026*

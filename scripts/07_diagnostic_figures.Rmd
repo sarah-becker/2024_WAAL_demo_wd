@@ -98,18 +98,17 @@ catchability_by_period <- byc_period %>%
 ```
 
 ```{r survival-data}
-# Survival rates as set in 06a-06d VR sections (read from figure, period-specific)
+# Stage-specific survival rates (Pardo et al., shared directly, 1980-2012)
+# Same values used in all four period scripts (06a-d); period variation
+# is captured through the bycatch data, not the survival parameters
 surv_rates <- tibble(
-  period  = factor(model_periods, levels = model_periods),
-  s_Juv   = c(0.78, 0.725, 0.78,  0.78),
-  s_Adult = c(0.96, 0.940, 0.92,  0.92)
+  stage    = c("Juvenile", "EF", "ENB", "ES", "IF", "Imm", "IS", "PF"),
+  survival = c(0.846,      0.913, 0.943, 0.895, 0.920, 0.921, 0.892, 0.935)
 ) %>%
-  pivot_longer(cols = c(s_Juv, s_Adult),
-               names_to  = "stage",
-               values_to = "survival") %>%
-  mutate(stage = recode(stage,
-                        "s_Juv"   = "Juvenile",
-                        "s_Adult" = "Adult (pooled)"))
+  mutate(
+    stage_group = ifelse(stage == "Juvenile", "Juvenile", "Adult (stage-specific)"),
+    stage       = factor(stage, levels = c("Juvenile", "Imm", "IS", "IF", "ES", "EF", "ENB", "PF"))
+  )
 ```
 
 ```{r percap-data}
@@ -230,6 +229,123 @@ p2 <- ggplot(dll_data, aes(x = period)) +
 p2
 ```
 
+## Mean vs Median Annual Effort Diagnostic
+
+Plots 1–2 show **mean** annual hooks per period (5-year total ÷ 5). This diagnostic loads
+the raw per-year source files to check whether within-period year-to-year variability is
+large enough to make the median meaningfully different. A high CV% or mean/median ratio
+notably different from 1 suggests median would better represent a typical year in that period.
+
+```{r mean-vs-median-effort}
+# --- PLL: sum Hooks to annual totals per year ---
+pll_annual <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  mutate(
+    year_group = case_when(
+      Year >= 1990 & Year <= 1994 ~ "1990-1994",
+      Year >= 1995 & Year <= 1999 ~ "1995-1999",
+      Year >= 2000 & Year <= 2004 ~ "2000-2004",
+      Year >= 2005 & Year <= 2009 ~ "2005-2009"
+    )
+  ) %>%
+  group_by(fishery = "PLL", year_group, year = Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop")
+
+# --- DLL: load each source, standardise to (year, hooks, fleet), combine ---
+dll_ccamlr <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"),
+                        show_col_types = FALSE) %>%
+  transmute(year = year, hooks = hook_count, fleet = "CCAMLR")
+
+dll_arg   <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = Year, hooks = Effort, fleet = "Argentina")
+
+dll_chile <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = Year, hooks = Effort, fleet = "Chile")
+
+dll_falk  <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = Year, hooks = Effort, fleet = "Falklands")
+
+dll_nam   <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = Year, hooks = Hooks, fleet = "Namibia")
+
+dll_saf   <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = Year, hooks = Effort, fleet = "South Africa")
+
+dll_nz    <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"),
+                       show_col_types = FALSE) %>%
+  transmute(year = year, hooks = total_hooks, fleet = "New Zealand")
+
+dll_annual <- bind_rows(dll_ccamlr, dll_arg, dll_chile, dll_falk, dll_nam, dll_saf, dll_nz) %>%
+  filter(year >= 1990, year <= 2009) %>%
+  mutate(
+    year_group = case_when(
+      year >= 1990 & year <= 1994 ~ "1990-1994",
+      year >= 1995 & year <= 1999 ~ "1995-1999",
+      year >= 2000 & year <= 2004 ~ "2000-2004",
+      year >= 2005 & year <= 2009 ~ "2005-2009"
+    )
+  ) %>%
+  group_by(fishery = "DLL", year_group, year) %>%
+  summarise(annual_hooks = sum(hooks, na.rm = TRUE), .groups = "drop")
+
+# Combine PLL + DLL
+effort_by_year <- bind_rows(pll_annual, dll_annual) %>%
+  mutate(
+    year_group = factor(year_group, levels = model_periods),
+    fishery    = factor(fishery, levels = c("PLL", "DLL"))
+  )
+
+# Summary table: mean, median, min, max, CV%, mean/median ratio
+effort_mean_median <- effort_by_year %>%
+  group_by(fishery, year_group) %>%
+  summarise(
+    n_years        = n(),
+    mean_M         = round(mean(annual_hooks,   na.rm = TRUE) / 1e6, 3),
+    median_M       = round(median(annual_hooks, na.rm = TRUE) / 1e6, 3),
+    min_M          = round(min(annual_hooks,    na.rm = TRUE) / 1e6, 3),
+    max_M          = round(max(annual_hooks,    na.rm = TRUE) / 1e6, 3),
+    cv_pct         = round(sd(annual_hooks, na.rm = TRUE) /
+                             mean(annual_hooks, na.rm = TRUE) * 100, 1),
+    mean_med_ratio = round(mean(annual_hooks, na.rm = TRUE) /
+                             median(annual_hooks, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+print(effort_mean_median)
+```
+
+```{r mean-vs-median-plot, fig.width=10, fig.height=5}
+# Annual values as dots, mean (circle) and median (square) overlaid per period
+effort_stats_long <- effort_mean_median %>%
+  pivot_longer(cols = c(mean_M, median_M), names_to = "stat", values_to = "hooks_M") %>%
+  mutate(stat = recode(stat, "mean_M" = "Mean", "median_M" = "Median"))
+
+ggplot(effort_by_year, aes(x = year_group, y = annual_hooks / 1e6, color = year_group)) +
+  geom_jitter(width = 0.12, size = 2.5, alpha = 0.75) +
+  geom_point(data = effort_stats_long,
+             aes(x = year_group, y = hooks_M, shape = stat),
+             inherit.aes = FALSE, size = 5, color = "black", stroke = 1.2) +
+  scale_color_manual(values = period_colors, guide = "none") +
+  scale_shape_manual(values = c("Mean" = 19, "Median" = 15), name = NULL) +
+  facet_wrap(~ fishery, scales = "free_y") +
+  labs(
+    x        = NULL,
+    y        = "Annual hooks (millions)",
+    title    = "Mean vs median annual fishing effort per period",
+    subtitle = paste0("Coloured dots = individual years; circle = mean; square = median.\n",
+                      "CV% and mean/median ratio in summary table above.")
+  ) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+```
+
+---
+
 ## Plot 3 — Survival (left) + Mean Per-Capita FM (right)
 
 ```{r p3-surv-fm, fig.width=6, fig.height=5}
@@ -238,51 +354,35 @@ mean_percap <- percap_clean %>%
   group_by(period) %>%
   summarise(mean_fm = mean(total_percap), .groups = "drop")
 
-# Define the y-range for each axis
-surv_lo <- 0.65; surv_hi <- 1.00
-fm_lo   <- 0;    fm_hi   <- max(mean_percap$mean_fm, na.rm = TRUE) * 1.25
+# Survival reference lines: constant across periods (Pardo 1980-2012)
+# Show juvenile and mean adult for readability
+surv_juv       <- surv_rates %>% filter(stage == "Juvenile") %>% pull(survival)
+surv_adult_mean <- surv_rates %>% filter(stage_group == "Adult (stage-specific)") %>%
+  summarise(m = mean(survival)) %>% pull(m)
 
-# Transformation functions to map FM onto the survival axis scale
-fm_to_surv <- function(x) surv_lo + (x - fm_lo) / (fm_hi - fm_lo) * (surv_hi - surv_lo)
-surv_to_fm <- function(x) fm_lo  + (x - surv_lo) / (surv_hi - surv_lo) * (fm_hi - fm_lo)
-
-p3 <- ggplot() +
-  # Survival lines (left axis)
-  geom_line(data = surv_rates,
-            aes(x = period, y = survival, color = stage, group = stage),
-            linewidth = 1.3) +
-  geom_point(data = surv_rates,
-             aes(x = period, y = survival, color = stage),
-             size = 3) +
-  # Per-capita FM line (right axis, transformed to survival scale for plotting)
-  geom_line(data = mean_percap,
-            aes(x = period, y = fm_to_surv(mean_fm), group = 1),
-            color = "grey30", linewidth = 1.3, linetype = "dashed") +
-  geom_point(data = mean_percap,
-             aes(x = period, y = fm_to_surv(mean_fm)),
-             color = "grey30", size = 3, shape = 17) +
-  scale_color_manual(
-    values = c("Juvenile" = "#E69F00", "Adult (pooled)" = "#0072B2"),
-    name   = "Survival"
-  ) +
+p3 <- ggplot(mean_percap, aes(x = period, y = mean_fm, group = 1)) +
+  # Constant survival reference lines (horizontal; same across all periods)
+  geom_hline(yintercept = 1 - surv_juv,       color = "#E69F00", linewidth = 0.8,
+             linetype = "dashed", alpha = 0.8) +
+  geom_hline(yintercept = 1 - surv_adult_mean, color = "#0072B2", linewidth = 0.8,
+             linetype = "dashed", alpha = 0.8) +
+  # Period-varying FM
+  geom_line(color = "grey30", linewidth = 1.3) +
+  geom_point(color = "grey30", size = 3, shape = 17) +
+  annotate("text", x = 0.6, y = 1 - surv_juv + 0.001,
+           label = "Total juv. mortality", hjust = 0, size = 3, color = "#E69F00") +
+  annotate("text", x = 0.6, y = 1 - surv_adult_mean + 0.001,
+           label = "Total adult mortality (mean)", hjust = 0, size = 3, color = "#0072B2") +
   scale_y_continuous(
-    name     = "Annual survival probability",
-    limits   = c(surv_lo, surv_hi),
-    labels   = label_number(accuracy = 0.01),
-    sec.axis = sec_axis(
-      surv_to_fm,
-      name   = "Mean per-capita FM (all ages, PLL + DLL)",
-      labels = label_number(accuracy = 0.001)
-    )
+    name   = "Mean per-capita FM (all ages, PLL + DLL)",
+    labels = label_number(accuracy = 0.001)
   ) +
-  labs(title = "Survival and mean per-capita fishing mortality", x = NULL) +
-  diag_theme +
-  theme(
-    axis.title.y.left  = element_text(color = "#0072B2"),
-    axis.text.y.left   = element_text(color = "#0072B2"),
-    axis.title.y.right = element_text(color = "grey30"),
-    axis.text.y.right  = element_text(color = "grey30")
-  )
+  labs(
+    title    = "Per-capita fishing mortality by period",
+    subtitle = "Dashed lines = total mortality budget (1 \u2212 survival); FM is the fishing share",
+    x        = NULL
+  ) +
+  diag_theme
 
 p3
 ```
@@ -306,6 +406,223 @@ combined
 
 ggsave(here("output/figures/07_diagnostic_effort_catchability_survival.png"),
        combined, width = 16, height = 6, dpi = 300)
+```
+
+---
+
+# Fishing Effort by Fleet and Period
+
+Mean annual hooks by fleet across the four 5-year periods, separated by fishery type.
+Top fleets by total effort are shown individually; the remainder are collapsed to "Other".
+
+```{r p-fleet-effort, fig.width=12, fig.height=8}
+# Mean annual hooks per fleet × period × fishery
+# total_hooks in hooks_raw is the 5-year total; divide by 5 for mean annual
+fleet_effort <- hooks_raw %>%
+  filter(!is.na(total_hooks)) %>%
+  mutate(period = recode(year_group, !!!hooks_period_map)) %>%
+  filter(period %in% model_periods) %>%
+  mutate(
+    mean_annual_hooks = total_hooks / 5,
+    period  = factor(period,  levels = model_periods),
+    fishery = factor(fishery, levels = c("PLL", "DLL"))
+  )
+
+# Identify top fleets per fishery by total hooks across all periods
+top_n_fleets <- 7
+
+top_fleets_by_fishery <- fleet_effort %>%
+  group_by(fishery, fleet) %>%
+  summarise(total = sum(mean_annual_hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(fishery) %>%
+  slice_max(order_by = total, n = top_n_fleets) %>%
+  ungroup() %>%
+  select(fishery, fleet)
+
+# Collapse remaining fleets to "Other"
+fleet_effort_plot <- fleet_effort %>%
+  left_join(top_fleets_by_fishery %>% mutate(is_top = TRUE),
+            by = c("fishery", "fleet")) %>%
+  mutate(fleet_label = ifelse(is_top == TRUE, fleet, "Other")) %>%
+  group_by(period, fishery, fleet_label) %>%
+  summarise(mean_annual_hooks = sum(mean_annual_hooks, na.rm = TRUE), .groups = "drop")
+
+# Order fleet_label: top fleets by total descending, "Other" last
+fleet_order <- fleet_effort_plot %>%
+  group_by(fleet_label) %>%
+  summarise(total = sum(mean_annual_hooks), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  filter(fleet_label != "Other") %>%
+  pull(fleet_label) %>%
+  c("Other")
+
+fleet_effort_plot <- fleet_effort_plot %>%
+  mutate(fleet_label = factor(fleet_label, levels = fleet_order))
+
+# Color palette: distinct colors for top fleets, grey for Other
+n_top <- length(fleet_order) - 1
+fleet_colors <- setNames(
+  c(RColorBrewer::brewer.pal(min(n_top, 12), "Paired")[seq_len(n_top)], "grey70"),
+  fleet_order
+)
+
+p_fleet_effort <- ggplot(fleet_effort_plot,
+                         aes(x = period, y = mean_annual_hooks / 1e6,
+                             fill = fleet_label)) +
+  geom_col(width = 0.7, alpha = 0.9) +
+  facet_wrap(~ fishery, scales = "free_y",
+             labeller = labeller(fishery = c(PLL = "Pelagic longline (PLL)",
+                                             DLL = "Demersal longline (DLL)"))) +
+  scale_fill_manual(values = fleet_colors, name = "Fleet") +
+  scale_y_continuous(labels = scales::label_number(suffix = "M")) +
+  labs(
+    x        = NULL,
+    y        = "Mean annual hooks (millions)",
+    title    = "Fishing effort by fleet and period",
+    subtitle = paste0("Top ", top_n_fleets, " fleets per fishery shown individually; remainder collapsed to \u2018Other\u2019")
+  ) +
+  diag_theme +
+  theme(
+    legend.position = "right",
+    strip.text      = element_text(face = "bold", size = 11)
+  )
+
+p_fleet_effort
+
+ggsave(here("output/figures/07_fleet_effort_by_period.png"),
+       p_fleet_effort, width = 12, height = 8, dpi = 300)
+```
+
+## By Year
+
+Annual total hooks by fleet and fishery, 1990–2009. Read directly from raw source files;
+no spatial filtering applied (this is total global effort, not overlap-weighted).
+
+```{r p-fleet-effort-year, fig.width=14, fig.height=8}
+# ── PLL by year: read raw ICCAT data, filter to study area (south of 20°S) ──
+# The raw PLL file covers all latitudes to 62.5°N (including tropical tuna fisheries).
+# Filtering to Lat <= -20 restricts to the southern ocean study area where WAAL occur,
+# matching the published Tuck 2015 figure scale (~200–400M hooks/year).
+# NA Flag values are relabeled "Other" so they collapse with other minor fleets.
+pll_raw_yr <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009, Lat <= -20) %>%
+  mutate(Flag = ifelse(is.na(Flag), "Other", Flag)) %>%
+  group_by(Year, fleet = Flag) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery = "PLL")
+
+# ── DLL by year: read each source, assign fleet label, sum across spatial cells ──
+ccamlr_yr <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"),
+                      show_col_types = FALSE) %>%
+  filter(year >= 1990, year <= 2009) %>%
+  group_by(Year = year, fleet = "CCAMLR") %>%
+  summarise(total_hooks = sum(hook_count, na.rm = TRUE), .groups = "drop")
+
+arg_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"),
+                   show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  group_by(Year, fleet = "Argentina") %>%
+  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
+
+chile_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"),
+                     show_col_types = FALSE) %>%
+  filter(FISHERY != "Pel LL SWO", Year >= 1990, Year <= 2009) %>%
+  group_by(Year, fleet = "Chile") %>%
+  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
+
+falk_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"),
+                    show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  group_by(Year, fleet = "Falklands") %>%
+  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
+
+namibia_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"),
+                       show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  group_by(Year, fleet = "Namibia") %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop")
+
+saf_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"),
+                   show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  group_by(Year, fleet = "South Africa") %>%
+  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
+
+nz_yr <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"),
+                  show_col_types = FALSE) %>%
+  filter(year >= 1990, year <= 2009) %>%
+  group_by(Year = year, fleet = "New Zealand") %>%
+  summarise(total_hooks = sum(total_hooks, na.rm = TRUE), .groups = "drop")
+
+dll_raw_yr <- bind_rows(ccamlr_yr, arg_yr, chile_yr, falk_yr, namibia_yr, saf_yr, nz_yr) %>%
+  mutate(fishery = "DLL")
+
+# ── Combine PLL + DLL ───────────────────────────────────────────────────────
+fleet_effort_yr <- bind_rows(pll_raw_yr, dll_raw_yr) %>%
+  mutate(fishery = factor(fishery, levels = c("PLL", "DLL")))
+
+# ── Identify top fleets per fishery (same n as period plot) ────────────────
+top_fleets_yr <- fleet_effort_yr %>%
+  group_by(fishery, fleet) %>%
+  summarise(total = sum(total_hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(fishery) %>%
+  slice_max(order_by = total, n = top_n_fleets) %>%
+  ungroup() %>%
+  select(fishery, fleet)
+
+fleet_effort_yr_plot <- fleet_effort_yr %>%
+  left_join(top_fleets_yr %>% mutate(is_top = TRUE),
+            by = c("fishery", "fleet")) %>%
+  mutate(fleet_label = ifelse(is_top == TRUE, fleet, "Other")) %>%
+  group_by(Year, fishery, fleet_label) %>%
+  summarise(total_hooks = sum(total_hooks, na.rm = TRUE), .groups = "drop")
+
+# Fleet order: top by total descending, "Other" last
+fleet_order_yr <- fleet_effort_yr_plot %>%
+  group_by(fleet_label) %>%
+  summarise(total = sum(total_hooks), .groups = "drop") %>%
+  arrange(desc(total)) %>%
+  filter(fleet_label != "Other") %>%
+  pull(fleet_label) %>%
+  c("Other")
+
+fleet_effort_yr_plot <- fleet_effort_yr_plot %>%
+  mutate(fleet_label = factor(fleet_label, levels = fleet_order_yr))
+
+# Color palette (same structure as period plot)
+n_top_yr <- length(fleet_order_yr) - 1
+fleet_colors_yr <- setNames(
+  c(RColorBrewer::brewer.pal(min(n_top_yr, 12), "Paired")[seq_len(n_top_yr)], "grey70"),
+  fleet_order_yr
+)
+
+p_fleet_effort_yr <- ggplot(fleet_effort_yr_plot,
+                             aes(x = Year, y = total_hooks / 1e6,
+                                 fill = fleet_label)) +
+  geom_col(width = 0.9, alpha = 0.9) +
+  facet_wrap(~ fishery, scales = "free_y",
+             labeller = labeller(fishery = c(PLL = "Pelagic longline (PLL)",
+                                             DLL = "Demersal longline (DLL)"))) +
+  scale_fill_manual(values = fleet_colors_yr, name = "Fleet") +
+  scale_x_continuous(breaks = seq(1990, 2009, by = 5)) +
+  scale_y_continuous(labels = scales::label_number(suffix = "M")) +
+  labs(
+    x        = NULL,
+    y        = "Annual hooks (millions)",
+    title    = "Fishing effort by fleet and year",
+    subtitle = paste0("Top ", top_n_fleets, " fleets per fishery shown individually; remainder collapsed to \u2018Other\u2019.\n",
+                      "PLL filtered to south of 20\u00b0S (study area); DLL sources are already southern-ocean only.")
+  ) +
+  diag_theme +
+  theme(
+    legend.position = "right",
+    strip.text      = element_text(face = "bold", size = 11)
+  )
+
+p_fleet_effort_yr
+
+ggsave(here("output/figures/07_fleet_effort_by_year.png"),
+       p_fleet_effort_yr, width = 14, height = 8, dpi = 300)
 ```
 
 ---
@@ -339,11 +656,11 @@ bpue_summary <- catchability_by_period %>%
 cat("\n=== BPUE change (1990-1994 to 2005-2009) ===\n")
 print(bpue_summary)
 
-# Survival change
-cat("\n=== Survival change (1990-1994 to 2005-2009) ===\n")
+# Survival (constant across periods — Pardo 1980-2012 stage-specific values)
+cat("\n=== Survival rates (constant across periods, Pardo 1980-2012) ===\n")
 surv_rates %>%
-  pivot_wider(names_from = period, values_from = survival) %>%
-  mutate(abs_change = `2005-2009` - `1990-1994`) %>%
+  select(stage, stage_group, survival) %>%
+  mutate(total_mortality = 1 - survival) %>%
   print()
 
 # Per-capita FM change (averaged across age classes)
@@ -359,6 +676,707 @@ percap_summary <- percap_clean %>%
 cat("\n=== Mean per-capita FM (averaged across age classes) ===\n")
 print(percap_summary)
 ```
+
+---
+
+# FM Decomposition and Multi-Period Recovery Heatmaps
+
+Three new figures extending the diagnostics above:
+
+- **Figure P4** — stacked bar chart decomposing the FM decline each period into
+  effort-driven (fewer hooks) vs catchability-driven (β) components
+- **Figure P5** — the 06a coverage × efficacy lambda heatmap with period recovery
+  threshold points overlaid (6b, 6c, 6d + 6a baseline)
+- **Figure P6** — effort_ratio × β_ratio lambda surface with observed period points
+  at their decomposed coordinates and theoretical scenario points along the right edge
+
+---
+
+## Lambda Helper and Behavioral Vital Rates
+
+```{r lambda-helper}
+# Mitigation scenario efficacy values (same as 06a-d; used in P6 edge points)
+eff_tori_lines  <- 0.75
+eff_night_set   <- 0.60
+eff_line_weight <- 0.65
+eff_hook_shield <- 0.35
+eff_2of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set)
+eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)
+
+mit_scens <- tibble(
+  scenario = c("Hook shielding only", "Line weighting only", "Night setting only",
+               "Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)",
+               "Complete elimination"),
+  efficacy = c(eff_hook_shield, eff_line_weight, eff_night_set, eff_tori_lines,
+               eff_2of3, eff_3of3, 1.0)
+)
+
+# Stage-specific behavioral vital rates (Clay 2019; same across all periods)
+b_EF  <- 0.746; b_ENB <- 0.589; b_ES  <- 0.016; b_IF  <- 0.744
+b_Imm <- 0.101; b_IS  <- 0.011; b_PF  <- 0.941
+k_EF  <- 0.631; k_ENB <- 0.675; k_ES  <- 0.500; k_IF  <- 0.627
+k_Imm <- 0.585; k_IS  <- 0.627; k_PF  <- 0.791
+r_EF  <- 0.973; r_ENB <- 0.953; r_ES  <- 0.292; r_IF  <- 0.948
+r_Imm <- 0.692; r_IS  <- 0.459; r_PF  <- 0.972
+
+calc_lambda_from_survival <- function(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB,
+                                      ns_IF, ns_IS, ns_PF) {
+  n_m <- matrix(data = c(
+    0,      0,       0,       0,       0,                                             0.5*ns_Juv,               0,                        0.5*ns_Juv,               0,                        0,                           0,
+    ns_Juv, 0,       0,       0,       0,                                             0,                        0,                        0,                        0,                        0,                           0,
+    0,      ns_Juv,  0,       0,       0,                                             0,                        0,                        0,                        0,                        0,                           0,
+    0,      0,       ns_Imm,  0,       0,                                             0,                        0,                        0,                        0,                        0,                           0,
+    0,      0,       0,       ns_Imm,  ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),     0,                        0,                        0,                        0,                        0,                           0,
+    0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*k_Imm,                     0,                        0,                        0,                        0,                        0,                           0,
+    0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*(1-k_Imm),                 0,                        0,                        0,                        0,                        0,                           0,
+    0,      0,       0,       0,       0,                                             ns_IS*r_IS*b_IS*k_IS,     ns_IF*r_IF*b_IF*k_IF,     ns_ES*r_ES*b_ES*k_ES,     ns_EF*r_EF*b_EF*k_EF,     ns_ENB*r_ENB*b_ENB*k_ENB,    ns_PF*r_PF*b_PF*k_PF,
+    0,      0,       0,       0,       0,                                             ns_IS*r_IS*b_IS*(1-k_IS), ns_IF*r_IF*b_IF*(1-k_IF), ns_ES*r_ES*b_ES*(1-k_ES), ns_EF*r_EF*b_EF*(1-k_EF), ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),
+    0,      0,       0,       0,       0,                                             ns_IS*r_IS*(1-b_IS),      ns_IF*r_IF*(1-b_IF),      ns_ES*r_ES*(1-b_ES),      ns_EF*r_EF*(1-b_EF),      ns_ENB*r_ENB*(1-b_ENB),     ns_PF*r_PF*(1-b_PF),
+    0,      0,       0,       0,       0,                                             ns_IS*(1-r_IS),           ns_IF*(1-r_IF),           ns_ES*(1-r_ES),           ns_EF*(1-r_EF),           ns_ENB*(1-r_ENB),            ns_PF*(1-r_PF)
+  ), nrow = 11, byrow = TRUE)
+  as.numeric(eigen(n_m)$values[1])
+}
+```
+
+---
+
+## Load Decomposition Data (03g counterfactuals)
+
+```{r decomp-load}
+# 03g files use different period labels than 03f/Clay ("1990-1995" vs "1990-1994")
+date_sfx_03g <- "2026-02-24"
+
+# Observed bycatch from 03g (same data as 03f but with 03g period labels)
+byc_obs_03g <- read_csv(
+  here(paste0("output/bycatch_by_fishery_period_03g_", date_sfx_03g, ".csv")),
+  show_col_types = FALSE
+)
+
+# Counterfactual: baseline beta × current effort (effort change only)
+byc_eff_only <- read_csv(
+  here(paste0("output/bycatch_effort_only_03g_", date_sfx_03g, ".csv")),
+  show_col_types = FALSE
+)
+
+# Counterfactual: current beta × baseline effort (catchability change only)
+byc_catch_only <- read_csv(
+  here(paste0("output/bycatch_catchability_only_03g_", date_sfx_03g, ".csv")),
+  show_col_types = FALSE
+)
+
+# Clay demographic data for period-specific population sizes
+dem_props_07 <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                         show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+# Map 03g effort periods to Clay population periods
+period_pop_map_07 <- tibble(
+  year_group = c("1990-1995", "1996-2000", "2001-2005", "2006-2010"),
+  pop_period = c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
+)
+
+# Population sizes by age class and 03g effort period
+age_cols_decomp <- c("fb", "sb", "nb", "j2j3", "imm")
+
+pop_by_effort_period <- dem_props_07 %>%
+  filter(Dem_class != "J1", Period != "1990-2009") %>%
+  select(Period, Dem_class, Pop) %>%
+  mutate(age_class = case_when(
+    Dem_class == "J2J3" ~ "j2j3",
+    Dem_class == "IMM"  ~ "imm",
+    Dem_class == "FB"   ~ "fb",
+    Dem_class == "SB"   ~ "sb",
+    Dem_class == "NB"   ~ "nb"
+  )) %>%
+  left_join(period_pop_map_07, by = c("Period" = "pop_period"))
+
+# Baseline (1990-1995 effort period) population vector — fixed denominator for all periods
+pop_tmp <- pop_by_effort_period %>%
+  filter(year_group == "1990-1995") %>%
+  select(age_class, Pop)
+pop_baseline_vec <- setNames(pop_tmp$Pop, pop_tmp$age_class)
+
+# Helper: sum DLL + PLL bycatch, compute per-capita FM using baseline population
+to_percap_03g <- function(byc_df, period_filter = NULL) {
+  df <- if (!is.null(period_filter)) filter(byc_df, year_group %in% period_filter) else byc_df
+  df %>%
+    group_by(year_group) %>%
+    summarise(across(all_of(age_cols_decomp), ~ sum(.x, na.rm = TRUE)), .groups = "drop") %>%
+    pivot_longer(cols = all_of(age_cols_decomp),
+                 names_to = "age_class", values_to = "bycatch") %>%
+    mutate(pop = pop_baseline_vec[age_class],
+           fm  = bycatch / pop)
+}
+```
+
+---
+
+## Compute FM Decomposition
+
+```{r fm-decomposition}
+baseline_03g <- "1990-1995"
+later_03g    <- c("1996-2000", "2001-2005", "2006-2010")
+
+# Observed per-capita FM for baseline period
+fm_base_vec <- to_percap_03g(byc_obs_03g, period_filter = baseline_03g) %>%
+  rename(fm_base = fm) %>% select(age_class, fm_base)
+
+# Observed per-capita FM for later periods
+fm_obs_later <- to_percap_03g(byc_obs_03g, period_filter = later_03g) %>%
+  rename(fm_obs = fm)
+
+# Effort-only counterfactual: baseline beta, current effort
+fm_eff_only <- to_percap_03g(byc_eff_only) %>% rename(fm_eff_only = fm)
+
+# Catchability-only counterfactual: current beta, baseline effort
+fm_catch_only <- to_percap_03g(byc_catch_only) %>% rename(fm_catch_only = fm)
+
+# Combine and compute multiplicative decomposition factors
+decomp <- fm_obs_later %>%
+  left_join(fm_base_vec, by = "age_class") %>%
+  left_join(fm_eff_only   %>% select(year_group, age_class, fm_eff_only),
+            by = c("year_group", "age_class")) %>%
+  left_join(fm_catch_only %>% select(year_group, age_class, fm_catch_only),
+            by = c("year_group", "age_class")) %>%
+  mutate(
+    effort_factor  = fm_eff_only / fm_base,      # fraction of baseline FM from effort alone
+    beta_factor    = fm_obs      / fm_eff_only,  # residual fraction after effort accounted for
+    overall_factor = fm_obs      / fm_base       # ≈ effort_factor × beta_factor
+  )
+
+# Bycatch-weighted period-level summary
+decomp_by_period <- decomp %>%
+  group_by(year_group) %>%
+  summarise(
+    effort_ratio  = weighted.mean(effort_factor,  w = fm_base, na.rm = TRUE),
+    beta_ratio    = weighted.mean(beta_factor,    w = fm_base, na.rm = TRUE),
+    overall_ratio = weighted.mean(overall_factor, w = fm_base, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  bind_rows(tibble(year_group = baseline_03g,
+                   effort_ratio = 1, beta_ratio = 1, overall_ratio = 1)) %>%
+  arrange(year_group)
+
+decomp_by_period %>% mutate(across(where(is.numeric), ~ round(.x, 4))) %>% print()
+```
+
+---
+
+## Figure P4 — FM Decomposition: Effort vs Catchability
+
+```{r p4-fm-decomp, fig.width=7, fig.height=5}
+decomp_bars <- decomp_by_period %>%
+  filter(year_group != baseline_03g) %>%
+  mutate(
+    # Additive decomposition:
+    #   effort_contrib = 1 - effort_ratio  (reduction from fewer hooks alone)
+    #   beta_contrib   = effort_ratio - overall_ratio  (additional reduction from lower β)
+    effort_contrib = (1 - effort_ratio)            * 100,
+    beta_contrib   = (effort_ratio - overall_ratio) * 100,
+    year_group = factor(year_group, levels = later_03g)
+  ) %>%
+  pivot_longer(cols = c(effort_contrib, beta_contrib),
+               names_to = "component", values_to = "pct_reduction") %>%
+  mutate(component = recode(component,
+    effort_contrib = "Effort reduction (fewer hooks)",
+    beta_contrib   = "Catchability reduction (\u03b2; fishing practices)"
+  ))
+
+p4 <- ggplot(decomp_bars, aes(x = year_group, y = pct_reduction, fill = component)) +
+  geom_col(position = "stack", width = 0.6, alpha = 0.85) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.3) +
+  scale_fill_manual(
+    values = c("Effort reduction (fewer hooks)"              = "#2166ac",
+               "Catchability reduction (\u03b2; fishing practices)" = "#d6604d"),
+    name = "FM reduction component"
+  ) +
+  labs(
+    x        = "Period",
+    y        = "% reduction in FM relative to 1990\u20131995 baseline",
+    title    = "Decomposition of fishing mortality decline by period",
+    subtitle = "FM change split into effort-driven (fewer hooks) and catchability-driven (\u03b2) components"
+  ) +
+  diag_theme +
+  theme(legend.position = "right")
+
+p4
+
+ggsave(here("output/figures/07_p4_fm_decomposition_bars.png"),
+       p4, width = 7, height = 5, dpi = 300)
+```
+
+---
+
+## Period-Specific FM and Natural Mortality (03f baseline)
+
+```{r period-fm-nm}
+# Total per-capita FM per period from 03f output (period labels: "1990-1994" etc.)
+# Uses percap (raw, unlabeled) loaded at top of script
+total_fm_03f <- percap %>%
+  select(year_group, age_class, total_percap) %>%
+  pivot_wider(names_from = age_class, values_from = total_percap)
+
+# Stage-specific survival (Pardo 1980-2012, shared directly — same values as 06a-d)
+s_Juv_base <- 0.846
+s_EF_base  <- 0.913; s_ENB_base <- 0.943; s_ES_base <- 0.895
+s_IF_base  <- 0.920; s_Imm_base <- 0.921; s_IS_base <- 0.892; s_PF_base <- 0.935
+
+# Natural mortality for 1990-1994 baseline (used to build heatmap surface)
+nm_base_03f <- total_fm_03f %>%
+  filter(year_group == "1990-1994") %>%
+  mutate(
+    nm_juv = (1 - s_Juv_base) - j2j3,
+    nm_imm = (1 - s_Imm_base) - imm,
+    nm_efb = (1 - s_EF_base)  - fb,
+    nm_esb = (1 - s_ES_base)  - sb,
+    nm_enb = (1 - s_ENB_base) - nb,
+    nm_ifb = (1 - s_IF_base)  - fb,
+    nm_isb = (1 - s_IS_base)  - sb,
+    nm_pf  = (1 - s_PF_base)  - nb
+  )
+
+fm_base_03f <- total_fm_03f %>% filter(year_group == "1990-1994")
+```
+
+---
+
+## Figure P5 — 06a Heatmap with 3 Period Baseline Points
+
+Each later period (6b, 6c, 6d) achieved a certain total FM reduction relative to 6a
+through a combination of lower fishing effort and lower catchability (β). We express
+each period's FM reduction as an equivalent blanket mitigation and place it as a
+single point on the 06a surface: **x = 1** (full coverage), **y = 1 − overall_ratio**
+(the per-hook efficacy needed to match that period's observed FM reduction).
+
+```{r p5-period-heatmap, fig.width=10, fig.height=7}
+# Build lambda surface identical to 06a: coverage × efficacy → lambda
+heatmap_surface <- expand.grid(
+  coverage = seq(0, 1, by = 0.02),
+  efficacy = seq(0, 1, by = 0.02)
+) %>%
+  mutate(lambda = NA_real_)
+
+for (i in seq_len(nrow(heatmap_surface))) {
+  cov <- heatmap_surface$coverage[i]
+  eff <- heatmap_surface$efficacy[i]
+  heatmap_surface$lambda[i] <- calc_lambda_from_survival(
+    ns_Juv = 1 - ((fm_base_03f$j2j3 * (1 - eff * cov)) + nm_base_03f$nm_juv),
+    ns_Imm = 1 - ((fm_base_03f$imm  * (1 - eff * cov)) + nm_base_03f$nm_imm),
+    ns_EF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_efb),
+    ns_ES  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_esb),
+    ns_ENB = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_enb),
+    ns_IF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_ifb),
+    ns_IS  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_isb),
+    ns_PF  = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_pf)
+  )
+}
+
+# Map 03g period labels to 03f/Clay labels
+period_label_03g_to_03f <- c(
+  "1990-1995" = "1990-1994", "1996-2000" = "1995-1999",
+  "2001-2005" = "2000-2004", "2006-2010" = "2005-2009"
+)
+
+# Three overlay points: one per later period
+# x = 1 (equivalent to 100% fleet coverage)
+# y = 1 - overall_ratio (equivalent blanket per-hook efficacy matching observed FM reduction)
+period_pts_p5 <- decomp_by_period %>%
+  filter(year_group != baseline_03g) %>%
+  mutate(
+    coverage     = 1,
+    efficacy_eq  = 1 - overall_ratio,
+    period_label = period_label_03g_to_03f[year_group],
+    period_label = factor(period_label, levels = model_periods)
+  )
+
+p5 <- ggplot(heatmap_surface, aes(x = coverage, y = efficacy)) +
+  geom_tile(aes(fill = lambda)) +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  # White halo for visibility
+  geom_point(data = period_pts_p5,
+             aes(x = coverage, y = efficacy_eq),
+             shape = 21, size = 6, color = "white", fill = "white",
+             inherit.aes = FALSE) +
+  # Colored points for each later period
+  geom_point(data = period_pts_p5,
+             aes(x = coverage, y = efficacy_eq, color = period_label),
+             shape = 21, size = 4, stroke = 1.5, fill = "white",
+             inherit.aes = FALSE) +
+  geom_label(data = period_pts_p5,
+             aes(x = coverage - 0.03, y = efficacy_eq, label = period_label,
+                 color = period_label),
+             hjust = 1, size = 3, fill = "white", alpha = 0.85,
+             label.padding = unit(0.15, "lines"), label.size = 0.2,
+             inherit.aes = FALSE, show.legend = FALSE) +
+  scale_fill_distiller(palette = "RdBu", direction = 1,
+                       limits = range(heatmap_surface$lambda),
+                       name = expression(lambda)) +
+  scale_color_manual(values = period_colors, name = "Period") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(
+    x        = "% bycatch-weighted coverage (fisheries with mitigation)",
+    y        = "Mitigation efficacy",
+    title    = "Population growth rate across mitigation efficacy and coverage (06a baseline)",
+    subtitle = paste0(
+      "Surface = 1990\u20131994 FM and VRs; white contour = \u03bb = 1.\n",
+      "Points = observed FM reduction for each later period expressed as equivalent blanket mitigation at 100% coverage."
+    )
+  ) +
+  coord_cartesian(expand = FALSE) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid = element_blank(), legend.position = "right")
+
+p5
+
+ggsave(here("output/figures/07_p5_period_recovery_heatmap.png"),
+       p5, width = 10, height = 7, dpi = 300)
+```
+
+---
+
+## Figure P6 — Effort × Catchability Decomposition Heatmap
+
+```{r p6-decomp-heatmap, fig.width=10, fig.height=7}
+# Lambda surface: effort_ratio × beta_ratio axes, 1990-1994 baseline FM
+decomp_grid <- expand.grid(
+  effort_ratio = seq(0, 1, by = 0.02),
+  beta_ratio   = seq(0, 1, by = 0.02)
+) %>%
+  mutate(lambda = NA_real_)
+
+for (i in seq_len(nrow(decomp_grid))) {
+  er <- decomp_grid$effort_ratio[i]
+  br <- decomp_grid$beta_ratio[i]
+  decomp_grid$lambda[i] <- calc_lambda_from_survival(
+    ns_Juv = 1 - ((fm_base_03f$j2j3 * er * br) + nm_base_03f$nm_juv),
+    ns_Imm = 1 - ((fm_base_03f$imm  * er * br) + nm_base_03f$nm_imm),
+    ns_EF  = 1 - ((fm_base_03f$fb   * er * br) + nm_base_03f$nm_efb),
+    ns_ES  = 1 - ((fm_base_03f$sb   * er * br) + nm_base_03f$nm_esb),
+    ns_ENB = 1 - ((fm_base_03f$nb   * er * br) + nm_base_03f$nm_enb),
+    ns_IF  = 1 - ((fm_base_03f$fb   * er * br) + nm_base_03f$nm_ifb),
+    ns_IS  = 1 - ((fm_base_03f$sb   * er * br) + nm_base_03f$nm_isb),
+    ns_PF  = 1 - ((fm_base_03f$nb   * er * br) + nm_base_03f$nm_pf)
+  )
+}
+
+# Map 03g period labels to 03f/Clay labels for consistent color palette
+period_label_03g_to_03f <- c(
+  "1990-1995" = "1990-1994", "1996-2000" = "1995-1999",
+  "2001-2005" = "2000-2004", "2006-2010" = "2005-2009"
+)
+
+obs_pts_decomp <- decomp_by_period %>%
+  mutate(
+    period_03f = period_label_03g_to_03f[year_group],
+    period_03f = factor(period_03f, levels = model_periods)
+  )
+
+# Theoretical scenario points along right edge (effort_ratio = 1, full coverage)
+scen_edge_pts <- mit_scens %>%
+  mutate(effort_ratio = 1,
+         beta_ratio   = 1 - efficacy)
+
+p6 <- ggplot(decomp_grid, aes(x = effort_ratio, y = beta_ratio)) +
+  geom_raster(aes(fill = lambda), interpolate = TRUE) +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  # Theoretical scenario points (effort_ratio = 1, β reduced by mitigation efficacy)
+  geom_point(data = scen_edge_pts,
+             aes(x = effort_ratio, y = beta_ratio),
+             shape = 22, fill = "white", color = "black", size = 2.5,
+             inherit.aes = FALSE) +
+  geom_text(data = scen_edge_pts,
+            aes(x = effort_ratio - 0.02, y = beta_ratio, label = scenario),
+            hjust = 1, size = 2.2, color = "white",
+            inherit.aes = FALSE) +
+  # Line connecting observed period points (temporal trajectory)
+  geom_line(data = obs_pts_decomp %>% filter(!is.na(period_03f)),
+            aes(x = effort_ratio, y = beta_ratio),
+            color = "white", linewidth = 0.8, linetype = "dashed",
+            inherit.aes = FALSE) +
+  # Observed period points colored by period
+  geom_point(data = obs_pts_decomp,
+             aes(x = effort_ratio, y = beta_ratio, color = period_03f),
+             size = 4, shape = 21, fill = "white", stroke = 1.5,
+             inherit.aes = FALSE) +
+  geom_text(data = obs_pts_decomp,
+            aes(x = effort_ratio, y = beta_ratio,
+                label = period_03f, color = period_03f),
+            hjust = -0.15, vjust = 0.3, size = 3, show.legend = FALSE,
+            inherit.aes = FALSE) +
+  scale_fill_distiller(palette = "RdYlBu", direction = 1,
+                       name = expression(lambda)) +
+  scale_color_manual(values = period_colors, name = "Period") +
+  labs(
+    x        = "Effort ratio (fraction of 1990\u20131994 effort remaining)",
+    y        = expression(paste(beta, " ratio (fraction of 1990\u20131994 catchability remaining)")),
+    title    = "FM decomposition: effort vs catchability factors",
+    subtitle = paste0(
+      "Surface = \u03bb under 1990\u20131994 baseline FM \u00d7 effort_ratio \u00d7 \u03b2_ratio.\n",
+      "Circles = observed periods at decomposed coordinates; squares = theoretical scenarios at full coverage (effort_ratio = 1)."
+    )
+  ) +
+  coord_cartesian(xlim = c(0, 1.05), ylim = c(0, 1.05), expand = FALSE) +
+  theme_bw(base_size = 12) +
+  theme(panel.grid = element_blank(), legend.position = "right")
+
+p6
+
+ggsave(here("output/figures/07_p6_decomp_effort_beta_heatmap.png"),
+       p6, width = 10, height = 7, dpi = 300)
+```
+
+---
+
+## Figure P7 — Combined Cross-Period Heatmap with All Reference Points
+
+Load the heatmap lambda grids, reference points (no-mitigation, historical, current),
+and scenario points (hypothetical future) saved by each period script (06a–06d).
+Display as a 2×2 faceted heatmap for cross-period comparison.
+
+```{r p7-combined-heatmap, fig.width=14, fig.height=10}
+date_sfx_06 <- "2026-02-25"
+periods_06  <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
+
+# Load heatmap lambda grids (efficacy × coverage → lambda) from each period script
+heatmap_all <- map_dfr(periods_06, function(p) {
+  f <- here(paste0("output/heatmap_data_", p, "_", date_sfx_06, ".csv"))
+  if (file.exists(f)) read_csv(f, show_col_types = FALSE) else NULL
+}) %>%
+  mutate(period = factor(period, levels = model_periods))
+
+# Load reference points (no-mitigation, historical, current) from each period script
+ref_all <- map_dfr(periods_06, function(p) {
+  f <- here(paste0("output/heatmap_ref_pts_", p, "_", date_sfx_06, ".csv"))
+  if (file.exists(f)) read_csv(f, show_col_types = FALSE) else NULL
+}) %>%
+  mutate(period = factor(period, levels = model_periods))
+
+# Load scenario heatmap points (hypothetical future scenarios) from each period script
+scen_all <- map_dfr(periods_06, function(p) {
+  f <- here(paste0("output/scenario_heatmap_pts_", p, "_", date_sfx_06, ".csv"))
+  if (file.exists(f)) read_csv(f, show_col_types = FALSE) else NULL
+}) %>%
+  mutate(period = factor(period, levels = model_periods))
+
+# Shared lambda range across all periods for consistent color scale
+lambda_range <- range(heatmap_all$lambda, na.rm = TRUE)
+
+p7 <- ggplot(heatmap_all, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  # Lambda = 1 threshold contour
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  # Hypothetical scenarios: compliance level progression lines and points
+  geom_line(data = scen_all,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = interaction(period, efficacy_scenario)),
+            inherit.aes = FALSE, color = "white", linewidth = 0.4, alpha = 0.5) +
+  geom_point(data = scen_all %>% filter(compliance_level == "Baseline Compliance"),
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 2, shape = 16, color = "white", alpha = 0.8) +
+  # Reference points: gold diamonds (no-mitigation, historical, current)
+  geom_point(data = ref_all,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.7) +
+  geom_label(data = ref_all,
+             aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+             inherit.aes = FALSE,
+             size = 2.0, fill = "gold", alpha = 0.85,
+             label.padding = unit(0.12, "lines"),
+             hjust = -0.05, vjust = 0.5) +
+  facet_wrap(~ period, nrow = 2) +
+  scale_fill_distiller(direction = 1, palette = "RdBu",
+                       limits = lambda_range,
+                       name = expression(lambda)) +
+  scale_x_continuous(breaks = seq(0, 1, 0.25),
+                     labels = paste0(seq(0, 100, 25), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25),
+                     labels = paste0(seq(0, 100, 25), "%")) +
+  labs(
+    x        = "% bycatch-weighted coverage (fisheries with mitigation)",
+    y        = "Mitigation efficacy",
+    title    = "Population growth rate across mitigation space \u2014 all periods",
+    subtitle = paste0(
+      "White contour = \u03bb = 1; gold diamonds = reference points (no mitigation, historical period, current).\n",
+      "White points/lines = hypothetical future scenarios at baseline compliance."
+    )
+  ) +
+  coord_cartesian(expand = FALSE) +
+  theme_bw(base_size = 11) +
+  theme(
+    panel.grid      = element_blank(),
+    strip.text      = element_text(face = "bold", size = 11),
+    legend.position = "right"
+  )
+
+p7
+
+ggsave(here("output/figures/07_p7_combined_heatmap_all_periods.png"),
+       p7, width = 14, height = 10, dpi = 300)
+```
+
+---
+
+## Figure P8 — All Periods on Single 1990–1994 Baseline Heatmap
+
+A single-panel version of P7 that places all four periods' reference points and scenario
+lines on a shared 1990–1994 FM surface, using the same lambda color scale as P7.
+Plotting later periods on the 1990–1994 surface answers: *if mitigation from period X were
+applied to 1990–1994 effort levels, what lambda would result?* This isolates the mitigation
+signal from the effort-reduction signal visible in P6.
+
+```{r p8-single-panel-all-periods, fig.width=11, fig.height=7.5}
+# Lambda surface: 1990-1994 FM, same formula as P5 and P7 top-left panel
+heatmap_p8 <- expand.grid(
+  coverage = seq(0, 1, by = 0.02),
+  efficacy = seq(0, 1, by = 0.02)
+) %>%
+  mutate(lambda = NA_real_)
+
+for (i in seq_len(nrow(heatmap_p8))) {
+  cov <- heatmap_p8$coverage[i]
+  eff <- heatmap_p8$efficacy[i]
+  heatmap_p8$lambda[i] <- calc_lambda_from_survival(
+    ns_Juv = 1 - ((fm_base_03f$j2j3 * (1 - eff * cov)) + nm_base_03f$nm_juv),
+    ns_Imm = 1 - ((fm_base_03f$imm  * (1 - eff * cov)) + nm_base_03f$nm_imm),
+    ns_EF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_efb),
+    ns_ES  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_esb),
+    ns_ENB = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_enb),
+    ns_IF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_ifb),
+    ns_IS  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_isb),
+    ns_PF  = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_pf)
+  )
+}
+
+# Rename "Current" to clarify: same regulations but applied to each period's fleet/effort
+# distribution, so effective coverage shifts as fishery composition changes over time
+ref_named_p8 <- ref_all %>%
+  filter(!str_starts(ref_label, "No mitigation")) %>%
+  mutate(
+    period    = factor(period, levels = model_periods),
+    ref_label = case_when(
+      str_starts(ref_label, "Current")    ~ paste0("Current regs\n(", period, " effort)"),
+      str_starts(ref_label, "Historical") & period == "1990-1994" ~ "Historical (1990\u20131994)\n(no mitigation)",
+      TRUE ~ ref_label
+    )
+  )
+
+# Future scenario lines: 1990-1994 period only — later periods are harder to interpret
+# on the 1990-1994 surface because their fleet structure differs
+scen_p8 <- scen_all %>%
+  filter(
+    str_detect(scenario, "^(all_pll_2of3|all_pll_3of3|all_fleets_3of3)__"),
+    period == "1990-1994"
+  ) %>%
+  mutate(
+    period     = factor(period, levels = model_periods),
+    scen_short = case_when(
+      str_starts(scenario, "all_pll_2of3")    ~ "2/3 PLL",
+      str_starts(scenario, "all_pll_3of3")    ~ "3/3 PLL",
+      str_starts(scenario, "all_fleets_3of3") ~ "3/3 all fleets"
+    )
+  )
+
+# Full elimination: 1990-1994 only (all periods stack at same coords anyway)
+full_elim_p8 <- scen_all %>%
+  filter(scenario == "full_elimination", period == "1990-1994") %>%
+  mutate(period = factor(period, levels = model_periods))
+
+# Label anchor: Full Compliance endpoint for 1990-1994 (representative period)
+scen_labels_p8 <- scen_p8 %>%
+  filter(compliance_level == "Full Compliance", period == "1990-1994") %>%
+  select(effective_coverage, effective_efficacy, scen_short)
+
+# Full elimination label anchor (1990-1994; all periods stack at same coords)
+full_elim_label_p8 <- full_elim_p8 %>%
+  filter(period == "1990-1994") %>%
+  mutate(label = "Full elimination")
+
+p8 <- ggplot(heatmap_p8, aes(x = coverage, y = efficacy)) +
+  geom_tile(aes(fill = lambda)) +
+  # Lambda = 1 threshold contour
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  # Future scenario compliance-sweep lines, colored by period
+  geom_line(data = scen_p8,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = scen_short),
+            inherit.aes = FALSE, color = "grey85", linewidth = 0.8) +
+  # Scenario baseline-compliance solid points
+  geom_point(data = scen_p8 %>% filter(compliance_level == "Baseline Compliance"),
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2, shape = 16, color = "grey85") +
+  # Full elimination star
+  geom_point(data = full_elim_p8,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 3.5, shape = 8, color = "grey85", stroke = 1.0) +
+  # Scenario name labels at Full Compliance endpoint (1990-1994 anchor, right of point)
+  geom_label(data = scen_labels_p8,
+             aes(x = effective_coverage, y = effective_efficacy, label = scen_short),
+             inherit.aes = FALSE,
+             size = 2.4, fill = "white", color = "grey20", alpha = 0.88,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.08, vjust = 0.5) +
+  # Full elimination label below the star cluster
+  geom_label(data = full_elim_label_p8,
+             aes(x = effective_coverage, y = effective_efficacy, label = label),
+             inherit.aes = FALSE,
+             size = 2.4, fill = "white", color = "grey20", alpha = 0.88,
+             label.padding = unit(0.15, "lines"),
+             hjust = 0.5, vjust = 1.4) +
+  # Historical and Current reference circles: small, period-colored, label to right
+  geom_point(data = ref_named_p8,
+             aes(x = effective_coverage, y = effective_efficacy, color = period),
+             inherit.aes = FALSE,
+             size = 2.5, shape = 19) +
+  geom_label(data = ref_named_p8,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 label = ref_label, color = period),
+             inherit.aes = FALSE,
+             size = 2.2, fill = "white", alpha = 0.88,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.08, vjust = 0.5, show.legend = FALSE) +
+  # Same lambda color scale as P7; oob=squish prevents minimum-lambda cells (bottom/left
+  # edges where eff*cov=0) from rendering as grey when heatmap_p8 min is just outside
+  # lambda_range computed from pre-saved 06a file
+  scale_fill_distiller(direction = 1, palette = "RdBu",
+                       limits = lambda_range,
+                       oob = scales::squish,
+                       name = expression(lambda)) +
+  scale_color_manual(values = period_colors, name = "Period") +
+  scale_x_continuous(breaks = seq(0, 1, 0.25),
+                     labels = paste0(seq(0, 100, 25), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25),
+                     labels = paste0(seq(0, 100, 25), "%")) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+  labs(
+    x        = "% bycatch-weighted coverage (fisheries with mitigation)",
+    y        = "Mitigation efficacy",
+    title    = "All periods on 1990\u20131994 baseline \u2014 mitigation efficacy vs coverage",
+    subtitle = paste0(
+      "Surface = 1990\u20131994 FM and vital rates; same \u03bb scale as P7.\n",
+      "White contour = \u03bb = 1; grey lines = future mitigation scenarios (1990\u20131994 fleet structure).\n",
+      "Colored circles = reference points per period; position reflects that period\u2019s fleet structure;\n",
+      "\u03bb read from 1990\u20131994 surface (isolates mitigation signal from effort reduction)."
+    )
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    panel.grid    = element_blank(),
+    legend.position = "right",
+    plot.margin   = margin(t = 5, r = 60, b = 5, l = 5, unit = "pt")
+  )
+
+p8
+
+ggsave(here("output/figures/07_p8_single_panel_all_periods.png"),
+       p8, width = 11, height = 7.5, dpi = 300)
+```
+
+---
 
 ```{r session-info}
 sessionInfo()

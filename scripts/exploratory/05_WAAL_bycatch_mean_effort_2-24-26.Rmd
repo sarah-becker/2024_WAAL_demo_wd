@@ -191,7 +191,7 @@ under typical observed fishing effort across the full study period.
 **load per-capita bycatch rates from 03f (mean annual 1990-2010)**
 ```{r}
 # Load period-specific bycatch totals from 03f
-byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")), show_col_types = FALSE)
+byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_2026-02-24.csv")), show_col_types = FALSE)
 
 # Load demographic data for population sizes
 dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
@@ -438,7 +438,7 @@ The blanket approach above applies uniform mitigation across all fisheries. Belo
 **load fleet-level bycatch and define mitigation scenarios**
 ```{r}
 # Load fleet-level bycatch averaged across all four periods (1990-2010)
-fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")), show_col_types = FALSE) %>%
+fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_03f_2026-02-24.csv")), show_col_types = FALSE) %>%
   group_by(fishery, fleet) %>%
   summarise(across(c(bi_total, fb, sb, nb, j2j3, imm), ~mean(.x, na.rm = TRUE)), .groups = "drop")
 
@@ -450,7 +450,7 @@ fleet_percap <- fleet_byc %>%
   mutate(percap = byc / Pop)
 
 # Load BPUE data source info: which fleets have observed vs gap-filled catchability
-coverage_info <- read_csv(here(paste0("output/coverage_info_03f_", date_sfx, ".csv")), show_col_types = FALSE)
+coverage_info <- read_csv(here(paste0("output/coverage_info_03f_2026-02-24.csv")), show_col_types = FALSE)
 
 # Classify each fleet's BPUE source (across all periods)
 # A fleet has "observed" BPUE if it has direct data in ANY period (used for temporal gap-fill)

@@ -8,9 +8,8 @@ library(here)
 library(tidyverse)
 library(RColorBrewer)
 
-# Date suffix — must match the date on which script 03f was run
-# (both scripts should be run on the same day for filenames to align)
-date_sfx <- format(Sys.Date(), "%Y-%m-%d")
+# Date suffix — must match the date on which script 03f was last run
+date_sfx <- "2026-02-25"
 
 #set up various plotting themes
 themeo <-theme_classic()+
@@ -62,16 +61,16 @@ r_Imm	<- 0.692 #immature
 r_IS	<- 0.459 #inexperienced successful
 r_PF	<- 0.972 #sabbatical 
 
-#survival (pooled: s_Adult applied uniformly to all adult/immature stages)
-s_Juv <- 0.78   # juvenile survival
-s_Adult <- 0.92 # pooled adult survival
-s_EF  <- s_Adult #experienced failed
-s_ENB <- s_Adult #experienced non breeding
-s_ES  <- s_Adult #experienced successful
-s_IF  <- s_Adult #inexperienced failed
-s_Imm <- s_Adult #immature
-s_IS  <- s_Adult #inexperienced successful
-s_PF  <- s_Adult #sabbatical
+# Stage-specific survival rates (Pardo et al., shared directly, covering 1980–2012)
+# Used consistently across all period scripts (06a–d)
+s_Juv <- 0.846  # juvenile
+s_EF  <- 0.913  # experienced failed
+s_ENB <- 0.943  # experienced non-breeding
+s_ES  <- 0.895  # experienced successful
+s_IF  <- 0.920  # inexperienced failed
+s_Imm <- 0.921  # immature
+s_IS  <- 0.892  # inexperienced successful
+s_PF  <- 0.935  # sabbatical
 
 
 #mean VRs
@@ -186,7 +185,7 @@ dem_props_obs %>%
 
 Fishing effort, bird distributions, spatial overlap, and BPUE estimation are all handled in script 03f (spatial catchability approach). Here we load the mean annual per-capita bycatch rates and use them in the demographic model.
 
-**load per-capita bycatch rates from 03f (1990-1994 period)**
+**load per-capita bycatch rates from 03f (2005-2009 period)**
 ```{r}
 # Load period-specific bycatch totals from 03f
 byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx, ".csv")), show_col_types = FALSE)
@@ -200,7 +199,7 @@ dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
 target_period_byc <- "2005-2009"
 target_period_pop <- "2005-2009"
 
-pop_1990 <- dem_props %>%
+pop_period <- dem_props %>%
   filter(Period == target_period_pop, Dem_class != "J1") %>%
   select(Dem_class, Pop) %>%
   mutate(age_class = tolower(Dem_class)) %>%
@@ -212,36 +211,36 @@ pop_1990 <- dem_props %>%
     age_class == "nb" ~ "nb"
   ))
 
-# Get 1990-1994 bycatch by fishery and calculate per-capita
-byc_1990 <- byc_period %>%
+# Get 2005-2009 bycatch by fishery and calculate per-capita
+byc_percap <- byc_period %>%
   filter(year_group == target_period_byc) %>%
   select(fishery, fb, sb, nb, j2j3, imm) %>%
   pivot_longer(cols = c(fb, sb, nb, j2j3, imm), names_to = "age_class", values_to = "annual_byc") %>%
-  left_join(pop_1990 %>% select(age_class, Pop), by = "age_class") %>%
+  left_join(pop_period %>% select(age_class, Pop), by = "age_class") %>%
   mutate(percap = annual_byc / Pop)
 
-byc_1990 %>% print(n = 20)
+byc_percap %>% print(n = 20)
 
 # Extract per-capita rates by fishery and age class
-dem_fm_juv <- byc_1990 %>% filter(fishery == "DLL", age_class == "j2j3") %>% pull(percap)
-dem_fm_imm <- byc_1990 %>% filter(fishery == "DLL", age_class == "imm") %>% pull(percap)
-dem_fm_fb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "fb") %>% pull(percap)
-dem_fm_sb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "sb") %>% pull(percap)
-dem_fm_nb  <- byc_1990 %>% filter(fishery == "DLL", age_class == "nb") %>% pull(percap)
+dem_fm_juv <- byc_percap %>% filter(fishery == "DLL", age_class == "j2j3") %>% pull(percap)
+dem_fm_imm <- byc_percap %>% filter(fishery == "DLL", age_class == "imm") %>% pull(percap)
+dem_fm_fb  <- byc_percap %>% filter(fishery == "DLL", age_class == "fb") %>% pull(percap)
+dem_fm_sb  <- byc_percap %>% filter(fishery == "DLL", age_class == "sb") %>% pull(percap)
+dem_fm_nb  <- byc_percap %>% filter(fishery == "DLL", age_class == "nb") %>% pull(percap)
 
-pel_fm_juv <- byc_1990 %>% filter(fishery == "PLL", age_class == "j2j3") %>% pull(percap)
-pel_fm_imm <- byc_1990 %>% filter(fishery == "PLL", age_class == "imm") %>% pull(percap)
-pel_fm_fb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "fb") %>% pull(percap)
-pel_fm_sb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "sb") %>% pull(percap)
-pel_fm_nb  <- byc_1990 %>% filter(fishery == "PLL", age_class == "nb") %>% pull(percap)
+pel_fm_juv <- byc_percap %>% filter(fishery == "PLL", age_class == "j2j3") %>% pull(percap)
+pel_fm_imm <- byc_percap %>% filter(fishery == "PLL", age_class == "imm") %>% pull(percap)
+pel_fm_fb  <- byc_percap %>% filter(fishery == "PLL", age_class == "fb") %>% pull(percap)
+pel_fm_sb  <- byc_percap %>% filter(fishery == "PLL", age_class == "sb") %>% pull(percap)
+pel_fm_nb  <- byc_percap %>% filter(fishery == "PLL", age_class == "nb") %>% pull(percap)
 
 # Print summary
 cat(sprintf("=== Per-capita fishing mortality (%s bycatch, %s population) ===\n\n",
             target_period_byc, target_period_pop))
 cat(sprintf("%-8s %10s %10s %10s\n", "Age", "DLL", "PLL", "Total"))
 for (ac in c("j2j3", "imm", "fb", "sb", "nb")) {
-  d <- byc_1990 %>% filter(fishery == "DLL", age_class == ac) %>% pull(percap)
-  p <- byc_1990 %>% filter(fishery == "PLL", age_class == ac) %>% pull(percap)
+  d <- byc_percap %>% filter(fishery == "DLL", age_class == ac) %>% pull(percap)
+  p <- byc_percap %>% filter(fishery == "PLL", age_class == ac) %>% pull(percap)
   cat(sprintf("%-8s %10.6f %10.6f %10.6f\n", ac, d, p, d + p))
 }
 ```
@@ -275,6 +274,31 @@ for (nm_name in names(nm_vals)) {
   cat(sprintf("  %s: %.4f %s\n", nm_name, nm_vals[nm_name],
               ifelse(nm_vals[nm_name] > 0, "OK", "NEGATIVE - bycatch too high!")))
 }
+```
+
+**mortality partitioning summary**
+```{r mortality-partition}
+# Mortality partitioning: share of total mortality attributable to fishing (DLL + PLL)
+mortality_partition <- tibble(
+  period   = target_period_byc,
+  stage    = c("Juv","Imm","EF","ES","ENB","IF","IS","PF"),
+  survival = c(s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
+  fm_dll   = c(dem_fm_juv, dem_fm_imm, dem_fm_fb, dem_fm_sb, dem_fm_nb,
+               dem_fm_fb,  dem_fm_sb,  dem_fm_nb),
+  fm_pll   = c(pel_fm_juv, pel_fm_imm, pel_fm_fb, pel_fm_sb, pel_fm_nb,
+               pel_fm_fb,  pel_fm_sb,  pel_fm_nb)
+) %>%
+  mutate(
+    fm_total = fm_dll + fm_pll,
+    nm       = (1 - survival) - fm_total,
+    pct_fm   = round(fm_total / (1 - survival) * 100, 1),
+    pct_nm   = round(nm       / (1 - survival) * 100, 1)
+  ) %>%
+  mutate(across(c(survival, fm_dll, fm_pll, fm_total, nm), ~round(.x, 5)))
+
+print(mortality_partition)
+write_csv(mortality_partition,
+          here(paste0("output/mortality_partition_", target_period_byc, "_", date_sfx, ".csv")))
 ```
 
 **loop through mitigation measure scenarios × coverage levels**
@@ -435,21 +459,21 @@ The blanket approach above applies uniform mitigation across all fisheries. Belo
 
 **load fleet-level bycatch and define mitigation scenarios**
 ```{r}
-# Load fleet-level bycatch for the baseline period (1990-1994)
+# Load fleet-level bycatch for the target period
 fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_03f_", date_sfx, ".csv")), show_col_types = FALSE) %>%
-  filter(year_group == "1990-1994")
+  filter(year_group == target_period_byc)
 
 # Calculate per-capita rates by fleet
 fleet_percap <- fleet_byc %>%
   select(fishery, fleet, fb, sb, nb, j2j3, imm) %>%
   pivot_longer(cols = c(fb, sb, nb, j2j3, imm), names_to = "age_class", values_to = "byc") %>%
-  left_join(pop_1990 %>% select(age_class, Pop), by = "age_class") %>%
+  left_join(pop_period %>% select(age_class, Pop), by = "age_class") %>%
   mutate(percap = byc / Pop)
 
 # Load BPUE data source info: which fleets have observed vs gap-filled catchability
 coverage_info <- read_csv(here(paste0("output/coverage_info_03f_", date_sfx, ".csv")), show_col_types = FALSE)
 
-# For baseline period (1990-1994), classify each fleet's BPUE source
+# Classify each fleet's BPUE source (observed vs gap-filled)
 # A fleet has "observed" BPUE if it has direct data in ANY period (used for temporal gap-fill)
 fleet_bpue_source <- coverage_info %>%
   group_by(fishery, fleet) %>%
@@ -524,6 +548,52 @@ fleet_mitigation %>%
   select(fishery, fleet, status, compliance, base_efficacy, effective_reduction) %>%
   arrange(fishery, desc(effective_reduction)) %>%
   print(n = 30)
+```
+
+**historical fleet mitigation — 2005-2009 baseline (placeholders)**
+```{r hist-fleet-mitigation}
+# Historical mitigation status for 2005-2009 — approaching current, not yet at current levels
+# PLACEHOLDERS: CCAMLR near full; several DLL fleets partial; some PLL beginning; update from literature
+hist_fleet_mitigation <- tribble(
+  ~fishery, ~fleet,                           ~status,    ~compliance,  ~notes,
+  "DLL",    "CCAMLR",                         "full",     0.80,         "near-full compliance, post-2001 measures",
+  "DLL",    "Argentina",                      "partial",  0.40,         "partial adoption",
+  "DLL",    "Chile",                          "partial",  0.30,         "early adoption",
+  "DLL",    "Falklands",                      "full",     0.70,         "good compliance",
+  "DLL",    "South Africa",                   "partial",  0.60,         "improving measures",
+  "DLL",    "New Zealand",                    "partial",  0.65,         "ACAP signatory measures developing",
+  "PLL",    "Japan",                          "partial",  0.30,         "some RFMO requirements beginning",
+  "PLL",    "Taiwan",                         "none",     0.0,          "no mitigation",
+  "PLL",    "Korea",                          "none",     0.0,          "no mitigation",
+  "PLL",    "Spain",                          "partial",  0.30,         "early EU measures",
+  "PLL",    "Portugal",                       "partial",  0.30,         "early EU measures",
+  "PLL",    "Brazil",                         "none",     0.0,          "no mitigation",
+  "PLL",    "China",                          "none",     0.0,          "no mitigation",
+  "PLL",    "Other",                          "none",     0.0,          "no mitigation",
+  "PLL",    "Chile",                          "none",     0.0,          "no mitigation",
+  "PLL",    "South Africa",                   "none",     0.0,          "no mitigation",
+  "PLL",    "Cuba",                           "none",     0.0,          "no mitigation",
+  "PLL",    "Belize",                         "none",     0.0,          "no mitigation",
+  "PLL",    "France Reunion",                 "none",     0.0,          "no mitigation",
+  "PLL",    "Seychelles",                     "none",     0.0,          "no mitigation",
+  "PLL",    "Namibia",                        "none",     0.0,          "no mitigation",
+  "PLL",    "Vanuatu",                        "none",     0.0,          "no mitigation",
+  "PLL",    "USSR",                           "none",     0.0,          "historical, no mitigation",
+  "PLL",    "USA",                            "partial",  0.40,         "early NMFS requirements",
+  "PLL",    "Panama",                         "none",     0.0,          "no mitigation",
+  "PLL",    "French Polynesia",               "none",     0.0,          "no mitigation",
+  "PLL",    "St. Vincent and Grenadines",     "none",     0.0,          "no mitigation"
+)
+
+hist_fleet_mitigation <- hist_fleet_mitigation %>%
+  mutate(
+    base_efficacy = case_when(
+      status == "full"    ~ eff_3of3,
+      status == "partial" ~ eff_2of3,
+      status == "none"    ~ 0
+    ),
+    effective_reduction = base_efficacy * compliance
+  )
 ```
 
 **calculate fleet-level fishing mortality under different scenarios**
@@ -1099,6 +1169,10 @@ for (i in 1:nrow(heatmap_data)) {
   heatmap_data$lambda[i] <- as.numeric(n_m_eig$values[1])
 }
 
+# Save heatmap grid for cross-period comparison in script 07
+write_csv(heatmap_data %>% mutate(period = target_period_byc),
+          here(paste0("output/heatmap_data_", target_period_byc, "_", date_sfx, ".csv")))
+
 # Calculate effective efficacy and coverage for each fleet scenario
 scenario_heatmap_pts <- map_dfr(seq_along(scenarios), function(i) {
   scen_name <- names(scenarios)[i]
@@ -1153,6 +1227,46 @@ scenario_heatmap_pts <- scenario_heatmap_pts %>%
       levels = c("Baseline Compliance", "Improved Compliance", "Full Compliance"))
   )
 
+# Save scenario heatmap points for cross-period comparison in script 07
+write_csv(scenario_heatmap_pts %>% mutate(period = target_period_byc),
+          here(paste0("output/scenario_heatmap_pts_", target_period_byc, "_", date_sfx, ".csv")))
+
+# Reference points: no-mitigation, historical (period), current
+no_mit_lambda <- scenario_results %>%
+  filter(scenario == "no_mitigation__baseline_compliance") %>% pull(lambda)
+
+hist_fleet_cov <- fleet_percap %>%
+  group_by(fishery, fleet) %>%
+  summarise(total_byc = sum(byc), .groups = "drop") %>%
+  left_join(hist_fleet_mitigation %>% select(fishery, fleet, effective_reduction, base_efficacy),
+            by = c("fishery", "fleet")) %>%
+  mutate(effective_reduction = replace_na(effective_reduction, 0),
+         base_efficacy       = replace_na(base_efficacy, 0))
+
+hist_weighted_coverage <- sum(hist_fleet_cov$total_byc * hist_fleet_cov$effective_reduction) /
+  sum(hist_fleet_cov$total_byc)
+
+has_mit_hist <- hist_fleet_cov %>% filter(base_efficacy > 0)
+hist_weighted_efficacy <- if (nrow(has_mit_hist) > 0) {
+  sum(has_mit_hist$total_byc * has_mit_hist$base_efficacy) / sum(hist_fleet_cov$total_byc)
+} else { 0 }
+
+hist_fm   <- calc_fleet_fm(fleet_percap, hist_fleet_mitigation)
+hist_lambda <- calc_lambda_from_scenario(hist_fm)
+
+current_pt <- scenario_heatmap_pts %>% filter(scenario == "current__baseline_compliance")
+
+reference_pts <- tibble(
+  ref_label          = c("No mitigation", paste0("Historical (", target_period_byc, ")"), "Current"),
+  effective_coverage = c(0, hist_weighted_coverage, current_pt$effective_coverage),
+  effective_efficacy = c(0, hist_weighted_efficacy, current_pt$effective_efficacy),
+  lambda             = c(no_mit_lambda, hist_lambda, current_pt$lambda),
+  period             = target_period_byc
+)
+
+write_csv(reference_pts,
+          here(paste0("output/heatmap_ref_pts_", target_period_byc, "_", date_sfx, ".csv")))
+
 # Nudged labels for overlapping scenarios
 heatmap_labels <- scenario_heatmap_pts %>%
   filter(compliance_level == "Baseline Compliance") %>%
@@ -1195,6 +1309,17 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)
              size = 2.2, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
+  # Reference points: no-mitigation, historical, current (gold diamonds)
+  geom_point(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.8) +
+  geom_label(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+             inherit.aes = FALSE,
+             size = 2.2, fill = "gold", alpha = 0.85,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.1, vjust = 0.5) +
   scale_shape_manual(values = c("Baseline Compliance" = 16,
                                 "Improved Compliance" = 17,
                                 "Full Compliance" = 15),
@@ -1209,7 +1334,7 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)
        y = "Mitigation efficacy",
        fill = "\u03BB",
        title = "Population growth rate across mitigation efficacy and coverage",
-       subtitle = "White contour = \u03BB = 1; lines connect compliance levels within each scenario") +
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels; gold diamonds = reference points") +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
@@ -1245,6 +1370,17 @@ p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill 
              size = 2.2, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
+  # Reference points: no-mitigation, historical, current (gold diamonds)
+  geom_point(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.8) +
+  geom_label(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+             inherit.aes = FALSE,
+             size = 2.2, fill = "gold", alpha = 0.85,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.1, vjust = 0.5) +
   scale_shape_manual(values = c("Baseline Compliance" = 16,
                                 "Improved Compliance" = 17,
                                 "Full Compliance" = 15),
@@ -1259,7 +1395,7 @@ p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill 
   labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
        y = "Mitigation efficacy",
        title = "Recovery zone: efficacy \u00D7 coverage combinations achieving \u03BB \u2265 1",
-       subtitle = "Lines connect compliance levels within each scenario") +
+       subtitle = "Lines connect compliance levels within each scenario; gold diamonds = reference points") +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
@@ -2120,12 +2256,18 @@ calc_beta_params <- function(mean_val, lower_ci, upper_ci) {
   return(list(alpha = alpha, beta = beta))
 }
 
-# === SURVIVAL RATES (simplified pooled) ===
-# Pooled survival: s_Juv for juveniles, s_Adult for all adult/immature stages
+# === SURVIVAL RATES (stage-specific, from Pardo shared data) ===
+# Stage-specific survival: s_Juv for juveniles, individual rates for each adult/immature stage
 # Behavioral rates (b_*, r_*, k_*) retain full stage-specific structure
 surv_params <- list(
-  s_Juv   = calc_beta_params(0.780, 0.705, 0.850),  # juvenile survival — wide CI
-  s_Adult = calc_beta_params(0.920, 0.880, 0.950)   # pooled adult survival — moderate CI
+  s_Juv = calc_beta_params(0.846, 0.770, 0.910),  # juvenile survival
+  s_EF  = calc_beta_params(0.913, 0.875, 0.945),  # experienced breeder failed
+  s_ENB = calc_beta_params(0.943, 0.910, 0.968),  # experienced non-breeder
+  s_ES  = calc_beta_params(0.895, 0.855, 0.930),  # experienced breeder successful
+  s_IF  = calc_beta_params(0.920, 0.882, 0.950),  # inexperienced breeder failed
+  s_Imm = calc_beta_params(0.921, 0.883, 0.951),  # immature
+  s_IS  = calc_beta_params(0.892, 0.851, 0.928),  # inexperienced breeder successful
+  s_PF  = calc_beta_params(0.935, 0.898, 0.963)   # pre-breeder failed
 )
 
 # === BREEDING PROBABILITY ===
@@ -2248,26 +2390,26 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     set.seed(j * 1000 + 1)
 
     # --- Draw all vital rates freely from their distributions ---
-    # Survival: draw pooled adult first, assign to all adult stages, then draw juvenile
-    # Hierarchy: s_Juv < s_Adult
-    sim_s_Adult <- rbeta(1, surv_params$s_Adult$alpha, surv_params$s_Adult$beta)
-    sim_s_EF  <- sim_s_Adult
-    sim_s_ES  <- sim_s_Adult
-    sim_s_ENB <- sim_s_Adult
-    sim_s_IF  <- sim_s_Adult
-    sim_s_IS  <- sim_s_Adult
-    sim_s_PF  <- sim_s_Adult
-    sim_s_Imm <- sim_s_Adult
+    # Survival: draw each adult/immature stage independently, then draw juvenile
+    # Hierarchy: s_Juv < min(all adult stages)
+    sim_s_EF  <- rbeta(1, surv_params$s_EF$alpha,  surv_params$s_EF$beta)
+    sim_s_ENB <- rbeta(1, surv_params$s_ENB$alpha, surv_params$s_ENB$beta)
+    sim_s_ES  <- rbeta(1, surv_params$s_ES$alpha,  surv_params$s_ES$beta)
+    sim_s_IF  <- rbeta(1, surv_params$s_IF$alpha,  surv_params$s_IF$beta)
+    sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
+    sim_s_IS  <- rbeta(1, surv_params$s_IS$alpha,  surv_params$s_IS$beta)
+    sim_s_PF  <- rbeta(1, surv_params$s_PF$alpha,  surv_params$s_PF$beta)
+    sim_min_adult <- min(sim_s_EF, sim_s_ENB, sim_s_ES, sim_s_IF, sim_s_Imm, sim_s_IS, sim_s_PF)
 
-    # Enforce s_Juv < s_Adult: re-draw until satisfied
+    # Enforce s_Juv < min(all adult stages): re-draw until satisfied
     sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
     redraw_count <- 0
-    while (sim_s_Juv >= sim_s_Adult && redraw_count < 100) {
+    while (sim_s_Juv >= sim_min_adult && redraw_count < 100) {
       sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
       redraw_count <- redraw_count + 1
     }
     diag_juv_redraws <- diag_juv_redraws + redraw_count
-    if (sim_s_Juv >= sim_s_Adult) { sim_s_Juv <- sim_s_Adult - 0.001; diag_juv_capped <- diag_juv_capped + 1 }
+    if (sim_s_Juv >= sim_min_adult) { sim_s_Juv <- sim_min_adult - 0.001; diag_juv_capped <- diag_juv_capped + 1 }
 
     # Breeding probability
     sim_b_EF  <- rbeta(1, breed_params$b_EF$alpha,  breed_params$b_EF$beta)
@@ -2313,11 +2455,12 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
 
     # Clamp FM to mortality budget for each stage (only triggers on rare extreme draws)
-    fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),   sim_iuu_p)
-    fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Adult), sim_iuu_p)
-    fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - sim_s_Adult), sim_iuu_p)
-    fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - sim_s_Adult), sim_iuu_p)
-    fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - sim_s_Adult), sim_iuu_p)
+    # fb maps to EF+IF; sb maps to ES+IS; nb maps to ENB+PF — use tightest budget (max survival)
+    fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),                    sim_iuu_p)
+    fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm),                    sim_iuu_p)
+    fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - max(sim_s_EF, sim_s_IF)),      sim_iuu_p)
+    fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - max(sim_s_ES, sim_s_IS)),      sim_iuu_p)
+    fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - max(sim_s_ENB, sim_s_PF)),     sim_iuu_p)
 
     sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
     sim_dem_fm_imm <- fm_imm$dll; sim_pel_fm_imm <- fm_imm$pll
@@ -2584,26 +2727,26 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         set.seed(j * 1000 + 1)
 
         # --- Draw all vital rates freely ---
-        # Survival: draw pooled adult first, assign to all adult stages, then draw juvenile
-        # Hierarchy: s_Juv < s_Adult
-        sim_s_Adult <- rbeta(1, surv_params$s_Adult$alpha, surv_params$s_Adult$beta)
-        sim_s_EF  <- sim_s_Adult
-        sim_s_ES  <- sim_s_Adult
-        sim_s_ENB <- sim_s_Adult
-        sim_s_IF  <- sim_s_Adult
-        sim_s_IS  <- sim_s_Adult
-        sim_s_PF  <- sim_s_Adult
-        sim_s_Imm <- sim_s_Adult
+        # Survival: draw each adult/immature stage independently, then draw juvenile
+        # Hierarchy: s_Juv < min(all adult stages)
+        sim_s_EF  <- rbeta(1, surv_params$s_EF$alpha,  surv_params$s_EF$beta)
+        sim_s_ENB <- rbeta(1, surv_params$s_ENB$alpha, surv_params$s_ENB$beta)
+        sim_s_ES  <- rbeta(1, surv_params$s_ES$alpha,  surv_params$s_ES$beta)
+        sim_s_IF  <- rbeta(1, surv_params$s_IF$alpha,  surv_params$s_IF$beta)
+        sim_s_Imm <- rbeta(1, surv_params$s_Imm$alpha, surv_params$s_Imm$beta)
+        sim_s_IS  <- rbeta(1, surv_params$s_IS$alpha,  surv_params$s_IS$beta)
+        sim_s_PF  <- rbeta(1, surv_params$s_PF$alpha,  surv_params$s_PF$beta)
+        sim_min_adult <- min(sim_s_EF, sim_s_ENB, sim_s_ES, sim_s_IF, sim_s_Imm, sim_s_IS, sim_s_PF)
 
-        # Enforce s_Juv < s_Adult
+        # Enforce s_Juv < min(all adult stages)
         sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
         redraw_count <- 0
-        while (sim_s_Juv >= sim_s_Adult && redraw_count < 100) {
+        while (sim_s_Juv >= sim_min_adult && redraw_count < 100) {
           sim_s_Juv <- rbeta(1, surv_params$s_Juv$alpha, surv_params$s_Juv$beta)
           redraw_count <- redraw_count + 1
         }
         diag2_juv_redraws <- diag2_juv_redraws + redraw_count
-        if (sim_s_Juv >= sim_s_Adult) { sim_s_Juv <- sim_s_Adult - 0.001; diag2_juv_capped <- diag2_juv_capped + 1 }
+        if (sim_s_Juv >= sim_min_adult) { sim_s_Juv <- sim_min_adult - 0.001; diag2_juv_capped <- diag2_juv_capped + 1 }
 
         sim_b_EF  <- rbeta(1, breed_params$b_EF$alpha,  breed_params$b_EF$beta)
         sim_b_ENB <- rbeta(1, breed_params$b_ENB$alpha, breed_params$b_ENB$beta)
@@ -2642,11 +2785,11 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         sim_pel_fm_sb  <- rbeta(1, fm_params_pll$sb$alpha,  fm_params_pll$sb$beta)
         sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
 
-        fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),   fixed_iuu_p)
-        fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Adult), fixed_iuu_p)
-        fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - sim_s_Adult), fixed_iuu_p)
-        fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - sim_s_Adult), fixed_iuu_p)
-        fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - sim_s_Adult), fixed_iuu_p)
+        fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),                fixed_iuu_p)
+        fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm),               fixed_iuu_p)
+        fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - max(sim_s_EF, sim_s_IF)), fixed_iuu_p)
+        fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - max(sim_s_ES, sim_s_IS)), fixed_iuu_p)
+        fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - max(sim_s_ENB, sim_s_PF)),fixed_iuu_p)
 
         sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
         sim_dem_fm_imm <- fm_imm$dll; sim_pel_fm_imm <- fm_imm$pll
@@ -2898,7 +3041,7 @@ p_fixed_iuu_prob
 dir.create(here("output/figures"), showWarnings = FALSE, recursive = TRUE)
 
 # Helper: build filename with date suffix
-fig_path <- function(name) here("output/figures", paste0(name, "_", date_sfx, ".png"))
+fig_path <- function(name) here("output/figures", paste0(name, "_", target_period_byc, "_", date_sfx, ".png"))
 
 # --- Blanket mitigation scenarios ---
 ggsave(fig_path("01_blanket_mitigation"),        p_blanket,          width = 10, height = 6, dpi = 200)

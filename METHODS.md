@@ -1,7 +1,7 @@
 # Wandering Albatross Bycatch Estimation Methods
 
 **Project:** Bird Island Wandering Albatross Demographic Model
-**Date:** January 2026
+**Date:** February 2026 (updated)
 **Author:** Sarah Becker
 
 ---
@@ -1301,6 +1301,54 @@ total_bird_density = Σ (pop_dist_norm × pop_proportion)
 
 **Status:** Complete and validated. Provides BPUE data and gap identification for script 03d spatial catchability approach.
 
+### Script 07: `07_diagnostic_figures.Rmd`
+
+**Purpose:** Diagnostic figures comparing key inputs and outcomes (effort, catchability, survival, FM) across the four time periods (06a–06d), plus cross-period heatmap visualizations (Figures P4–P8).
+
+**Inputs:**
+- `output/hooks_by_fleet_period_03g_*.csv` — mean annual hooks per fleet × period
+- `output/bycatch_by_fishery_period_03f_*.csv` — mean annual BI bycatch per fishery × period
+- `output/percap_rates_by_period_03f_*.csv` — per-capita FM by age class × period
+- `output/bycatch_*_03g_*.csv` — observed + counterfactual bycatch for FM decomposition
+- `output/heatmap_data_{period}_*.csv`, `heatmap_ref_pts_{period}_*.csv`, `scenario_heatmap_pts_{period}_*.csv` — from scripts 06a–06d
+- Raw source files: `data/Pel_LL_effort.csv`, all 7 DLL CSVs — for mean/median effort diagnostic
+- `data/WAAL_dist_Clay2019/Dem_props copy.csv` — population sizes by age class and period
+
+**Figures produced:**
+
+- **Plot 1 (p1)** — PLL effort (bars) + catchability/BPUE (line), dual y-axis
+- **Plot 2 (p2)** — DLL effort (bars) + catchability/BPUE (line), dual y-axis
+- **Mean vs Median effort diagnostic** — raw annual hooks per year with mean and median overlaid; summary table of CV% and mean/median ratio per period, assessing whether median is more appropriate than mean for 06 scripts
+- **Plot 3 (p3)** — Mean per-capita FM vs total mortality budget (survival reference lines)
+- **Fleet effort plots** — stacked bar charts by fleet × period and by fleet × year (1990–2009)
+- **Figure P4** — stacked bar decomposition of FM decline: effort-driven vs catchability-driven components
+- **Figure P5** — 06a coverage × efficacy lambda heatmap with three later-period equivalent-mitigation points
+- **Figure P6** — effort_ratio × β_ratio lambda surface with observed period trajectories and theoretical scenario points
+- **Figure P7** — 2×2 faceted heatmap (one panel per period) with shared lambda scale; gold diamond reference points (no-mitigation, historical, current) and white scenario lines
+- **Figure P8** — single-panel heatmap, all periods on 1990–1994 FM baseline surface
+
+**Figure P8 details:**
+
+P8 places all four periods' reference points (Historical and Current regs) and three future scenario lines on the 1990–1994 lambda surface. This isolates the *mitigation signal* from the *effort-reduction signal*: reading each point's λ against the 1990–1994 surface answers "if this period's bycatch-weighted coverage/efficacy were applied to 1990–1994 effort levels, what would population growth rate be?"
+
+Key design choices:
+- **Surface**: same formula as P5/P7 top-left panel; `ns_Juv = 1 - ((fm_base × (1 - eff × cov)) + nm_base)` for each stage; 1990–1994 FM and NM from script 03f
+- **Lambda scale**: `scale_fill_distiller` with `limits = lambda_range` (shared with P7) and `oob = scales::squish` — required because heatmap_p8 lambda is recomputed from scratch and floating-point differences from pre-saved 06a values cause minimum-lambda cells (bottom/left edges where `eff × cov = 0`) to fall just outside `lambda_range`; default `oob = censor` renders these as `na.value = "grey50"` (visible grey border)
+- **Reference points**: `shape = 19, size = 2.5` (small solid circles) per period; "Current regs (XXXX effort)" labels distinguish that same regulations produce different bycatch-weighted coverage/efficacy positions because `fleet_percap` (bycatch distribution across fleets) differs between periods; Historical (1990–1994) labeled "(no mitigation)" since 06a hist_fleet_mitigation is all zeros
+- **Scenario lines**: 1990–1994 period only, grey (`color = "grey85"`); scenarios = 2/3 PLL, 3/3 PLL, 3/3 all fleets, full elimination
+
+**Outputs:**
+- `output/figures/07_diagnostic_effort_catchability_survival.png`
+- `output/figures/07_fleet_effort_by_period.png`
+- `output/figures/07_fleet_effort_by_year.png`
+- `output/figures/07_p4_fm_decomposition_bars.png`
+- `output/figures/07_p5_period_recovery_heatmap.png`
+- `output/figures/07_p6_decomp_effort_beta_heatmap.png`
+- `output/figures/07_p7_combined_heatmap_all_periods.png`
+- `output/figures/07_p8_single_panel_all_periods.png`
+
+**Status:** Complete and validated.
+
 ---
 
 ## Analysis Workflow
@@ -1418,45 +1466,27 @@ total_bird_density = Σ (pop_dist_norm × pop_proportion)
 
 ## Future Development
 
-### Short Term (Current Priority)
+### Implemented (as of February 2026)
 
-1. **Complete Literature Review (Script 04)**
-   - Extract BPUE from all relevant papers
-   - Create spatial bounding boxes for each study
-   - Calculate weighted regional averages
-   - Document data sources and quality
+1. **Fleet-level spatial catchability (script 03f)** — current recommended approach. Per-study β from BPUE bounding boxes, hierarchical gap-filling, fleet × fishery × period × age-class bycatch.
+2. **Multi-period demographic model (scripts 06a–06d)** — period-matched bycatch rates and population sizes. Full blanket + fleet-level mitigation analysis run independently per period.
+3. **Mortality partitioning table** — per-stage fm_dll, fm_pll, nm, pct_fm saved per period.
+4. **Historical fleet mitigation lookup** — period-specific placeholder tables reflecting regulatory history; to be updated from RFMO literature.
+5. **Heatmap reference points** — no-mitigation, historical, current overlaid as gold diamonds; saved as CSV for cross-period comparison.
+6. **Cross-period combined heatmap (script 07, Figure P7)** — 2×2 faceted heatmap with shared lambda color scale, all reference points and hypothetical scenarios.
+7. **Uncertainty quantification** — 1000-sim Monte Carlo with beta distributions, biological hierarchy constraints, FM clamping, post-hoc centering.
+8. **IUU integration** — three-component mortality partition with enforcement reduction scenarios.
 
-2. **Validate Script 03b**
-   - Compare results with published estimates
-   - Sensitivity analyses on BPUE values
-   - Uncertainty propagation
+### Still Pending
 
-3. **Integrate into Demographic Model**
-   - Use per capita mortality rates from script 03b
-   - Run population projections
-   - Sensitivity analyses
-
-### Medium Term
-
-4. **Develop Script 03c (Regional Catchabilities)**
-   - Create regional BPUE maps from literature
-   - Calculate region × fishery catchabilities
-   - Implement stratified bycatch estimation
-   - Compare results with script 03b
-
-5. **Spatial Visualization**
-   - Interactive maps of bycatch hotspots
-   - Uncertainty surfaces
-   - Regional contributions to total mortality
+9. **Update hist_fleet_mitigation** from RFMO literature review (current values are placeholders)
+10. **Regional BPUE variation** — Approach 4/5 framework with region-specific catchabilities when literature review (script 04) is complete
+11. **Refine FM uncertainty** — update from BPUE confidence intervals once available
+12. **Validate with later periods** — compare predicted lambdas against observed 2001-2010 population trends
 
 ### Long Term
 
-6. **Temporal Variation**
-   - Account for changes in fishing practices over time
-   - Mitigation measure adoption
-   - Historical vs. current BPUE
-
-7. **Multi-Species Extension**
+13. **Multi-Species Extension**
    - Apply framework to other albatross species
    - Community-level bycatch assessment
    - Comparative vulnerability analysis

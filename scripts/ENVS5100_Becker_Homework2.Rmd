@@ -1,0 +1,187 @@
+---
+title: "Homework2"
+author: "Sarah Becker"
+date: "1/27/2022"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r, echo= FALSE, include =FALSE}
+library(here)
+library(tidyverse)
+```
+
+Bring in survival and fecundity rates.
+
+```{r}
+S_juv <- 0.34 #Juvenile survival
+S_ya <- 0.8 #Young adult survival
+S_sa <-0.49 #Senescent adult survival
+Fec <- (0*0.2 + 2*0.5 + 3*0.3)/1 #Fecundity - same for all adults
+```
+
+#### Question a.	"Construct a matrix model for the mole rat. Be sure to define what each class is in your model." 
+Make matrix based on the survival rates given above.
+
+I had originally set this up as three stages: juvenile, young adult, and senesecent adult, but after Thursday 1/27 class realized why this was feeling complicated. I have now changed it to 5 year classes: 0-1 (aka juveniles), 1-2, 2-3, 3-4 (all young adults), and 4+ (senescent adults). 
+
+In the matrix below, with each year the molerats progress into the next age class, until they reach senescence. I plugged in the appropriate survival rates for each transition from one year to the next, and for senescent adults remaining senescent. Since this matrix is based on age-class and pre-senescent steps are each one year, it is not possible to remain in the same age class or regress, so all of those values are zero, except for senescent adults. Fecundity is calculated by the appropriate survival rate multiplied by half of the fecundity rate to account for only females. 
+
+```{r}
+# Age classes (years)             0-1      1-2            3-2             3-4            4+
+molerat_matrix <- matrix(data = c(0,       S_ya*(Fec/2),   S_ya*(Fec/2),  S_ya*(Fec/2),  S_sa*(Fec/2),
+                                  S_juv,   0,              0,             0,             0,
+                                  0,       S_ya,           0,             0,             0,
+                                  0,       0,              S_ya,          0,             0,
+                                  0,       0,              0,             S_ya,          S_sa), 
+                         nrow = 5, byrow = TRUE)
+```
+
+#### Question b.	"What is lambda for the population? Also, what fraction of the females are pre-senescent adults vs senescent ones?"
+
+Extract lambda, SSD, RV from matrix using eigenvalues and eigenvectors.
+
+We don't need RV here, but I wanted to try to pull them as well for future reference.
+
+```{r}
+#create all eigenvalues
+molerat_eigen <- eigen(molerat_matrix)
+
+#extract lambda (make numeric to avoid future issues with complex numbers)
+lambda <- as.numeric(round(molerat_eigen$values[1], 4))
+lambda
+
+#extract and scale the right eigenvector
+SSD <- as.numeric(molerat_eigen$vectors[,1]/sum(molerat_eigen$vectors[,1]))
+SSD
+
+# RV values can be calculated from the dominant eigenvector of the transposed matrix 
+## calculate the eigenvalues and eigenvectors for the transposed matrix
+## divide by the first non-zero entry to calculate *relative* reproductive values
+RV <- as.numeric(eigen(t(molerat_matrix))$vectors[,1]/eigen(t(molerat_matrix))$vectors[1,1])
+RV
+```
+
+extract proportion of senescent vs young adults from SSD values
+```{r}
+#proportion of females that are senescent adults
+senescent <- SSD[5]
+senescent
+
+#proportion of females that are presenescent adults
+pre_senescent <- sum(SSD[2:4])
+pre_senescent
+```
+
+#### Question c.	"The current estimate of mole rat numbers for this population is 32500. Assuming that all demographic rates stay the same, how many years will pass before the population declines to only 1000 rats?"
+
+To do this task I made a for loop to project the future population using lambda. However, after comparing notes with Claire I now know about the existence of while loops and see that that would be a much cleaner way to do the same thing. 
+
+```{r}
+# my for loop here
+# Set input values
+N0 = 32500 # starting population value
+years = 100 #run the loop 100 years into the future
+
+# Create matrix to store results
+output <- matrix(nrow = years+1,ncol = 1) %>% as.data.frame()
+output[1,1:ncol(output)] <- N0
+
+#run a loop to grow (aka decline) population based on lambda
+  for(k in 1:years) { #run the loop for 100 years from the current count
+    Nt <-round(lambda*output[k,1], 4) # grow population, draw from stored output for each iteration
+    output[k+1,] <- Nt #save the count value for each year
+  } # close loop
+
+#plot the results
+output %>% 
+  mutate(years_out = 1:101) %>% 
+ggplot()+
+  geom_line(aes(years_out, V1))+
+  labs(x = "Years into the future", y = "Population size")+
+  geom_abline(intercept = 1000, color = "blue", alpha = 0.5)+ #count threshold = 1000
+  theme_classic()
+
+#select the last year before population declines below 1000
+pop_floor <- output %>% 
+  mutate(year = 1:101) %>% 
+  dplyr::filter(V1>999) %>% tail(n=1) %>% 
+  dplyr::select(year) %>% as.character()
+
+#print the year after which population is below 1000  
+pop_floor
+```
+
+I also wanted to try the while-loop way of accomplishing the same thing, so have included it here for fun.
+
+```{r}
+# can also do this with a while loop in ~100 fewer lines of code. Thanks Claire! :)
+yr = 0 #start at year 0
+N = 32500 # start at current population count
+
+while(N>1000){ #run the following code, for as long as the population is greater than 0
+  
+  N = N*lambda #calculate N for each year based on lambda and the previous N (Nt+1 = N*lambda)
+  yr = yr + 1 #run this for each year sequentially until N <=1000
+  
+}
+
+#How many years in the future does the population decline below 1000?
+yr
+```
+
+#### Question d.	"Finally, while the mole rats live in a fairly pristine area, there is concern that young rock monitor lizards, which can enter mole rat burrows and predate the rats, could be unnaturally suppressing population growth. Adult rock monitors are predators and scavengers and the dead bodies of deceased field volunteers could be attracting them and inflating the local population, including young lizards, to unnatural levels. You have estimated that currently monitor lizards predate approximately 12 % of adult rats each year (this is included in the overall estimate of rat mortality rate). By how much would lizard predation have to be decreased in order to have  a stable mole rat population?" 
+
+To answer this question I generated a sequence of possible predation rates from 0-12% (the current rate), then iterated within a for loop to generate a series of matrices with survival rates modified by different rates of predation. I extracted lambda from each matrix and from this output I was able to identify the predation rate at which lambda was 1.
+
+```{r}
+#create a dataframe that includes the sequence of predation values I want to test
+#include a column in which to store lambda values
+predation <- data.frame(predation = seq(0,0.12, by = 0.001),
+                        lambda = NA)
+
+for(i in 1:nrow(predation)){ #iterate over each row in the predation dataframe
+  
+    #juvenile survival is constant, and the same as previous values
+    s_j4<- 0.34 
+    #adult survival starts at the given rate of 0.8/0.49 + 0.12 (aka 0.92/0.61 - the scenario given 0 predation)
+    #then, in each iteration of the loop, subtract the relevant predation rate.
+    #this generates a series of survival rates from 0 predation to the current rate of 12% predation of adults
+    s_ya4 <- 0.92-predation[i,1] 
+    s_sa4 <- 0.61-predation[i,1]
+    #fecundity is constant for adults, and the same as previous values
+    f4<- ((0*0.2)+(2*0.5)+(3*0.3))/1
+  
+  #generate a matrix based on the vital rates given above
+  #class              0-1     1-2            2-3            3-4            4+
+  M <- matrix(data = c(0,     s_ya4*(f4/2),  s_ya4*(f4/2),  s_ya4*(f4/2),  s_sa4*(f4/2),
+                      s_j4,   0,             0,             0,             0,
+                      0,      s_ya4,         0,             0,             0,
+                      0,      0,             s_ya4,         0,             0,
+                      0,      0,             0,             s_ya4,         s_sa4), 
+           nrow = 5, byrow = TRUE)
+  
+  #extract lambda from the matrix using eigenvalues
+  M_eigen <- eigen(M)
+  lambda <- as.numeric(M_eigen$values[1])
+
+  #save lambda values in the output dataframe
+  predation$lambda[i] <- lambda
+  
+}
+
+#from the output dataframe, find the rate at which lambda is closest to 1
+pred_rate <- predation %>% dplyr::filter(lambda<1,
+                                         lambda>.999) %>% 
+                          dplyr::select(predation) %>% 
+                          as.numeric()
+
+#calculate what reducation in predation is needed to reach the predation rate that allows lambda to equal 1
+pred_reduction <- (0.12-pred_rate)*100
+
+#print the resulting predation reduction amount
+pred_reduction
+```
+

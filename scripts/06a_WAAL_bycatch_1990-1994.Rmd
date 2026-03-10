@@ -1398,6 +1398,57 @@ p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill 
 p_heatmap_recovery
 ```
 
+**Heatmap: recovery zone (lambda >= 1) v2**
+```{r p_heatmap_recovery_v2, fig.width=10, fig.height=7}
+p_heatmap_recovery_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda >= 1)) +
+  geom_tile() +
+  # Connect compliance levels within each efficacy scenario, colored by scenario
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.7) +
+  # Outer ring (white) then inner point (colored by scenario)
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 4, color = "white", stroke = 0.8) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 3) +
+  # Reference points: gold diamonds
+  geom_point(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.8) +
+  # Reference labels as plain text (no box)
+  geom_text(data = reference_pts,
+            aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+            inherit.aes = FALSE,
+            size = 2.4, color = "black", hjust = -0.12, vjust = 0.5) +
+  scale_fill_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#b2182b"),
+                    labels = c("TRUE" = "\u03BB \u2265 1 (recovery)", "FALSE" = "\u03BB < 1 (decline)"),
+                    name = "") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance level") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
+       y = "Mitigation efficacy",
+       title = "Recovery zone: efficacy \u00D7 coverage combinations achieving \u03BB \u2265 1",
+       subtitle = "Lines connect compliance levels within each scenario; gold diamonds = reference points") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_heatmap_recovery_v2
+```
+
 **Heatmap: zoomed to mitigation scenarios**
 ```{r, fig.width=10, fig.height=7}
 # Exclude no mitigation and full elimination from zoomed view
@@ -1473,6 +1524,110 @@ p_heatmap_zoom <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = la
 p_heatmap_zoom
 ```
 
+
+**Heatmap v2: red-to-blue gradient, scenario legend (full grid)**
+```{r heatmap_v2, fig.width=10, fig.height=7}
+# Color gradient from WFC_prep archive (red = low lambda, blue = high lambda)
+heat_grad <- c("#FF0000", "#CC0033", "#990066", "#660099", "#3300CC", "#0000FF")
+
+# Qualitative palette for efficacy scenario points/lines
+scen_colors <- setNames(
+  RColorBrewer::brewer.pal(n = max(3, length(unique(scenario_heatmap_pts$efficacy_scenario))),
+                           name = "Dark2")[seq_along(unique(scenario_heatmap_pts$efficacy_scenario))],
+  sort(unique(scenario_heatmap_pts$efficacy_scenario))
+)
+
+p_heatmap_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  # Lines connecting compliance levels, colored by efficacy scenario
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.7) +
+  # Outer ring (white) then inner point (colored by scenario)
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 4, color = "white", stroke = 0.8) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 3) +
+  # Reference points: gold diamonds
+  geom_point(data = reference_pts,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE,
+             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.8) +
+  # Reference labels as plain text (no box)
+  geom_text(data = reference_pts,
+            aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+            inherit.aes = FALSE,
+            size = 2.4, color = "black", hjust = -0.12, vjust = 0.5) +
+  scale_fill_gradientn(colors = heat_grad,
+                       limits = range(heatmap_data$lambda),
+                       name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance"     = 15),
+                     name = "Compliance level") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
+       y = "Mitigation efficacy",
+       title = "Population growth rate across mitigation efficacy and coverage",
+       subtitle = "White contour = \u03BB = 1; gold diamonds = reference points (no mitigation, historical, current)") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_heatmap_v2
+```
+
+**Heatmap v2: zoomed to mitigation scenarios**
+```{r heatmap_zoom_v2, fig.width=10, fig.height=7}
+p_heatmap_zoom_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  geom_line(data = zoom_pts,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.7) +
+  geom_point(data = zoom_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 4.5, color = "white", stroke = 1) +
+  geom_point(data = zoom_pts,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 3.5) +
+  scale_fill_gradientn(colors = heat_grad,
+                       limits = range(heatmap_data$lambda),
+                       name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance"     = 15),
+                     name = "Compliance level") +
+  scale_x_continuous(breaks = seq(0, 1, 0.1),
+                     labels = paste0(seq(0, 100, 10), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1),
+                     labels = paste0(seq(0, 100, 10), "%")) +
+  labs(x = "% bycatch-weighted coverage (fisheries with mitigation)",
+       y = "Mitigation efficacy",
+       title = "Mitigation scenarios (zoomed)",
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels within each scenario") +
+  coord_cartesian(xlim = c(x_range[1] - x_pad, min(x_range[2] + x_pad, 1)),
+                  ylim = c(y_range[1] - y_pad, min(y_range[2] + y_pad, 1)),
+                  expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_heatmap_zoom_v2
+```
 
 *IUU FISHING MORTALITY*
 
@@ -1926,6 +2081,42 @@ p_iuu_opt1 <- ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) 
 p_iuu_opt1
 ```
 
+**Option 1: Faceted heatmaps by IUU proportion (no enforcement) v2**
+```{r p_iuu_opt1_v2, fig.width=14, fig.height=5}
+p_iuu_opt1_v2 <- ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = pts_opt1,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.4) +
+  geom_point(data = pts_opt1,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "white", stroke = 0.6) +
+  geom_point(data = pts_opt1,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 1.5) +
+  facet_wrap(~ iuu_label, nrow = 1) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt1$lambda), name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy",
+       title = "Mitigation heatmap under varying IUU assumptions (no enforcement)",
+       subtitle = "White contour = \u03BB = 1; IUU erodes mitigation gains, tightening the recovery window") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold"),
+        legend.position = "right")
+p_iuu_opt1_v2
+```
+
 **Option 2: Facet grid — IUU proportion × IUU enforcement reduction**
 Full 4D view: how does IUU enforcement interact with mitigation?
 ```{r iuu_option2, fig.width=14, fig.height=12}
@@ -1978,6 +2169,42 @@ p_iuu_opt2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) 
   theme_bw() +
   theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
 p_iuu_opt2
+```
+
+**Option 2: Facet grid — IUU proportion × IUU enforcement reduction v2**
+```{r p_iuu_opt2_v2, fig.width=14, fig.height=12}
+p_iuu_opt2_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = pts_opt2,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.4) +
+  geom_point(data = pts_opt2,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "white", stroke = 0.6) +
+  geom_point(data = pts_opt2,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 1.5) +
+  facet_grid(iuu_label ~ iuu_red_label) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt2$lambda), name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy",
+       title = "Mitigation \u00D7 IUU enforcement interaction",
+       subtitle = "Rows = IUU proportion; columns = % IUU reduction via enforcement; contour = \u03BB = 1") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8),
+        legend.position = "right")
+p_iuu_opt2_v2
 ```
 
 **Option 2b: Facet grid zoomed to management scenarios**
@@ -2040,6 +2267,45 @@ p_iuu_opt2b <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda))
   theme_bw() +
   theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
 p_iuu_opt2b
+```
+
+**Option 2b: Facet grid zoomed to management scenarios v2**
+```{r p_iuu_opt2b_v2, fig.width=14, fig.height=12}
+p_iuu_opt2b_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 0.8) +
+  geom_line(data = zoom_pts_iuu,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.5) +
+  geom_point(data = zoom_pts_iuu,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = zoom_pts_iuu,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 2) +
+  facet_grid(iuu_label ~ iuu_red_label) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt2$lambda), name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_x_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy",
+       title = "Mitigation \u00D7 IUU enforcement interaction (zoomed to management scenarios)",
+       subtitle = "Rows = IUU proportion; columns = % IUU enforcement; lines connect compliance levels") +
+  coord_cartesian(
+    xlim = c(x_range_iuu[1] - x_pad_iuu, min(x_range_iuu[2] + x_pad_iuu, 1)),
+    ylim = c(y_range_iuu[1] - y_pad_iuu, min(y_range_iuu[2] + y_pad_iuu, 1)),
+    expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8),
+        legend.position = "right")
+p_iuu_opt2b_v2
 ```
 
 **Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
@@ -2113,6 +2379,48 @@ p_iuu_opt3 <- ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) 
 p_iuu_opt3
 ```
 
+**Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap v2**
+```{r p_iuu_opt3_v2, fig.width=10, fig.height=7}
+p_iuu_opt3_v2 <- ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  # Start points (no enforcement) — white outer ring, colored inner
+  geom_point(data = pts_start,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 3, shape = 16, color = "white", stroke = 0.8) +
+  geom_point(data = pts_start,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario),
+             inherit.aes = FALSE, size = 2, shape = 16) +
+  # End points (full enforcement) — white outer ring, colored inner
+  geom_point(data = pts_end,
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 3, shape = 17, color = "white", stroke = 0.8) +
+  geom_point(data = pts_end,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario),
+             inherit.aes = FALSE, size = 2, shape = 17) +
+  geom_text(data = labels_opt3,
+            aes(x = effective_coverage, y = effective_efficacy + nudge_y,
+                label = paste0(efficacy_scenario, "\n\u03BB: ",
+                               round(lambda, 4), " \u2192 ",
+                               round(arrows_opt3$lambda_end[match(efficacy_scenario, arrows_opt3$efficacy_scenario)], 4))),
+            inherit.aes = FALSE, size = 2.0, color = "black",
+            hjust = -0.05, vjust = 0.5, lineheight = 0.9) +
+  scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt3$lambda), name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Scenario") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy",
+       title = paste0("IUU enforcement effect on fleet scenarios (IUU = ", iuu_best * 100, "%)"),
+       subtitle = "Circle = no enforcement; triangle = 100% IUU elimination; labels show \u03BB shift") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_iuu_opt3_v2
+```
+
 **Option 4: Two-panel approach — mitigation vs enforcement as separate policy levers**
 ```{r iuu_option4a, fig.width=10, fig.height=7}
 # Panel A: coverage × efficacy heatmap at best-estimate IUU (10%), no enforcement
@@ -2163,6 +2471,41 @@ p_iuu_opt4a <- ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)
 p_iuu_opt4a
 ```
 
+**Option 4: Panel A — mitigation scenarios at best-estimate IUU v2**
+```{r p_iuu_opt4a_v2, fig.width=10, fig.height=7}
+p_iuu_opt4a_v2 <- ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  geom_line(data = pts_opt4a,
+            aes(x = effective_coverage, y = effective_efficacy,
+                group = efficacy_scenario, color = efficacy_scenario),
+            inherit.aes = FALSE, linewidth = 0.5) +
+  geom_point(data = pts_opt4a,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = pts_opt4a,
+             aes(x = effective_coverage, y = effective_efficacy,
+                 color = efficacy_scenario, shape = compliance_level),
+             inherit.aes = FALSE, size = 2) +
+  scale_shape_manual(values = c("Baseline Compliance" = 16,
+                                "Improved Compliance" = 17,
+                                "Full Compliance" = 15),
+                     name = "Compliance") +
+  scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt4a$lambda), name = "\u03BB") +
+  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% bycatch-weighted coverage", y = "Mitigation efficacy",
+       title = paste0("Panel A: Mitigation scenarios (IUU = ", iuu_best * 100, "% of legal FM)"),
+       subtitle = "White contour = \u03BB = 1; lines connect compliance levels") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_iuu_opt4a_v2
+```
+
 ```{r iuu_option4b, fig.width=10, fig.height=7}
 # Panel B: IUU proportion × IUU reduction heatmap at a fixed mitigation scenario
 # Use "all PLL 3/3 at baseline compliance" as the reference mitigation scenario
@@ -2211,6 +2554,27 @@ p_iuu_opt4b <- ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = l
   theme_bw() +
   theme(panel.grid = element_blank())
 p_iuu_opt4b
+```
+
+**Option 4: Panel B — IUU enforcement effect v2**
+```{r p_iuu_opt4b_v2, fig.width=10, fig.height=7}
+p_iuu_opt4b_v2 <- ggplot(iuu_grid_4b, aes(x = iuu_prop, y = iuu_reduction, fill = lambda)) +
+  geom_tile() +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+  scale_fill_gradientn(colors = heat_grad, limits = range(iuu_grid_4b$lambda), name = "\u03BB") +
+  scale_x_continuous(breaks = seq(0, 0.3, 0.05),
+                     labels = paste0(seq(0, 30, 5), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),
+                     labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "IUU as % of legal fishing mortality",
+       y = "% IUU reduction via enforcement",
+       title = "Panel B: IUU enforcement effect (mitigation fixed at All PLL 3/3, baseline compliance)",
+       subtitle = "White contour = \u03BB = 1; how much enforcement is needed given the IUU level?") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "right")
+p_iuu_opt4b_v2
 ```
 
 
@@ -3054,15 +3418,24 @@ ggsave(fig_path("08_waterfall"),                 p_waterfall,        width = 12,
 ggsave(fig_path("09_heatmap_lambda"),            p_heatmap,          width = 10, height = 7, dpi = 200)
 ggsave(fig_path("10_heatmap_recovery_zone"),     p_heatmap_recovery, width = 10, height = 7, dpi = 200)
 ggsave(fig_path("11_heatmap_zoom"),              p_heatmap_zoom,     width = 10, height = 7, dpi = 200)
+ggsave(fig_path("09b_heatmap_lambda_v2"),        p_heatmap_v2,       width = 10, height = 7, dpi = 200)
+ggsave(fig_path("11b_heatmap_zoom_v2"),          p_heatmap_zoom_v2,  width = 10, height = 7, dpi = 200)
+ggsave(fig_path("10b_heatmap_recovery_v2"),      p_heatmap_recovery_v2, width = 10, height = 7, dpi = 200)
 
 # --- IUU fishing mortality ---
 ggsave(fig_path("12_iuu_lines"),                 p_iuu_lines,        width = 14, height = 10, dpi = 200)
 ggsave(fig_path("13_iuu_opt1_no_enforcement"),   p_iuu_opt1,         width = 14, height = 5,  dpi = 200)
+ggsave(fig_path("13b_iuu_opt1_v2"),              p_iuu_opt1_v2,      width = 14, height = 5,  dpi = 200)
 ggsave(fig_path("14_iuu_opt2_grid"),             p_iuu_opt2,         width = 14, height = 12, dpi = 200)
+ggsave(fig_path("14b_iuu_opt2_v2"),              p_iuu_opt2_v2,      width = 14, height = 12, dpi = 200)
 ggsave(fig_path("15_iuu_opt2b_grid_zoom"),       p_iuu_opt2b,        width = 14, height = 12, dpi = 200)
+ggsave(fig_path("15b_iuu_opt2b_v2"),             p_iuu_opt2b_v2,     width = 14, height = 12, dpi = 200)
 ggsave(fig_path("16_iuu_opt3_arrows"),           p_iuu_opt3,         width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("16b_iuu_opt3_v2"),              p_iuu_opt3_v2,      width = 10, height = 7,  dpi = 200)
 ggsave(fig_path("17_iuu_opt4a_panel_A"),         p_iuu_opt4a,        width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("17b_iuu_opt4a_v2"),             p_iuu_opt4a_v2,     width = 10, height = 7,  dpi = 200)
 ggsave(fig_path("18_iuu_opt4b_panel_B"),         p_iuu_opt4b,        width = 10, height = 7,  dpi = 200)
+ggsave(fig_path("18b_iuu_opt4b_v2"),             p_iuu_opt4b_v2,     width = 10, height = 7,  dpi = 200)
 
 # --- Uncertainty simulation (VR + FM + IUU) ---
 ggsave(fig_path("19_uncert_sim_runs"),           p_uncert_runs,      width = 14, height = 5,  dpi = 200)

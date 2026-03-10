@@ -1,0 +1,465 @@
+---
+title: "WAAL Population Projections — 3/3 Mitigation Scenario"
+output: html_document
+---
+
+```{r setup, echo = FALSE, include = FALSE}
+library(here)
+library(tidyverse)
+library(RColorBrewer)
+
+# Must match the date suffix used when 06a was last run
+date_sfx      <- "2026-02-25"
+target_period <- "1990-1994"
+
+themeo <- theme_classic() +
+  theme(strip.background = element_blank(),
+        panel.grid.major = element_line(colour = "transparent"),
+        panel.grid.minor = element_line(colour = "transparent"),
+        axis.line = element_blank(),
+        axis.title = element_text(color = "black", size = 10),
+        axis.ticks.length = unit(-0.1, "cm"),
+        axis.ticks = element_line(color = "black", size = .25),
+        axis.ticks.x = element_line(color = "black"),
+        axis.ticks.y = element_line(color = "black"),
+        panel.border = element_rect(colour = "black", fill = NA, size = .5),
+        panel.spacing = unit(1, "lines"),
+        legend.position = "bottom",
+        legend.title = element_text(colour = "black", size = 10, face = "bold"),
+        legend.text = element_text(color = "black", size = 8))
+```
+
+*POPULATION PROJECTIONS — 3/3 MITIGATION SCENARIO*
+
+Two analyses:
+  1. Immediate full 3/3 compliance — how long for the population to recover?
+  2. Delayed implementation (5, 10, 20 year phase-in) — what is the cost of waiting?
+
+Both use the scalar projection N(t+1) = lambda * N(t), following the homework structure.
+For Part 1, lambda is fixed (one value per scenario).
+For Part 2, lambda changes each year as coverage ramps up — computed explicitly and stored
+in a coverage schedule table before the projection runs, so every input can be inspected.
+
+---
+
+**vital rates**
+```{r vital-rates}
+# Stage-specific survival rates (Pardo et al., 1980-2012)
+s_Juv <- 0.846
+s_EF  <- 0.913
+s_ENB <- 0.943
+s_ES  <- 0.895
+s_IF  <- 0.920
+s_Imm <- 0.921
+s_IS  <- 0.892
+s_PF  <- 0.935
+
+# Stage-specific behavioral rates
+b_EF  <- 0.746;  b_ENB <- 0.589;  b_ES  <- 0.016
+b_IF  <- 0.744;  b_Imm <- 0.101;  b_IS  <- 0.011;  b_PF  <- 0.941
+
+k_EF  <- 0.631;  k_ENB <- 0.675;  k_ES  <- 0.500
+k_IF  <- 0.627;  k_Imm <- 0.585;  k_IS  <- 0.627;  k_PF  <- 0.791
+
+r_EF  <- 0.973;  r_ENB <- 0.953;  r_ES  <- 0.292
+r_IF  <- 0.948;  r_Imm <- 0.692;  r_IS  <- 0.459;  r_PF  <- 0.972
+
+# Mitigation efficacy: 3/3 combined (tori lines + night setting + line weighting)
+eff_tori_lines  <- 0.75
+eff_night_set   <- 0.60
+eff_line_weight <- 0.65
+eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)
+
+cat(sprintf("3/3 combined efficacy: %.1f%%\n", eff_3of3 * 100))
+```
+
+**load per-capita fishing mortality and natural mortality from 06a output**
+```{r load-data}
+# Per-capita FM and natural mortality saved by 06a (mortality_partition CSV)
+mort_part <- read_csv(
+  here(paste0("output/mortality_partition_", target_period, "_", date_sfx, ".csv")),
+  show_col_types = FALSE)
+
+# Extract per-capita DLL and PLL fishing mortality by stage group
+dem_fm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(fm_dll)
+pel_fm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(fm_pll)
+dem_fm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(fm_dll)
+pel_fm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(fm_pll)
+dem_fm_fb  <- mort_part %>% filter(stage == "EF")  %>% pull(fm_dll)  # same for IF
+pel_fm_fb  <- mort_part %>% filter(stage == "EF")  %>% pull(fm_pll)
+dem_fm_sb  <- mort_part %>% filter(stage == "ES")  %>% pull(fm_dll)  # same for IS
+pel_fm_sb  <- mort_part %>% filter(stage == "ES")  %>% pull(fm_pll)
+dem_fm_nb  <- mort_part %>% filter(stage == "ENB") %>% pull(fm_dll)  # same for PF
+pel_fm_nb  <- mort_part %>% filter(stage == "ENB") %>% pull(fm_pll)
+
+# Natural mortality by stage (total mortality minus fishing mortality)
+nm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(nm)
+nm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(nm)
+nm_efb <- mort_part %>% filter(stage == "EF")  %>% pull(nm)
+nm_esb <- mort_part %>% filter(stage == "ES")  %>% pull(nm)
+nm_enb <- mort_part %>% filter(stage == "ENB") %>% pull(nm)
+nm_ifb <- mort_part %>% filter(stage == "IF")  %>% pull(nm)
+nm_isb <- mort_part %>% filter(stage == "IS")  %>% pull(nm)
+nm_pf  <- mort_part %>% filter(stage == "PF")  %>% pull(nm)
+
+# Starting population: total Bird Island birds in the target period
+dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
+                      show_col_types = FALSE) %>%
+  mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
+
+pop_period <- dem_props %>%
+  filter(Period == target_period, Dem_class != "J1") %>%
+  select(Dem_class, Pop)
+
+N0 <- sum(pop_period$Pop)
+
+cat(sprintf("N0 (%s): %.0f birds\n", target_period, N0))
+```
+
+**build matrices and extract lambdas**
+```{r build-matrices}
+# --- No mitigation matrix ---
+# Survival = observed Pardo rates, which already encode fishing mortality
+# as it existed in the baseline period (1990-1994)
+# Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
+m_base <- matrix(data = c(
+  0,     0,      0,      0,      0,                                          0.5*s_Juv,              0,                       0.5*s_Juv,              0,                       0,                         0,
+  s_Juv, 0,      0,      0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
+  0,     s_Juv,  0,      0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
+  0,     0,      s_Imm,  0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
+  0,     0,      0,      s_Imm,  s_Imm*r_Imm*(1-b_Imm)+s_Imm*(1-r_Imm),    0,                       0,                       0,                       0,                       0,                         0,
+  0,     0,      0,      0,      s_Imm*r_Imm*b_Imm*k_Imm,                   0,                       0,                       0,                       0,                       0,                         0,
+  0,     0,      0,      0,      s_Imm*r_Imm*b_Imm*(1-k_Imm),               0,                       0,                       0,                       0,                       0,                         0,
+  0,     0,      0,      0,      0,                                          s_IS*r_IS*b_IS*k_IS,     s_IF*r_IF*b_IF*k_IF,     s_ES*r_ES*b_ES*k_ES,     s_EF*r_EF*b_EF*k_EF,     s_ENB*r_ENB*b_ENB*k_ENB,   s_PF*r_PF*b_PF*k_PF,
+  0,     0,      0,      0,      0,                                          s_IS*r_IS*b_IS*(1-k_IS), s_IF*r_IF*b_IF*(1-k_IF), s_ES*r_ES*b_ES*(1-k_ES), s_EF*r_EF*b_EF*(1-k_EF), s_ENB*r_ENB*b_ENB*(1-k_ENB),s_PF*r_PF*b_PF*(1-k_PF),
+  0,     0,      0,      0,      0,                                          s_IS*r_IS*(1-b_IS),      s_IF*r_IF*(1-b_IF),      s_ES*r_ES*(1-b_ES),      s_EF*r_EF*(1-b_EF),      s_ENB*r_ENB*(1-b_ENB),     s_PF*r_PF*(1-b_PF),
+  0,     0,      0,      0,      0,                                          s_IS*(1-r_IS),           s_IF*(1-r_IF),           s_ES*(1-r_ES),           s_EF*(1-r_EF),           s_ENB*(1-r_ENB),           s_PF*(1-r_PF)
+), nrow = 11, byrow = TRUE)
+
+lambda_base <- as.numeric(eigen(m_base)$values[1])
+SSD         <- as.numeric(eigen(m_base)$vectors[, 1] / sum(eigen(m_base)$vectors[, 1]))
+n0_vec      <- SSD * N0
+
+# --- Full 3/3 mitigation matrix ---
+# Survival rates with fishing mortality reduced by eff_3of3 (tori lines + night setting + line weighting)
+# ns_* = 1 - (FM_total * (1 - eff_3of3) + natural_mortality)
+# FM values from 06a mortality partition output
+ns_Juv <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_3of3) + nm_juv)
+ns_Imm <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_3of3) + nm_imm)
+ns_EF  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3) + nm_efb)
+ns_ES  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3) + nm_esb)
+ns_ENB <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3) + nm_enb)
+ns_IF  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3) + nm_ifb)
+ns_IS  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3) + nm_isb)
+ns_PF  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3) + nm_pf)
+
+m_3of3 <- matrix(data = c(
+  0,      0,       0,       0,       0,                                           0.5*ns_Juv,               0,                        0.5*ns_Juv,               0,                        0,                          0,
+  ns_Juv, 0,       0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      ns_Juv,  0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       ns_Imm,  0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       ns_Imm,  ns_Imm*r_Imm*(1-b_Imm)+ns_Imm*(1-r_Imm),   0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*k_Imm,                   0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       ns_Imm*r_Imm*b_Imm*(1-k_Imm),               0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       0,                                           ns_IS*r_IS*b_IS*k_IS,     ns_IF*r_IF*b_IF*k_IF,     ns_ES*r_ES*b_ES*k_ES,     ns_EF*r_EF*b_EF*k_EF,     ns_ENB*r_ENB*b_ENB*k_ENB,   ns_PF*r_PF*b_PF*k_PF,
+  0,      0,       0,       0,       0,                                           ns_IS*r_IS*b_IS*(1-k_IS), ns_IF*r_IF*b_IF*(1-k_IF), ns_ES*r_ES*b_ES*(1-k_ES), ns_EF*r_EF*b_EF*(1-k_EF), ns_ENB*r_ENB*b_ENB*(1-k_ENB),ns_PF*r_PF*b_PF*(1-k_PF),
+  0,      0,       0,       0,       0,                                           ns_IS*r_IS*(1-b_IS),      ns_IF*r_IF*(1-b_IF),      ns_ES*r_ES*(1-b_ES),      ns_EF*r_EF*(1-b_EF),      ns_ENB*r_ENB*(1-b_ENB),     ns_PF*r_PF*(1-b_PF),
+  0,      0,       0,       0,       0,                                           ns_IS*(1-r_IS),           ns_IF*(1-r_IF),           ns_ES*(1-r_ES),           ns_EF*(1-r_EF),           ns_ENB*(1-r_ENB),           ns_PF*(1-r_PF)
+), nrow = 11, byrow = TRUE)
+
+lambda_3of3 <- as.numeric(eigen(m_3of3)$values[1])
+
+cat(sprintf("Lambda — no mitigation: %.6f\n", lambda_base))
+cat(sprintf("Lambda — full 3/3:      %.6f\n", lambda_3of3))
+cat(sprintf("Difference:             %+.6f\n", lambda_3of3 - lambda_base))
+cat(sprintf("N0 = %.0f birds\n", N0))
+
+
+cat(sprintf("ns_Juv: %.4f  (was s_Juv: %.4f, change: %+.4f)\n", ns_Juv, s_Juv, ns_Juv - s_Juv))
+  cat(sprintf("ns_Imm: %.4f  (was s_Imm: %.4f, change: %+.4f)\n", ns_Imm, s_Imm, ns_Imm - s_Imm))
+  cat(sprintf("ns_EF:  %.4f  (was s_EF:  %.4f, change: %+.4f)\n", ns_EF,  s_EF,  ns_EF  - s_EF))
+```
+
+---
+
+*PART 1 — IMMEDIATE FULL COMPLIANCE*
+
+How long does it take the population to recover if 3/3 mitigation is implemented
+across all fisheries immediately at 100% coverage?
+
+**Step 1: set up output storage**
+```{r part1-setup}
+years <- 100
+
+# One column for N, rows = years + 1 (year 0 through year 100)
+output_base <- matrix(nrow = years + 1, ncol = 1) %>% as.data.frame()
+output_imm  <- matrix(nrow = years + 1, ncol = 1) %>% as.data.frame()
+
+# Year 0: starting population
+output_base[1, 1] <- N0
+output_imm[1, 1]  <- N0
+
+cat(sprintf("N0 = %.0f  |  storage: %d rows x 1 col\n", N0, nrow(output_base)))
+```
+
+**Step 3: project — N(t+1) = lambda * N(t)**
+```{r part1-project}
+# No mitigation: same lambda every year
+for (k in 1:years) {
+  output_base[k + 1, 1] <- lambda_base * output_base[k, 1]
+}
+
+# Immediate full 3/3: same lambda every year
+for (k in 1:years) {
+  output_imm[k + 1, 1] <- lambda_3of3 * output_imm[k, 1]
+}
+
+# Combine and label
+proj_part1 <- bind_rows(
+  output_base %>% mutate(scenario = "No mitigation (baseline)"),
+  output_imm  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
+) %>%
+  mutate(year     = rep(0:years, 2),
+         N        = V1,
+         scenario = factor(scenario,
+           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
+  select(year, N, scenario)
+
+# Inspect first few years to verify
+cat("=== First 6 years — no mitigation ===\n")
+print(head(proj_part1 %>% filter(scenario == "No mitigation (baseline)"), 6))
+cat("\n=== First 6 years — immediate 3/3 ===\n")
+print(head(proj_part1 %>% filter(scenario == "Immediate 3/3 (100% coverage)"), 6))
+```
+
+**recovery milestones**
+```{r part1-milestones}
+# Years for the immediate-3/3 mean trajectory to reach growth milestones above N0
+imm_traj <- proj_part1 %>% filter(scenario == "Immediate 3/3 (100% coverage)")
+
+# helper: return NA_integer_ if milestone not reached within projection horizon
+first_yr <- function(traj, threshold) {
+  x <- traj %>% filter(N >= threshold) %>% slice(1) %>% pull(year)
+  if (length(x) == 0) NA_integer_ else x
+}
+
+fmt_yr <- function(x) ifelse(is.na(x), paste0(">", years), as.character(x))
+
+milestone_10  <- first_yr(imm_traj, N0 * 1.10)
+milestone_25  <- first_yr(imm_traj, N0 * 1.25)
+milestone_50  <- first_yr(imm_traj, N0 * 1.50)
+milestone_dbl <- first_yr(imm_traj, N0 * 2.00)
+
+cat(sprintf("Years to +10%% above N0:  %s\n", fmt_yr(milestone_10)))
+cat(sprintf("Years to +25%% above N0:  %s\n", fmt_yr(milestone_25)))
+cat(sprintf("Years to +50%% above N0:  %s\n", fmt_yr(milestone_50)))
+cat(sprintf("Years to double N0:       %s\n", fmt_yr(milestone_dbl)))
+```
+
+**observed population totals from dem_props (validation)**
+```{r dem-obs}
+# 5-year period averages from Clay 2019 demographic data
+# Excluding J1 to match N0 calculation; plotted at start year of each period
+dem_obs <- dem_props %>%
+  filter(Dem_class != "J1",
+         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  group_by(Period) %>%
+  summarise(N_obs = sum(Pop), .groups = "drop") %>%
+  mutate(year = c(0, 5, 10, 15))
+
+# Adults = SB + FB + NB;  Immatures = IMM + J2+3
+dem_obs_split <- dem_props %>%
+  filter(Dem_class != "J1",
+         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  mutate(group = ifelse(Dem_class %in% c("IMM", "J2+3"), "Immatures", "Adults"),
+         year  = case_when(
+           Period == "1990-1994" ~ 0,
+           Period == "1995-1999" ~ 5,
+           Period == "2000-2004" ~ 10,
+           Period == "2005-2009" ~ 15
+         )) %>%
+  group_by(Period, year, group) %>%
+  summarise(N_obs = sum(Pop), .groups = "drop")
+
+print(dem_obs_split)
+
+# Bird Island breeding pair counts (Poncet et al. survey data)
+# Years are end-year of austral season; x-axis is years since 1990 (start of baseline period)
+# Scale factor converts breeding pairs to total N for plotting on primary y-axis:
+# interpolating between 1984 (1370 pairs) and 2004 (948 pairs) gives ~1200 pairs at 1990,
+# so scale_factor = N0 / 1200
+pairs_scale <- N0 / 1200
+
+bird_obs <- tibble(
+  season = c("1983/84", "2003/04", "2014/15", "2023/24"),
+  year   = c(-6, 14, 25, 34),       # years relative to 1990 baseline start
+  pairs  = c(1370, 948, 772, 699),
+  N_scaled = pairs * pairs_scale     # scaled to primary y-axis for plotting
+)
+
+cat(sprintf("Breeding pair scale factor: %.2f (N per pair)\n", pairs_scale))
+print(bird_obs)
+```
+
+**plot Part 1**
+```{r plot-part1, fig.width = 9, fig.height = 5}
+milestones_df <- tibble(
+  year  = c(milestone_10, milestone_25, milestone_50, milestone_dbl),
+  label = c("+10%", "+25%", "+50%", "\u00D72"),
+  N     = c(N0 * 1.10, N0 * 1.25, N0 * 1.50, N0 * 2.0)
+) %>%
+  filter(!is.na(year), year <= years)
+
+p_part1 <- ggplot(proj_part1, aes(x = year, y = N,
+                                   color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = dem_obs,
+             aes(x = year, y = N_obs),
+             inherit.aes = FALSE, color = "black", size = 3, shape = 17) +
+  geom_text(data = dem_obs,
+            aes(x = year, y = N_obs, label = Period),
+            inherit.aes = FALSE, color = "black", size = 2.5, vjust = -0.8) +
+  geom_point(data = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs,
+            aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  geom_point(data = milestones_df,
+             aes(x = year, y = N),
+             inherit.aes = FALSE, color = "#253494", size = 2.5) +
+  geom_text(data = milestones_df,
+            aes(x = year, y = N,
+                label = paste0(label, "\n(yr ", year, ")")),
+            inherit.aes = FALSE,
+            color = "#253494", size = 2.8, hjust = -0.15, vjust = 0.5) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = "Years since 1990 baseline",
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("Population projection vs observed breeding pairs — ",
+                      target_period, " baseline"),
+       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
+                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
+                         ";  N\u2080 = ", scales::comma(round(N0)), " birds")) +
+  themeo +
+  theme(legend.position = "bottom")
+p_part1
+```
+
+**plot Part 1b — projection vs dem_props age class totals**
+```{r plot-part1-obs, fig.width = 9, fig.height = 5}
+# Adults = SB + FB + NB;  Immatures = IMM + J2+3
+# Secondary y-axis scaled to breeding pairs equivalent using same pairs_scale
+p_part1_obs <- ggplot(proj_part1, aes(x = year, y = N,
+                                       color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_line(data = dem_obs_split,
+            aes(x = year, y = N_obs, group = group, linetype = group),
+            inherit.aes = FALSE, color = "black", linewidth = 0.7) +
+  geom_point(data = dem_obs_split,
+             aes(x = year, y = N_obs, shape = group),
+             inherit.aes = FALSE, color = "black", size = 3) +
+  geom_point(data = dem_obs,
+             aes(x = year, y = N_obs),
+             inherit.aes = FALSE, color = "black", size = 3, shape = 17) +
+  geom_text(data = dem_obs,
+            aes(x = year, y = N_obs, label = Period),
+            inherit.aes = FALSE, color = "black", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid",
+                                    "Adults"                        = "solid",
+                                    "Immatures"                     = "dashed"),
+                        guide = "none") +
+  scale_shape_manual(values = c("Adults" = 16, "Immatures" = 1),
+                     name = "Observed age class") +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / N0 * 100,
+                                         name = "% of 1990\u20131994 baseline",
+                                         labels = function(x) paste0(round(x), "%"))) +
+  labs(x = "Years since 1990 baseline",
+       y = "Population (N individuals)",
+       color = NULL,
+       title = paste0("Population projection vs observed age class totals — ",
+                      target_period, " baseline"),
+       subtitle = "Black triangles = total; filled circles = adults; open circles = immatures (Clay 2019)") +
+  themeo +
+  theme(legend.position = "bottom")
+p_part1_obs
+```
+
+---
+
+*PART 2 — TO BE ADDED*
+
+---
+
+**age class trends from dem_props (Clay 2019)**
+```{r plot-age-trends, fig.width = 8, fig.height = 5}
+# Use the 4 survey periods only (exclude the 1990-2009 aggregate and J1)
+# Mid-year of each 5-year period used for x-axis placement
+age_trends <- dem_props %>%
+  filter(Dem_class != "J1",
+         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  mutate(
+    year_mid = case_when(
+      Period == "1990-1994" ~ 1992,
+      Period == "1995-1999" ~ 1997,
+      Period == "2000-2004" ~ 2002,
+      Period == "2005-2009" ~ 2007
+    ),
+    Dem_class = factor(Dem_class,
+                       levels = c("SB", "FB", "NB", "IMM", "J2+3"),
+                       labels = c("Successful breeders", "Failed breeders",
+                                  "Non-breeders", "Immatures", "Juveniles (J2+3)"))
+  )
+
+p_age_trends <- ggplot(age_trends, aes(x = year_mid, y = Pop,
+                                        color = Dem_class, group = Dem_class)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 2.5) +
+  scale_color_brewer(palette = "Dark2") +
+  scale_x_continuous(breaks = c(1992, 1997, 2002, 2007),
+                     labels = c("1990-94", "1995-99", "2000-04", "2005-09")) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(x = NULL,
+       y = "Population (N individuals)",
+       color = "Age class",
+       title = "Bird Island WAAL population by age class — Clay et al. 2019",
+       subtitle = "5-year period averages; excludes J1") +
+  themeo +
+  theme(legend.position = "right")
+p_age_trends
+```
+
+## Save figures
+
+```{r save-figures}
+dir.create(here("output/figures"), showWarnings = FALSE, recursive = TRUE)
+
+fig_path <- function(name) here("output/figures",
+                                 paste0(name, "_", target_period, "_", date_sfx, ".png"))
+
+ggsave(fig_path("08_proj_part1_breeding_pairs"),  p_part1,         width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("08_proj_part1_age_class_obs"),  p_part1_obs,     width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("08_age_class_trends"),          p_age_trends,    width = 8,  height = 5, dpi = 200)
+message("3 figures saved to output/figures/ with suffix ", date_sfx)
+```

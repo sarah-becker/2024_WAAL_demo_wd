@@ -1,5 +1,5 @@
 ---
-title: "WAAL Population Projections — 3/3 Mitigation Scenario"
+title: "WAAL Population Projections — Summary"
 output: html_document
 ---
 
@@ -8,11 +8,12 @@ library(here)
 library(tidyverse)
 library(RColorBrewer)
 
-# Must match the date suffix used when 06a was last run
-date_sfx      <- "2026-02-25"
-target_period <- "1990-1994"
 
-themeo <- theme_classic() +
+input_sfx     <- "2026-02-25"                    # date 06a was last run — must match saved CSV
+output_sfx    <- format(Sys.Date(), "%Y-%m-%d")  # today's date, used when saving figures
+target_period <- "1990-1994" #baseline reference period
+
+themeo <- theme_classic() + #custom plotting theme
   theme(strip.background = element_blank(),
         panel.grid.major = element_line(colour = "transparent"),
         panel.grid.minor = element_line(colour = "transparent"),
@@ -29,18 +30,13 @@ themeo <- theme_classic() +
         legend.text = element_text(color = "black", size = 8))
 ```
 
-*POPULATION PROJECTIONS — 3/3 MITIGATION SCENARIO*
+*WAAL POPULATION PROJECTIONS — SUMMARY SCRIPT*
 
-Two analyses:
-  1. Immediate full 3/3 compliance — how long for the population to recover?
-  2. Delayed implementation (5, 10, 20 year phase-in) — what is the cost of waiting?
+Three projection scenarios across 100-year and 500-years:
+  1. Immediate full 3/3 compliance — how long for population to recover?
+  2. Phase-in (5, 10, 20 years) — cost of gradual implementation?
+  3. Delay then implement — cost of waiting to act?
 
-Both use the scalar projection N(t+1) = lambda * N(t), following the homework structure.
-For Part 1, lambda is fixed (one value per scenario).
-For Part 2, lambda changes each year as coverage ramps up — computed explicitly and stored
-in a coverage schedule table before the projection runs, so every input can be inspected.
-
----
 
 **vital rates**
 ```{r vital-rates}
@@ -65,19 +61,18 @@ r_EF  <- 0.973;  r_ENB <- 0.953;  r_ES  <- 0.292
 r_IF  <- 0.948;  r_Imm <- 0.692;  r_IS  <- 0.459;  r_PF  <- 0.972
 
 # Mitigation efficacy: 3/3 combined (tori lines + night setting + line weighting)
-#numbers pulled from the literature and will need citations and confirmation
+# numbers pulled from the literature and will need citations and confirmation
 eff_tori_lines  <- 0.75
 eff_night_set   <- 0.60
 eff_line_weight <- 0.65
 eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)
-
 ```
 
 **load per-capita fishing mortality and natural mortality from 06a output**
 ```{r load-data}
-# Per-capita FM and natural mortality saved by 06a (mortality_partition CSV)
+# Per-capita FM and natural mortality saved by script 06a (mortality_partition CSV)
 mort_part <- read_csv(
-  here(paste0("output/mortality_partition_", target_period, "_", date_sfx, ".csv")),
+  here(paste0("output/mortality_partition_", target_period, "_", input_sfx, ".csv")),
   show_col_types = FALSE)
 
 mort_part
@@ -114,7 +109,6 @@ pop_period <- dem_props %>%
   select(Dem_class, Pop)
 
 N0 <- sum(pop_period$Pop)
-
 ```
 
 **build matrices and extract lambdas**
@@ -141,10 +135,14 @@ lambda_base <- as.numeric(eigen(m_base)$values[1])
 SSD         <- as.numeric(eigen(m_base)$vectors[, 1] / sum(eigen(m_base)$vectors[, 1]))
 n0_vec      <- SSD * N0
 
+m_base
+lambda_base
+SSD
+n0_vec
+
+
 # --- Full 3/3 mitigation matrix ---
-# Survival rates with fishing mortality reduced by eff_3of3 (tori lines + night setting + line weighting)
 # ns_* = 1 - (FM_total * (1 - eff_3of3) + natural_mortality)
-# FM values from 06a mortality partition output
 ns_Juv <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_3of3) + nm_juv)
 ns_Imm <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_3of3) + nm_imm)
 ns_EF  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3) + nm_efb)
@@ -170,117 +168,18 @@ m_3of3 <- matrix(data = c(
 
 lambda_3of3 <- as.numeric(eigen(m_3of3)$values[1])
 
+m_3of3
+lambda_3of3
+
+tibble(scenario  = c("No mitigation (baseline)", "Full 3/3 mitigation"),
+       lambda    = c(lambda_base, lambda_3of3))
 ```
 
 ---
 
-*PART 1 — IMMEDIATE FULL COMPLIANCE*
-
-How long does it take the population to recover if 3/3 mitigation is implemented
-across all fisheries immediately at 100% coverage?
-
-**Step 1: set up output storage**
-```{r part1-setup}
-years <- 100
-yearslong  <- 500
-
-# One column for N, rows = years + 1 (year 0 through year 100)
-output_base <- matrix(nrow = years + 1, ncol = 1) %>% as.data.frame()
-output_imm  <- matrix(nrow = years + 1, ncol = 1) %>% as.data.frame()
-
-# Year 0: starting population
-output_base[1, 1] <- N0
-output_imm[1, 1]  <- N0
-
-# Long-run storage
-output_base_long <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
-output_imm_long  <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
-output_base_long[1, 1] <- N0
-output_imm_long[1, 1]  <- N0
-
-```
-
-**Step 3: project — N(t+1) = lambda * N(t)**
-```{r part1-project}
-# No mitigation: same lambda every year
-for (k in 1:years) {
-  output_base[k + 1, 1] <- lambda_base * output_base[k, 1]
-}
-
-# Immediate full 3/3: same lambda every year
-for (k in 1:years) {
-  output_imm[k + 1, 1] <- lambda_3of3 * output_imm[k, 1]
-}
-
-# Combine and label for future plotting— short projection (100 yr)
-proj_part1 <- bind_rows(
-  output_base %>% mutate(scenario = "No mitigation (baseline)"),
-  output_imm  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
-) %>%
-  mutate(year     = rep(0:years, 2),
-         N        = V1,
-         scenario = factor(scenario,
-           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
-  select(year, N, scenario)
- 
-# Long projection loops
-for (k in 1:yearslong) {
-  output_base_long[k + 1, 1] <- lambda_base  * output_base_long[k, 1]
-}
-for (k in 1:yearslong) {
-  output_imm_long[k + 1, 1]  <- lambda_3of3  * output_imm_long[k, 1]
-}
-
-# Combine and label for future plotting — long projection (yearslong yr)
-proj_part1_long <- bind_rows(
-  output_base_long %>% mutate(scenario = "No mitigation (baseline)"),
-  output_imm_long  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
-) %>%
-  mutate(year     = rep(0:yearslong, 2),
-         N        = V1,
-         scenario = factor(scenario,
-           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
-  select(year, N, scenario)
-
-# Inspect first few years to verify
-print(head(proj_part1 %>% filter(scenario == "No mitigation (baseline)"), 6))
-print(head(proj_part1 %>% filter(scenario == "Immediate 3/3 (100% coverage)"), 6))
-```
-
-**recovery milestones**
-```{r part1-milestones}
-# Years for the immediate-3/3 mean trajectory to reach growth milestones above N0
-imm_traj <- proj_part1 %>% filter(scenario == "Immediate 3/3 (100% coverage)")
-
-# helper: return NA_integer_ if milestone not reached within projection horizon
-first_yr <- function(traj, threshold) {
-  x <- traj %>% filter(N >= threshold) %>% slice(1) %>% pull(year)
-  if (length(x) == 0) NA_integer_ else x
-}
-
-fmt_yr      <- function(x) ifelse(is.na(x), paste0(">", years),     as.character(x))
-fmt_yr_long <- function(x) ifelse(is.na(x), paste0(">", yearslong), as.character(x))
-
-milestone_10  <- first_yr(imm_traj, N0 * 1.10)
-milestone_25  <- first_yr(imm_traj, N0 * 1.25)
-milestone_50  <- first_yr(imm_traj, N0 * 1.50)
-milestone_dbl <- first_yr(imm_traj, N0 * 2.00)
-
-
-# Milestones for long projection — check against full yearslong horizon
-imm_traj_long <- proj_part1_long %>% filter(scenario == "Immediate 3/3 (100% coverage)")
-
-milestone_10_long  <- first_yr(imm_traj_long, N0 * 1.10)
-milestone_25_long  <- first_yr(imm_traj_long, N0 * 1.25)
-milestone_50_long  <- first_yr(imm_traj_long, N0 * 1.50)
-milestone_dbl_long <- first_yr(imm_traj_long, N0 * 2.00)
-
-```
-
-**observed population totals from dem_props (validation)**
-```{r dem-obs}
-# 5-year period averages from Clay 2019 demographic data
-# Excluding J1 to match N0 calculation; plotted at start year of each period
+**observed population data**
+```{r obs-data}
+# 5-year period totals from Clay 2019 demographic data (excludes J1)
 dem_obs <- dem_props %>%
   filter(Dem_class != "J1",
          Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
@@ -288,7 +187,7 @@ dem_obs <- dem_props %>%
   summarise(N_obs = sum(Pop), .groups = "drop") %>%
   mutate(year = c(0, 5, 10, 15))
 
-# Adults = SB + FB + NB;  Immatures = IMM + J2+3
+# Split into adults (SB + FB + NB) and immatures (IMM + J2+3) for stage comparison plots
 dem_obs_split <- dem_props %>%
   filter(Dem_class != "J1",
          Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
@@ -302,36 +201,108 @@ dem_obs_split <- dem_props %>%
   group_by(Period, year, group) %>%
   summarise(N_obs = sum(Pop), .groups = "drop")
 
-print(dem_obs_split)
-
-# Bird Island breeding pair counts (Poncet et al. survey data)
-# Years are end-year of austral season; x-axis is years since 1990 (start of baseline period)
-# Scale factor converts breeding pairs to total N for plotting on primary y-axis:
-# interpolating between 1984 (1370 pairs) and 2004 (948 pairs) gives ~1200 pairs at 1990,
-# so scale_factor = N0 / 1200
+# Bird Island breeding pair counts (Mackley et al. census study in press, from Richard)
+# Scale factor converts breeding pairs to total N for plotting / comparisons
 pairs_scale <- N0 / 1200
 
 bird_obs <- tibble(
-  season = c("1983/84", "2003/04", "2014/15", "2023/24"),
-  year   = c(-6, 14, 25, 34),       # years relative to 1990 baseline start
-  pairs  = c(1370, 948, 772, 699),
-  N_scaled = pairs * pairs_scale     # scaled to primary y-axis for plotting
+  season   = c("1983/84", "2003/04", "2014/15", "2023/24"),
+  year     = c(-6, 14, 25, 34),
+  pairs    = c(1370, 948, 772, 699),
+  N_scaled = pairs * pairs_scale
 )
 
 print(bird_obs)
+
+# Validate pairs_scale against the SSD
+# Active breeders counted in pair surveys = IS + IF + ES + EF (n0_vec indices 6-9)
+# Divide by 2: each pair = 2 individuals
+n_active_breeders <- sum(n0_vec[6:9])
+pairs_from_SSD    <- n_active_breeders / 2
+pct_breeding      <- n_active_breeders / N0 * 100
+scale_from_SSD    <- N0 / pairs_from_SSD
+
+tibble(
+  quantity = c("SSD-implied breeding pairs at N0",
+               "Assumed baseline pairs (pairs_scale denominator)",
+               "Active breeders as % of N0",
+               "N0 / SSD-implied pairs  (scale from SSD)",
+               "N0 / 1200               (pairs_scale used)"),
+  value    = c(round(pairs_from_SSD),
+               1200,
+               round(pct_breeding, 1),
+               round(scale_from_SSD, 2),
+               round(pairs_scale, 2))
+) %>% print(n = Inf)
+# If SSD-implied pairs is close to 1200, pairs_scale is internally consistent.
+# If they differ substantially, the 1200 baseline assumption needs revisiting.
+# they differ, so likely the pop is not actually at SSD, which makes sense. NOt sure if this matters for our matrix assumptions. 
+#will still keep these numbesr for now as they are from actual census data and still useful for comparison
 ```
 
-**plot Part 1**
-```{r plot-part1, fig.width = 9, fig.height = 5}
-milestones_df <- tibble(
-  year  = c(milestone_10, milestone_25, milestone_50, milestone_dbl),
-  label = c("+10%", "+25%", "+50%", "\u00D72"),
-  N     = c(N0 * 1.10, N0 * 1.25, N0 * 1.50, N0 * 2.0)
-) %>%
-  filter(!is.na(year), year <= years)
+---
 
-p_part1 <- ggplot(proj_part1, aes(x = year, y = N,
-                                   color = scenario, linetype = scenario)) +
+*PART 1 — USE EXISTING LAMBDA FROM PREVIOUS CODE: 100-YEARS AND 500-YEARS*
+
+N(t+1) = lambda * N(t). Lambda is fixed per scenario 
+Used to establish baseline recovery trajectory
+
+**project**
+```{r part1-project}
+years     <- 100
+yearslong <- 500
+
+stage_names <- c("J2", "J3", "Imm4", "Imm5", "PB", "IS", "IF", "ES", "EF", "ENB", "Sabb")
+
+#no mitigation vs immediate mitigation, ove 100 and 500 year time periods
+output_base      <- matrix(nrow = years     + 1, ncol = 1) %>% as.data.frame()
+output_imm       <- matrix(nrow = years     + 1, ncol = 1) %>% as.data.frame()
+output_base_long <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
+output_imm_long  <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
+
+output_base[1, 1]      <- N0
+output_imm[1, 1]       <- N0
+output_base_long[1, 1] <- N0
+output_imm_long[1, 1]  <- N0
+
+for (k in 1:years) {
+  output_base[k + 1, 1] <- lambda_base * output_base[k, 1]
+  output_imm[k + 1, 1]  <- lambda_3of3 * output_imm[k, 1]
+}
+
+for (k in 1:yearslong) {
+  output_base_long[k + 1, 1] <- lambda_base * output_base_long[k, 1]
+  output_imm_long[k + 1, 1]  <- lambda_3of3 * output_imm_long[k, 1]
+}
+
+
+#combine output to use later in plotting
+proj_part1 <- bind_rows(
+  output_base %>% mutate(scenario = "No mitigation (baseline)"),
+  output_imm  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
+) %>%
+  mutate(year     = rep(0:years, 2),
+         N        = V1,
+         scenario = factor(scenario,
+           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
+  select(year, N, scenario)
+
+proj_part1_long <- bind_rows(
+  output_base_long %>% mutate(scenario = "No mitigation (baseline)"),
+  output_imm_long  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
+) %>%
+  mutate(year     = rep(0:yearslong, 2),
+         N        = V1,
+         scenario = factor(scenario,
+           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
+  select(year, N, scenario)
+```
+
+
+**plot 1a — 100-year projection with observed breeding pairs**
+```{r plot-1a, fig.width = 9, fig.height = 5}
+
+p_1a <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_point(data = dem_obs,
@@ -349,14 +320,6 @@ p_part1 <- ggplot(proj_part1, aes(x = year, y = N,
   geom_text(data = bird_obs,
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  geom_point(data = milestones_df,
-             aes(x = year, y = N),
-             inherit.aes = FALSE, color = "#253494", size = 2.5) +
-  geom_text(data = milestones_df,
-            aes(x = year, y = N,
-                label = paste0(label, "\n(yr ", year, ")")),
-            inherit.aes = FALSE,
-            color = "#253494", size = 2.8, hjust = -0.15, vjust = 0.5) +
   scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
@@ -370,72 +333,17 @@ p_part1 <- ggplot(proj_part1, aes(x = year, y = N,
   labs(x = "Years since 1990 baseline",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
-       title = paste0("Population projection vs observed breeding pairs — ",
-                      target_period, " baseline"),
-       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
-                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
-                         ";  N\u2080 = ", scales::comma(round(N0)), " birds")) +
-  themeo +
-  theme(legend.position = "bottom")
-p_part1
+       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 4),
+                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 4),
+                         ";  N\u2080 = ", scales::comma(round(N0)),
+                         " | black triangles = Clay 2019 population totals;\n orange dots = census breeding pairs")) +
+  themeo + theme(legend.position = "bottom")
+p_1a
 ```
 
-**plot Part 1 (long run) — breeding pairs, `r yearslong`-year horizon**
-```{r plot-part1-long, fig.width = 9, fig.height = 5}
-milestones_long_df <- tibble(
-  year  = c(milestone_10_long, milestone_25_long, milestone_50_long, milestone_dbl_long),
-  label = c("+10%", "+25%", "+50%", "\u00D72"),
-  N     = c(N0 * 1.10, N0 * 1.25, N0 * 1.50, N0 * 2.0)
-) %>%
-  filter(!is.na(year), year <= yearslong)
-
-p_part1_long <- ggplot(proj_part1_long, aes(x = year, y = N,
-                                             color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.9) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  geom_point(data = bird_obs,
-             aes(x = year, y = N_scaled),
-             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
-  geom_text(data = bird_obs,
-            aes(x = year, y = N_scaled, label = season),
-            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  geom_point(data = milestones_long_df,
-             aes(x = year, y = N),
-             inherit.aes = FALSE, color = "#253494", size = 2.5) +
-  geom_text(data = milestones_long_df,
-            aes(x = year, y = N,
-                label = paste0(label, "\n(yr ", year, ")")),
-            inherit.aes = FALSE,
-            color = "#253494", size = 2.8, hjust = -0.15, vjust = 0.5) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
-  scale_y_continuous(labels = scales::comma,
-                     breaks = scales::pretty_breaks(n = 6),
-                     sec.axis = sec_axis(~ . / pairs_scale,
-                                         name = "Breeding pairs (Bird Island)",
-                                         labels = scales::comma)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
-       y = "Population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("Long-run population projection vs observed breeding pairs — ",
-                      target_period, " baseline"),
-       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
-                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
-                         ";  N\u2080 = ", scales::comma(round(N0)), " birds")) +
-  themeo +
-  theme(legend.position = "bottom")
-p_part1_long
-```
-
-**plot Part 1b — projection vs dem_props age class totals**
-```{r plot-part1-obs, fig.width = 9, fig.height = 5}
-# Adults = SB + FB + NB;  Immatures = IMM + J2+3
-# Secondary y-axis scaled to breeding pairs equivalent using same pairs_scale
-p_part1_obs <- ggplot(proj_part1, aes(x = year, y = N,
-                                       color = scenario, linetype = scenario)) +
+**plot 1b — 100-year projection with observed age class lines (adults / immatures)**
+```{r plot-1b, fig.width = 9, fig.height = 5}
+p_1b <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_line(data = dem_obs_split,
@@ -468,18 +376,47 @@ p_part1_obs <- ggplot(proj_part1, aes(x = year, y = N,
   labs(x = "Years since 1990 baseline",
        y = "Population (N individuals)",
        color = NULL,
-       title = paste0("Population projection vs observed age class totals — ",
-                      target_period, " baseline"),
-       subtitle = "Black triangles = total; filled circles = adults; open circles = immatures (Clay 2019)") +
-  themeo +
-  theme(legend.position = "bottom")
-p_part1_obs
+       subtitle = "Black triangles = total population; \nfilled circles = adults; open circles = immatures (Clay 2019)") +
+  themeo + theme(legend.position = "bottom")
+p_1b
 ```
 
-**plot Part 1b (long run) — projection vs dem_props age class totals, `r yearslong`-year horizon**
-```{r plot-part1-obs-long, fig.width = 9, fig.height = 5}
-p_part1_obs_long <- ggplot(proj_part1_long, aes(x = year, y = N,
-                                                  color = scenario, linetype = scenario)) +
+**plot 1c — 500-year projection with observed breeding pairs**
+```{r plot-1c, fig.width = 9, fig.height = 5}
+
+p_1c <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year projection vs observed breeding pairs — ", target_period, " baseline"),
+       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
+                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
+                         ";  orange dots = census breeding pairs")) +
+  themeo + theme(legend.position = "bottom")
+p_1c
+```
+
+**plot 1d — 500-year projection with observed age class lines**
+```{r plot-1d, fig.width = 9, fig.height = 5}
+p_1d <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_line(data = dem_obs_split,
@@ -512,43 +449,34 @@ p_part1_obs_long <- ggplot(proj_part1_long, aes(x = year, y = N,
   labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL,
-       title = paste0("Long-run projection vs observed age class totals — ",
-                      target_period, " baseline"),
-       subtitle = "Black triangles = total; filled circles = adults; open circles = immatures (Clay 2019)") +
-  themeo +
-  theme(legend.position = "bottom")
-p_part1_obs_long
+       title = paste0("500-year projection vs observed age classes — ", target_period, " baseline"),
+       subtitle = "Black triangles = total; filled circles = adults; \nopen circles = immatures (Clay 2019)") +
+  themeo + theme(legend.position = "bottom")
+p_1d
 ```
 
 ---
 
-*PART 2 — STAGE-STRUCTURED MATRIX PROJECTION*
+*PART 2 — STAGE-STRUCTURED MATRIX PROJECTION (still with fixed lambda but using matrices directly)*
 
-Full matrix projection tracking all 11 stages. Each time step uses N(t+1) = A %*% N(t),
-where A is the 11x11 projection matrix. Both scenarios start from the same initial stage
-vector (SSD scaled to N0). Total N should match Part 1 exactly — used as validation.
+Full 11-stage matrix projection: N(t+1) = A %*% N(t).
+Both scenarios start from SSD scaled to N0. Total N should match Part 1 exactly.
 
-**set up stage storage and project**
+**project**
 ```{r part2-project}
-stage_names <- c("J2", "J3", "Imm4", "Imm5", "PB", "IS", "IF", "ES", "EF", "ENB", "Sabb")
-
-# Storage: (years+1) rows x 11 cols, one matrix per scenario
 mat_base  <- matrix(0, nrow = years + 1, ncol = 11)
 mat_mitig <- matrix(0, nrow = years + 1, ncol = 11)
 colnames(mat_base)  <- stage_names
 colnames(mat_mitig) <- stage_names
-
-# Initialize year 0 at stable stage distribution scaled to N0
 mat_base[1, ]  <- n0_vec
 mat_mitig[1, ] <- n0_vec
 
-# Matrix projection: N(t+1) = A %*% N(t)
 for (k in 1:years) {
-  mat_base[k + 1, ]  <- m_base  %*% mat_base[k, ]
-  mat_mitig[k + 1, ] <- m_3of3  %*% mat_mitig[k, ]
+  mat_base[k + 1, ]  <- m_base %*% mat_base[k, ]
+  mat_mitig[k + 1, ] <- m_3of3 %*% mat_mitig[k, ]
 }
 
-# Convert to long format with broad stage groupings for plotting
+# Convert to long format with broad stage groupings for plotting in ggplot
 to_long <- function(mat, scenario_label) {
   as.data.frame(mat) %>%
     mutate(year = 0:years, scenario = scenario_label) %>%
@@ -574,148 +502,47 @@ proj_part2 <- bind_rows(
                             levels = c("No mitigation (baseline)",
                                        "Immediate 3/3 (100% coverage)")))
 
-# Total N by year and scenario — should match Part 1 scalar projection
-proj_part2_total <- proj_part2 %>%
-  group_by(year, scenario) %>%
-  summarise(N_total = sum(N), .groups = "drop")
-```
-
-**plot Part 2a — total N validation against Part 1**
-```{r plot-part2-total, fig.width = 9, fig.height = 5}
-p_part2_total <- ggplot(proj_part2_total, aes(x = year, y = N_total,
-                                               color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.9) +
-  geom_line(data = proj_part1, aes(x = year, y = N, group = scenario),
-            linewidth = 0.4, linetype = "dotted", color = "black", alpha = 0.4,
-            inherit.aes = FALSE) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
-       y = "Total population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("Stage-structured projection — total N vs Part 1 scalar (dotted black) — ",
-                      target_period, " baseline"),
-       subtitle = "Solid/dashed colored lines = matrix projection; dotted black = Part 1 scalar; should overlap exactly") +
-  themeo +
-  theme(legend.position = "bottom")
-p_part2_total
-```
-
-**plot Part 2b — stage group trajectories by scenario**
-```{r plot-part2-stages, fig.width = 10, fig.height = 6}
-# Sum N within broad stage groups for each year and scenario
 proj_part2_groups <- proj_part2 %>%
   group_by(year, scenario, group) %>%
   summarise(N = sum(N), .groups = "drop")
-
-p_part2_stages <- ggplot(proj_part2_groups, aes(x = year, y = N,
-                                                  color = group, group = group)) +
-  geom_line(linewidth = 0.8) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.3) +
-  facet_wrap(~ scenario, ncol = 2) +
-  scale_color_brewer(palette = "Dark2", name = "Stage group") +
-  scale_x_continuous(breaks = seq(0, years, 20)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 5)) +
-  labs(x = "Years since 1990 baseline",
-       y = "N individuals",
-       title = paste0("Stage-structured projection by group — ", target_period, " baseline"),
-       subtitle = "Each panel is one scenario; colors = broad stage groups") +
-  themeo +
-  theme(legend.position = "bottom")
-p_part2_stages
 ```
 
-**plot Part 2c — proportional stage composition over time**
-```{r plot-part2-composition, fig.width = 10, fig.height = 5}
-proj_part2_pct <- proj_part2_groups %>%
-  group_by(year, scenario) %>%
-  mutate(pct = N / sum(N) * 100) %>%
-  ungroup()
 
-p_part2_composition <- ggplot(proj_part2_pct, aes(x = year, y = pct,
-                                                    fill = group)) +
-  geom_area(alpha = 0.85) +
-  facet_wrap(~ scenario, ncol = 2) +
-  scale_fill_brewer(palette = "Dark2", name = "Stage group") +
-  scale_x_continuous(breaks = seq(0, years, 20)) +
-  scale_y_continuous(labels = function(x) paste0(round(x), "%")) +
-  labs(x = "Years since 1990 baseline",
-       y = "% of total population",
-       title = paste0("Stage composition over time — ", target_period, " baseline"),
-       subtitle = "Stacked area; each panel is one scenario") +
-  themeo +
-  theme(legend.position = "bottom")
-p_part2_composition
-```
-
----
-
-*PART 3 — 5-YEAR MITIGATION PHASE-IN*
+*PART 3 — 5-YEAR PHASE-IN*
 
 Survival improves in equal steps over 5 years. Each year uses a new matrix until year 6,
-when the full 3/3 matrix is used for the remainder of the projection.
-Improvement per step = (ns_* - s_*) / 5 for each stage-specific survival rate.
+when m_3of3 is used for the remainder. Improvement per step = (ns_* - s_*) / 5.
 
-**compute phase-in survival rates**
+**5-year phase-in survival rates**
 ```{r part3-survival-rates}
-# Phase step 1: 20% of total improvement applied
-s_Juv_p1 <- s_Juv + (1/5) * (ns_Juv - s_Juv)
-s_Imm_p1 <- s_Imm + (1/5) * (ns_Imm - s_Imm)
-s_EF_p1  <- s_EF  + (1/5) * (ns_EF  - s_EF)
-s_ES_p1  <- s_ES  + (1/5) * (ns_ES  - s_ES)
-s_ENB_p1 <- s_ENB + (1/5) * (ns_ENB - s_ENB)
-s_IF_p1  <- s_IF  + (1/5) * (ns_IF  - s_IF)
-s_IS_p1  <- s_IS  + (1/5) * (ns_IS  - s_IS)
-s_PF_p1  <- s_PF  + (1/5) * (ns_PF  - s_PF)
+s_Juv_p1 <- s_Juv + (1/5) * (ns_Juv - s_Juv);  s_Imm_p1 <- s_Imm + (1/5) * (ns_Imm - s_Imm)
+s_EF_p1  <- s_EF  + (1/5) * (ns_EF  - s_EF);   s_ES_p1  <- s_ES  + (1/5) * (ns_ES  - s_ES)
+s_ENB_p1 <- s_ENB + (1/5) * (ns_ENB - s_ENB);  s_IF_p1  <- s_IF  + (1/5) * (ns_IF  - s_IF)
+s_IS_p1  <- s_IS  + (1/5) * (ns_IS  - s_IS);   s_PF_p1  <- s_PF  + (1/5) * (ns_PF  - s_PF)
 
-# Phase step 2: 40%
-s_Juv_p2 <- s_Juv + (2/5) * (ns_Juv - s_Juv)
-s_Imm_p2 <- s_Imm + (2/5) * (ns_Imm - s_Imm)
-s_EF_p2  <- s_EF  + (2/5) * (ns_EF  - s_EF)
-s_ES_p2  <- s_ES  + (2/5) * (ns_ES  - s_ES)
-s_ENB_p2 <- s_ENB + (2/5) * (ns_ENB - s_ENB)
-s_IF_p2  <- s_IF  + (2/5) * (ns_IF  - s_IF)
-s_IS_p2  <- s_IS  + (2/5) * (ns_IS  - s_IS)
-s_PF_p2  <- s_PF  + (2/5) * (ns_PF  - s_PF)
+s_Juv_p2 <- s_Juv + (2/5) * (ns_Juv - s_Juv);  s_Imm_p2 <- s_Imm + (2/5) * (ns_Imm - s_Imm)
+s_EF_p2  <- s_EF  + (2/5) * (ns_EF  - s_EF);   s_ES_p2  <- s_ES  + (2/5) * (ns_ES  - s_ES)
+s_ENB_p2 <- s_ENB + (2/5) * (ns_ENB - s_ENB);  s_IF_p2  <- s_IF  + (2/5) * (ns_IF  - s_IF)
+s_IS_p2  <- s_IS  + (2/5) * (ns_IS  - s_IS);   s_PF_p2  <- s_PF  + (2/5) * (ns_PF  - s_PF)
 
-# Phase step 3: 60%
-s_Juv_p3 <- s_Juv + (3/5) * (ns_Juv - s_Juv)
-s_Imm_p3 <- s_Imm + (3/5) * (ns_Imm - s_Imm)
-s_EF_p3  <- s_EF  + (3/5) * (ns_EF  - s_EF)
-s_ES_p3  <- s_ES  + (3/5) * (ns_ES  - s_ES)
-s_ENB_p3 <- s_ENB + (3/5) * (ns_ENB - s_ENB)
-s_IF_p3  <- s_IF  + (3/5) * (ns_IF  - s_IF)
-s_IS_p3  <- s_IS  + (3/5) * (ns_IS  - s_IS)
-s_PF_p3  <- s_PF  + (3/5) * (ns_PF  - s_PF)
+s_Juv_p3 <- s_Juv + (3/5) * (ns_Juv - s_Juv);  s_Imm_p3 <- s_Imm + (3/5) * (ns_Imm - s_Imm)
+s_EF_p3  <- s_EF  + (3/5) * (ns_EF  - s_EF);   s_ES_p3  <- s_ES  + (3/5) * (ns_ES  - s_ES)
+s_ENB_p3 <- s_ENB + (3/5) * (ns_ENB - s_ENB);  s_IF_p3  <- s_IF  + (3/5) * (ns_IF  - s_IF)
+s_IS_p3  <- s_IS  + (3/5) * (ns_IS  - s_IS);   s_PF_p3  <- s_PF  + (3/5) * (ns_PF  - s_PF)
 
-# Phase step 4: 80%
-s_Juv_p4 <- s_Juv + (4/5) * (ns_Juv - s_Juv)
-s_Imm_p4 <- s_Imm + (4/5) * (ns_Imm - s_Imm)
-s_EF_p4  <- s_EF  + (4/5) * (ns_EF  - s_EF)
-s_ES_p4  <- s_ES  + (4/5) * (ns_ES  - s_ES)
-s_ENB_p4 <- s_ENB + (4/5) * (ns_ENB - s_ENB)
-s_IF_p4  <- s_IF  + (4/5) * (ns_IF  - s_IF)
-s_IS_p4  <- s_IS  + (4/5) * (ns_IS  - s_IS)
-s_PF_p4  <- s_PF  + (4/5) * (ns_PF  - s_PF)
+s_Juv_p4 <- s_Juv + (4/5) * (ns_Juv - s_Juv);  s_Imm_p4 <- s_Imm + (4/5) * (ns_Imm - s_Imm)
+s_EF_p4  <- s_EF  + (4/5) * (ns_EF  - s_EF);   s_ES_p4  <- s_ES  + (4/5) * (ns_ES  - s_ES)
+s_ENB_p4 <- s_ENB + (4/5) * (ns_ENB - s_ENB);  s_IF_p4  <- s_IF  + (4/5) * (ns_IF  - s_IF)
+s_IS_p4  <- s_IS  + (4/5) * (ns_IS  - s_IS);   s_PF_p4  <- s_PF  + (4/5) * (ns_PF  - s_PF)
 
-# Phase step 5: 100% — should equal ns_* values (same as m_3of3)
-s_Juv_p5 <- s_Juv + (5/5) * (ns_Juv - s_Juv)
-s_Imm_p5 <- s_Imm + (5/5) * (ns_Imm - s_Imm)
-s_EF_p5  <- s_EF  + (5/5) * (ns_EF  - s_EF)
-s_ES_p5  <- s_ES  + (5/5) * (ns_ES  - s_ES)
-s_ENB_p5 <- s_ENB + (5/5) * (ns_ENB - s_ENB)
-s_IF_p5  <- s_IF  + (5/5) * (ns_IF  - s_IF)
-s_IS_p5  <- s_IS  + (5/5) * (ns_IS  - s_IS)
-s_PF_p5  <- s_PF  + (5/5) * (ns_PF  - s_PF)
+# Step 5: 100% — equals ns_* (same as m_3of3)
+s_Juv_p5 <- s_Juv + (5/5) * (ns_Juv - s_Juv);  s_Imm_p5 <- s_Imm + (5/5) * (ns_Imm - s_Imm)
+s_EF_p5  <- s_EF  + (5/5) * (ns_EF  - s_EF);   s_ES_p5  <- s_ES  + (5/5) * (ns_ES  - s_ES)
+s_ENB_p5 <- s_ENB + (5/5) * (ns_ENB - s_ENB);  s_IF_p5  <- s_IF  + (5/5) * (ns_IF  - s_IF)
+s_IS_p5  <- s_IS  + (5/5) * (ns_IS  - s_IS);   s_PF_p5  <- s_PF  + (5/5) * (ns_PF  - s_PF)
 
-# Print all phase survival rates for transparency
 tibble(
-  stage = c("Juv", "Imm", "EF", "ES", "ENB", "IF", "IS", "PF"),
+  stage     = c("Juv", "Imm", "EF", "ES", "ENB", "IF", "IS", "PF"),
   baseline  = c(s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
   phase1    = c(s_Juv_p1, s_Imm_p1, s_EF_p1, s_ES_p1, s_ENB_p1, s_IF_p1, s_IS_p1, s_PF_p1),
   phase2    = c(s_Juv_p2, s_Imm_p2, s_EF_p2, s_ES_p2, s_ENB_p2, s_IF_p2, s_IS_p2, s_PF_p2),
@@ -725,142 +552,91 @@ tibble(
 ) %>% print()
 ```
 
-**build phase-in matrices**
+**5-year phase-in matrices**
 ```{r part3-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
-
 m_phase1 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p1,                  0,                           0.5*s_Juv_p1,                  0,                           0,                               0,
-  s_Juv_p1, 0,        0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        s_Juv_p1, 0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        s_Imm_p1, 0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        s_Imm_p1, s_Imm_p1*r_Imm*(1-b_Imm)+s_Imm_p1*(1-r_Imm),    0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p1*r_Imm*b_Imm*k_Imm,                       0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p1*r_Imm*b_Imm*(1-k_Imm),                   0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*b_IS*k_IS,        s_IF_p1*r_IF*b_IF*k_IF,      s_ES_p1*r_ES*b_ES*k_ES,        s_EF_p1*r_EF*b_EF*k_EF,      s_ENB_p1*r_ENB*b_ENB*k_ENB,      s_PF_p1*r_PF*b_PF*k_PF,
-  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*b_IS*(1-k_IS),    s_IF_p1*r_IF*b_IF*(1-k_IF),  s_ES_p1*r_ES*b_ES*(1-k_ES),    s_EF_p1*r_EF*b_EF*(1-k_EF),  s_ENB_p1*r_ENB*b_ENB*(1-k_ENB),  s_PF_p1*r_PF*b_PF*(1-k_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*(1-b_IS),         s_IF_p1*r_IF*(1-b_IF),       s_ES_p1*r_ES*(1-b_ES),         s_EF_p1*r_EF*(1-b_EF),       s_ENB_p1*r_ENB*(1-b_ENB),        s_PF_p1*r_PF*(1-b_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p1*(1-r_IS),              s_IF_p1*(1-r_IF),            s_ES_p1*(1-r_ES),              s_EF_p1*(1-r_EF),            s_ENB_p1*(1-r_ENB),              s_PF_p1*(1-r_PF)
+  0,        0,        0,        0,        0,                                                0.5*s_Juv_p1,               0,                           0.5*s_Juv_p1,               0,                           0,                               0,
+  s_Juv_p1, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        s_Juv_p1, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        s_Imm_p1, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        s_Imm_p1, s_Imm_p1*r_Imm*(1-b_Imm)+s_Imm_p1*(1-r_Imm),    0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p1*r_Imm*b_Imm*k_Imm,                       0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p1*r_Imm*b_Imm*(1-k_Imm),                   0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*b_IS*k_IS,     s_IF_p1*r_IF*b_IF*k_IF,      s_ES_p1*r_ES*b_ES*k_ES,     s_EF_p1*r_EF*b_EF*k_EF,      s_ENB_p1*r_ENB*b_ENB*k_ENB,      s_PF_p1*r_PF*b_PF*k_PF,
+  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*b_IS*(1-k_IS), s_IF_p1*r_IF*b_IF*(1-k_IF),  s_ES_p1*r_ES*b_ES*(1-k_ES), s_EF_p1*r_EF*b_EF*(1-k_EF),  s_ENB_p1*r_ENB*b_ENB*(1-k_ENB),  s_PF_p1*r_PF*b_PF*(1-k_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p1*r_IS*(1-b_IS),      s_IF_p1*r_IF*(1-b_IF),       s_ES_p1*r_ES*(1-b_ES),      s_EF_p1*r_EF*(1-b_EF),       s_ENB_p1*r_ENB*(1-b_ENB),        s_PF_p1*r_PF*(1-b_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p1*(1-r_IS),           s_IF_p1*(1-r_IF),            s_ES_p1*(1-r_ES),           s_EF_p1*(1-r_EF),            s_ENB_p1*(1-r_ENB),              s_PF_p1*(1-r_PF)
 ), nrow = 11, byrow = TRUE)
 
 m_phase2 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p2,                  0,                           0.5*s_Juv_p2,                  0,                           0,                               0,
-  s_Juv_p2, 0,        0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        s_Juv_p2, 0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        s_Imm_p2, 0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        s_Imm_p2, s_Imm_p2*r_Imm*(1-b_Imm)+s_Imm_p2*(1-r_Imm),    0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p2*r_Imm*b_Imm*k_Imm,                       0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p2*r_Imm*b_Imm*(1-k_Imm),                   0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*b_IS*k_IS,        s_IF_p2*r_IF*b_IF*k_IF,      s_ES_p2*r_ES*b_ES*k_ES,        s_EF_p2*r_EF*b_EF*k_EF,      s_ENB_p2*r_ENB*b_ENB*k_ENB,      s_PF_p2*r_PF*b_PF*k_PF,
-  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*b_IS*(1-k_IS),    s_IF_p2*r_IF*b_IF*(1-k_IF),  s_ES_p2*r_ES*b_ES*(1-k_ES),    s_EF_p2*r_EF*b_EF*(1-k_EF),  s_ENB_p2*r_ENB*b_ENB*(1-k_ENB),  s_PF_p2*r_PF*b_PF*(1-k_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*(1-b_IS),         s_IF_p2*r_IF*(1-b_IF),       s_ES_p2*r_ES*(1-b_ES),         s_EF_p2*r_EF*(1-b_EF),       s_ENB_p2*r_ENB*(1-b_ENB),        s_PF_p2*r_PF*(1-b_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p2*(1-r_IS),              s_IF_p2*(1-r_IF),            s_ES_p2*(1-r_ES),              s_EF_p2*(1-r_EF),            s_ENB_p2*(1-r_ENB),              s_PF_p2*(1-r_PF)
+  0,        0,        0,        0,        0,                                                0.5*s_Juv_p2,               0,                           0.5*s_Juv_p2,               0,                           0,                               0,
+  s_Juv_p2, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        s_Juv_p2, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        s_Imm_p2, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        s_Imm_p2, s_Imm_p2*r_Imm*(1-b_Imm)+s_Imm_p2*(1-r_Imm),    0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p2*r_Imm*b_Imm*k_Imm,                       0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p2*r_Imm*b_Imm*(1-k_Imm),                   0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*b_IS*k_IS,     s_IF_p2*r_IF*b_IF*k_IF,      s_ES_p2*r_ES*b_ES*k_ES,     s_EF_p2*r_EF*b_EF*k_EF,      s_ENB_p2*r_ENB*b_ENB*k_ENB,      s_PF_p2*r_PF*b_PF*k_PF,
+  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*b_IS*(1-k_IS), s_IF_p2*r_IF*b_IF*(1-k_IF),  s_ES_p2*r_ES*b_ES*(1-k_ES), s_EF_p2*r_EF*b_EF*(1-k_EF),  s_ENB_p2*r_ENB*b_ENB*(1-k_ENB),  s_PF_p2*r_PF*b_PF*(1-k_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p2*r_IS*(1-b_IS),      s_IF_p2*r_IF*(1-b_IF),       s_ES_p2*r_ES*(1-b_ES),      s_EF_p2*r_EF*(1-b_EF),       s_ENB_p2*r_ENB*(1-b_ENB),        s_PF_p2*r_PF*(1-b_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p2*(1-r_IS),           s_IF_p2*(1-r_IF),            s_ES_p2*(1-r_ES),           s_EF_p2*(1-r_EF),            s_ENB_p2*(1-r_ENB),              s_PF_p2*(1-r_PF)
 ), nrow = 11, byrow = TRUE)
 
 m_phase3 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p3,                  0,                           0.5*s_Juv_p3,                  0,                           0,                               0,
-  s_Juv_p3, 0,        0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        s_Juv_p3, 0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        s_Imm_p3, 0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        s_Imm_p3, s_Imm_p3*r_Imm*(1-b_Imm)+s_Imm_p3*(1-r_Imm),    0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p3*r_Imm*b_Imm*k_Imm,                       0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p3*r_Imm*b_Imm*(1-k_Imm),                   0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*b_IS*k_IS,        s_IF_p3*r_IF*b_IF*k_IF,      s_ES_p3*r_ES*b_ES*k_ES,        s_EF_p3*r_EF*b_EF*k_EF,      s_ENB_p3*r_ENB*b_ENB*k_ENB,      s_PF_p3*r_PF*b_PF*k_PF,
-  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*b_IS*(1-k_IS),    s_IF_p3*r_IF*b_IF*(1-k_IF),  s_ES_p3*r_ES*b_ES*(1-k_ES),    s_EF_p3*r_EF*b_EF*(1-k_EF),  s_ENB_p3*r_ENB*b_ENB*(1-k_ENB),  s_PF_p3*r_PF*b_PF*(1-k_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*(1-b_IS),         s_IF_p3*r_IF*(1-b_IF),       s_ES_p3*r_ES*(1-b_ES),         s_EF_p3*r_EF*(1-b_EF),       s_ENB_p3*r_ENB*(1-b_ENB),        s_PF_p3*r_PF*(1-b_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p3*(1-r_IS),              s_IF_p3*(1-r_IF),            s_ES_p3*(1-r_ES),              s_EF_p3*(1-r_EF),            s_ENB_p3*(1-r_ENB),              s_PF_p3*(1-r_PF)
+  0,        0,        0,        0,        0,                                                0.5*s_Juv_p3,               0,                           0.5*s_Juv_p3,               0,                           0,                               0,
+  s_Juv_p3, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        s_Juv_p3, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        s_Imm_p3, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        s_Imm_p3, s_Imm_p3*r_Imm*(1-b_Imm)+s_Imm_p3*(1-r_Imm),    0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p3*r_Imm*b_Imm*k_Imm,                       0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p3*r_Imm*b_Imm*(1-k_Imm),                   0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*b_IS*k_IS,     s_IF_p3*r_IF*b_IF*k_IF,      s_ES_p3*r_ES*b_ES*k_ES,     s_EF_p3*r_EF*b_EF*k_EF,      s_ENB_p3*r_ENB*b_ENB*k_ENB,      s_PF_p3*r_PF*b_PF*k_PF,
+  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*b_IS*(1-k_IS), s_IF_p3*r_IF*b_IF*(1-k_IF),  s_ES_p3*r_ES*b_ES*(1-k_ES), s_EF_p3*r_EF*b_EF*(1-k_EF),  s_ENB_p3*r_ENB*b_ENB*(1-k_ENB),  s_PF_p3*r_PF*b_PF*(1-k_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p3*r_IS*(1-b_IS),      s_IF_p3*r_IF*(1-b_IF),       s_ES_p3*r_ES*(1-b_ES),      s_EF_p3*r_EF*(1-b_EF),       s_ENB_p3*r_ENB*(1-b_ENB),        s_PF_p3*r_PF*(1-b_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p3*(1-r_IS),           s_IF_p3*(1-r_IF),            s_ES_p3*(1-r_ES),           s_EF_p3*(1-r_EF),            s_ENB_p3*(1-r_ENB),              s_PF_p3*(1-r_PF)
 ), nrow = 11, byrow = TRUE)
 
 m_phase4 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p4,                  0,                           0.5*s_Juv_p4,                  0,                           0,                               0,
-  s_Juv_p4, 0,        0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        s_Juv_p4, 0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        s_Imm_p4, 0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        s_Imm_p4, s_Imm_p4*r_Imm*(1-b_Imm)+s_Imm_p4*(1-r_Imm),    0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p4*r_Imm*b_Imm*k_Imm,                       0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p4*r_Imm*b_Imm*(1-k_Imm),                   0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*b_IS*k_IS,        s_IF_p4*r_IF*b_IF*k_IF,      s_ES_p4*r_ES*b_ES*k_ES,        s_EF_p4*r_EF*b_EF*k_EF,      s_ENB_p4*r_ENB*b_ENB*k_ENB,      s_PF_p4*r_PF*b_PF*k_PF,
-  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*b_IS*(1-k_IS),    s_IF_p4*r_IF*b_IF*(1-k_IF),  s_ES_p4*r_ES*b_ES*(1-k_ES),    s_EF_p4*r_EF*b_EF*(1-k_EF),  s_ENB_p4*r_ENB*b_ENB*(1-k_ENB),  s_PF_p4*r_PF*b_PF*(1-k_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*(1-b_IS),         s_IF_p4*r_IF*(1-b_IF),       s_ES_p4*r_ES*(1-b_ES),         s_EF_p4*r_EF*(1-b_EF),       s_ENB_p4*r_ENB*(1-b_ENB),        s_PF_p4*r_PF*(1-b_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p4*(1-r_IS),              s_IF_p4*(1-r_IF),            s_ES_p4*(1-r_ES),              s_EF_p4*(1-r_EF),            s_ENB_p4*(1-r_ENB),              s_PF_p4*(1-r_PF)
+  0,        0,        0,        0,        0,                                                0.5*s_Juv_p4,               0,                           0.5*s_Juv_p4,               0,                           0,                               0,
+  s_Juv_p4, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        s_Juv_p4, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        s_Imm_p4, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        s_Imm_p4, s_Imm_p4*r_Imm*(1-b_Imm)+s_Imm_p4*(1-r_Imm),    0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p4*r_Imm*b_Imm*k_Imm,                       0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p4*r_Imm*b_Imm*(1-k_Imm),                   0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*b_IS*k_IS,     s_IF_p4*r_IF*b_IF*k_IF,      s_ES_p4*r_ES*b_ES*k_ES,     s_EF_p4*r_EF*b_EF*k_EF,      s_ENB_p4*r_ENB*b_ENB*k_ENB,      s_PF_p4*r_PF*b_PF*k_PF,
+  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*b_IS*(1-k_IS), s_IF_p4*r_IF*b_IF*(1-k_IF),  s_ES_p4*r_ES*b_ES*(1-k_ES), s_EF_p4*r_EF*b_EF*(1-k_EF),  s_ENB_p4*r_ENB*b_ENB*(1-k_ENB),  s_PF_p4*r_PF*b_PF*(1-k_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p4*r_IS*(1-b_IS),      s_IF_p4*r_IF*(1-b_IF),       s_ES_p4*r_ES*(1-b_ES),      s_EF_p4*r_EF*(1-b_EF),       s_ENB_p4*r_ENB*(1-b_ENB),        s_PF_p4*r_PF*(1-b_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p4*(1-r_IS),           s_IF_p4*(1-r_IF),            s_ES_p4*(1-r_ES),           s_EF_p4*(1-r_EF),            s_ENB_p4*(1-r_ENB),              s_PF_p4*(1-r_PF)
 ), nrow = 11, byrow = TRUE)
 
-# Phase 5 = full 3/3 (s_*_p5 == ns_*); should be identical to m_3of3
+# m_phase5: 100% improvement — identical to m_3of3
 m_phase5 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p5,                  0,                           0.5*s_Juv_p5,                  0,                           0,                               0,
-  s_Juv_p5, 0,        0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        s_Juv_p5, 0,        0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        s_Imm_p5, 0,        0,                                                0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        s_Imm_p5, s_Imm_p5*r_Imm*(1-b_Imm)+s_Imm_p5*(1-r_Imm),    0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p5*r_Imm*b_Imm*k_Imm,                       0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        s_Imm_p5*r_Imm*b_Imm*(1-k_Imm),                   0,                             0,                           0,                             0,                           0,                               0,
-  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*b_IS*k_IS,        s_IF_p5*r_IF*b_IF*k_IF,      s_ES_p5*r_ES*b_ES*k_ES,        s_EF_p5*r_EF*b_EF*k_EF,      s_ENB_p5*r_ENB*b_ENB*k_ENB,      s_PF_p5*r_PF*b_PF*k_PF,
-  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*b_IS*(1-k_IS),    s_IF_p5*r_IF*b_IF*(1-k_IF),  s_ES_p5*r_ES*b_ES*(1-k_ES),    s_EF_p5*r_EF*b_EF*(1-k_EF),  s_ENB_p5*r_ENB*b_ENB*(1-k_ENB),  s_PF_p5*r_PF*b_PF*(1-k_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*(1-b_IS),         s_IF_p5*r_IF*(1-b_IF),       s_ES_p5*r_ES*(1-b_ES),         s_EF_p5*r_EF*(1-b_EF),       s_ENB_p5*r_ENB*(1-b_ENB),        s_PF_p5*r_PF*(1-b_PF),
-  0,        0,        0,        0,        0,                                                s_IS_p5*(1-r_IS),              s_IF_p5*(1-r_IF),            s_ES_p5*(1-r_ES),              s_EF_p5*(1-r_EF),            s_ENB_p5*(1-r_ENB),              s_PF_p5*(1-r_PF)
+  0,        0,        0,        0,        0,                                                0.5*s_Juv_p5,               0,                           0.5*s_Juv_p5,               0,                           0,                               0,
+  s_Juv_p5, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        s_Juv_p5, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        s_Imm_p5, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        s_Imm_p5, s_Imm_p5*r_Imm*(1-b_Imm)+s_Imm_p5*(1-r_Imm),    0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p5*r_Imm*b_Imm*k_Imm,                       0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        s_Imm_p5*r_Imm*b_Imm*(1-k_Imm),                   0,                          0,                           0,                          0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*b_IS*k_IS,     s_IF_p5*r_IF*b_IF*k_IF,      s_ES_p5*r_ES*b_ES*k_ES,     s_EF_p5*r_EF*b_EF*k_EF,      s_ENB_p5*r_ENB*b_ENB*k_ENB,      s_PF_p5*r_PF*b_PF*k_PF,
+  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*b_IS*(1-k_IS), s_IF_p5*r_IF*b_IF*(1-k_IF),  s_ES_p5*r_ES*b_ES*(1-k_ES), s_EF_p5*r_EF*b_EF*(1-k_EF),  s_ENB_p5*r_ENB*b_ENB*(1-k_ENB),  s_PF_p5*r_PF*b_PF*(1-k_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p5*r_IS*(1-b_IS),      s_IF_p5*r_IF*(1-b_IF),       s_ES_p5*r_ES*(1-b_ES),      s_EF_p5*r_EF*(1-b_EF),       s_ENB_p5*r_ENB*(1-b_ENB),        s_PF_p5*r_PF*(1-b_PF),
+  0,        0,        0,        0,        0,                                                s_IS_p5*(1-r_IS),           s_IF_p5*(1-r_IF),            s_ES_p5*(1-r_ES),           s_EF_p5*(1-r_EF),            s_ENB_p5*(1-r_ENB),              s_PF_p5*(1-r_PF)
 ), nrow = 11, byrow = TRUE)
-```
 
-**project with phase-in matrices**
-```{r part3-project}
-mat_phasein <- matrix(0, nrow = years + 1, ncol = 11)
-colnames(mat_phasein) <- stage_names
-mat_phasein[1, ] <- n0_vec
-
-# Years 1-5: use phase matrices; year 6 onward: use m_3of3 (full mitigation)
 phase_list <- list(m_phase1, m_phase2, m_phase3, m_phase4, m_phase5)
-
-for (k in 1:years) {
-  A <- if (k <= 5) phase_list[[k]] else m_3of3
-  mat_phasein[k + 1, ] <- A %*% mat_phasein[k, ]
-}
-
-proj_part3_total <- as.data.frame(mat_phasein) %>%
-  mutate(year     = 0:years,
-         N        = rowSums(across(all_of(stage_names))),
-         scenario = "5-year phase-in") %>%
-  select(year, N, scenario)
-```
-
-**plot Part 3 — phase-in vs immediate vs no mitigation**
-```{r plot-part3, fig.width = 9, fig.height = 5}
-proj_compare <- bind_rows(proj_part1, proj_part3_total) %>%
-  mutate(scenario = factor(scenario,
-                            levels = c("No mitigation (baseline)",
-                                       "5-year phase-in",
-                                       "Immediate 3/3 (100% coverage)")))
-
-p_part3 <- ggplot(proj_compare, aes(x = year, y = N,
-                                     color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.9) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "5-year phase-in"               = "#1a9641",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "5-year phase-in"               = "solid",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
-       y = "Population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("Population projection — immediate vs 5-year phase-in — ",
-                      target_period, " baseline"),
-       subtitle = paste0("N\u2080 = ", scales::comma(round(N0)),
-                         ";  green = 5-yr phase-in;  blue = immediate 3/3;  red = no mitigation")) +
-  themeo +
-  theme(legend.position = "bottom")
-p_part3
 ```
 
 ---
 
 *PART 4 — 10-YEAR PHASE-IN*
 
+Each step adds 1/10 of total survival improvement. k=1-10 use phase matrices; k>10 uses m_3of3.
+
 **10-year phase-in survival rates**
-```{r part4-10yr-survival-rates}
-# Each step adds 1/10 of total improvement
+```{r part4-survival-rates}
 s_Juv_10y1  <- s_Juv + (1/10)  * (ns_Juv - s_Juv);  s_Imm_10y1  <- s_Imm + (1/10)  * (ns_Imm - s_Imm)
 s_EF_10y1   <- s_EF  + (1/10)  * (ns_EF  - s_EF);   s_ES_10y1   <- s_ES  + (1/10)  * (ns_ES  - s_ES)
 s_ENB_10y1  <- s_ENB + (1/10)  * (ns_ENB - s_ENB);  s_IF_10y1   <- s_IF  + (1/10)  * (ns_IF  - s_IF)
@@ -906,30 +682,15 @@ s_EF_10y9   <- s_EF  + (9/10)  * (ns_EF  - s_EF);   s_ES_10y9   <- s_ES  + (9/10
 s_ENB_10y9  <- s_ENB + (9/10)  * (ns_ENB - s_ENB);  s_IF_10y9   <- s_IF  + (9/10)  * (ns_IF  - s_IF)
 s_IS_10y9   <- s_IS  + (9/10)  * (ns_IS  - s_IS);   s_PF_10y9   <- s_PF  + (9/10)  * (ns_PF  - s_PF)
 
-# Step 10: 100% — should equal ns_* (same as m_3of3)
+# Step 10: 100% — equals ns_* (same as m_3of3)
 s_Juv_10y10 <- s_Juv + (10/10) * (ns_Juv - s_Juv);  s_Imm_10y10 <- s_Imm + (10/10) * (ns_Imm - s_Imm)
 s_EF_10y10  <- s_EF  + (10/10) * (ns_EF  - s_EF);   s_ES_10y10  <- s_ES  + (10/10) * (ns_ES  - s_ES)
 s_ENB_10y10 <- s_ENB + (10/10) * (ns_ENB - s_ENB);  s_IF_10y10  <- s_IF  + (10/10) * (ns_IF  - s_IF)
 s_IS_10y10  <- s_IS  + (10/10) * (ns_IS  - s_IS);   s_PF_10y10  <- s_PF  + (10/10) * (ns_PF  - s_PF)
-
-tibble(
-  stage     = c("Juv","Imm","EF","ES","ENB","IF","IS","PF"),
-  baseline  = c(s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
-  y1=c(s_Juv_10y1,s_Imm_10y1,s_EF_10y1,s_ES_10y1,s_ENB_10y1,s_IF_10y1,s_IS_10y1,s_PF_10y1),
-  y2=c(s_Juv_10y2,s_Imm_10y2,s_EF_10y2,s_ES_10y2,s_ENB_10y2,s_IF_10y2,s_IS_10y2,s_PF_10y2),
-  y3=c(s_Juv_10y3,s_Imm_10y3,s_EF_10y3,s_ES_10y3,s_ENB_10y3,s_IF_10y3,s_IS_10y3,s_PF_10y3),
-  y4=c(s_Juv_10y4,s_Imm_10y4,s_EF_10y4,s_ES_10y4,s_ENB_10y4,s_IF_10y4,s_IS_10y4,s_PF_10y4),
-  y5=c(s_Juv_10y5,s_Imm_10y5,s_EF_10y5,s_ES_10y5,s_ENB_10y5,s_IF_10y5,s_IS_10y5,s_PF_10y5),
-  y6=c(s_Juv_10y6,s_Imm_10y6,s_EF_10y6,s_ES_10y6,s_ENB_10y6,s_IF_10y6,s_IS_10y6,s_PF_10y6),
-  y7=c(s_Juv_10y7,s_Imm_10y7,s_EF_10y7,s_ES_10y7,s_ENB_10y7,s_IF_10y7,s_IS_10y7,s_PF_10y7),
-  y8=c(s_Juv_10y8,s_Imm_10y8,s_EF_10y8,s_ES_10y8,s_ENB_10y8,s_IF_10y8,s_IS_10y8,s_PF_10y8),
-  y9=c(s_Juv_10y9,s_Imm_10y9,s_EF_10y9,s_ES_10y9,s_ENB_10y9,s_IF_10y9,s_IS_10y9,s_PF_10y9),
-  full_3of3=c(s_Juv_10y10,s_Imm_10y10,s_EF_10y10,s_ES_10y10,s_ENB_10y10,s_IF_10y10,s_IS_10y10,s_PF_10y10)
-) %>% print()
 ```
 
 **10-year phase-in matrices**
-```{r part4-10yr-matrices}
+```{r part4-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_10y1 <- matrix(data = c(
   0,0,0,0,0, 0.5*s_Juv_10y1,0,0.5*s_Juv_10y1,0,0,0,
@@ -1072,17 +833,18 @@ m_10y10 <- matrix(data = c(
   0,0,0,0,0, s_IS_10y10*(1-r_IS), s_IF_10y10*(1-r_IF), s_ES_10y10*(1-r_ES), s_EF_10y10*(1-r_EF), s_ENB_10y10*(1-r_ENB), s_PF_10y10*(1-r_PF)
 ), nrow=11, byrow=TRUE)
 
-phase_list_10y <- list(m_10y1,m_10y2,m_10y3,m_10y4,m_10y5,
-                       m_10y6,m_10y7,m_10y8,m_10y9,m_10y10)
+phase_list_10y <- list(m_10y1, m_10y2, m_10y3, m_10y4, m_10y5,
+                       m_10y6, m_10y7, m_10y8, m_10y9, m_10y10)
 ```
 
 ---
 
 *PART 5 — 20-YEAR PHASE-IN*
 
+Each step adds 1/20 of total survival improvement. k=1-20 use phase matrices; k>20 uses m_3of3.
+
 **20-year phase-in survival rates**
-```{r part5-20yr-survival-rates}
-# Each step adds 1/20 of total improvement
+```{r part5-survival-rates}
 s_Juv_20y1  <- s_Juv + (1/20)  * (ns_Juv - s_Juv);  s_Imm_20y1  <- s_Imm + (1/20)  * (ns_Imm - s_Imm)
 s_EF_20y1   <- s_EF  + (1/20)  * (ns_EF  - s_EF);   s_ES_20y1   <- s_ES  + (1/20)  * (ns_ES  - s_ES)
 s_ENB_20y1  <- s_ENB + (1/20)  * (ns_ENB - s_ENB);  s_IF_20y1   <- s_IF  + (1/20)  * (ns_IF  - s_IF)
@@ -1178,26 +940,15 @@ s_EF_20y19  <- s_EF  + (19/20) * (ns_EF  - s_EF);   s_ES_20y19  <- s_ES  + (19/2
 s_ENB_20y19 <- s_ENB + (19/20) * (ns_ENB - s_ENB);  s_IF_20y19  <- s_IF  + (19/20) * (ns_IF  - s_IF)
 s_IS_20y19  <- s_IS  + (19/20) * (ns_IS  - s_IS);   s_PF_20y19  <- s_PF  + (19/20) * (ns_PF  - s_PF)
 
-# Step 20: 100% — should equal ns_* (same as m_3of3)
+# Step 20: 100% — equals ns_* (same as m_3of3)
 s_Juv_20y20 <- s_Juv + (20/20) * (ns_Juv - s_Juv);  s_Imm_20y20 <- s_Imm + (20/20) * (ns_Imm - s_Imm)
 s_EF_20y20  <- s_EF  + (20/20) * (ns_EF  - s_EF);   s_ES_20y20  <- s_ES  + (20/20) * (ns_ES  - s_ES)
 s_ENB_20y20 <- s_ENB + (20/20) * (ns_ENB - s_ENB);  s_IF_20y20  <- s_IF  + (20/20) * (ns_IF  - s_IF)
 s_IS_20y20  <- s_IS  + (20/20) * (ns_IS  - s_IS);   s_PF_20y20  <- s_PF  + (20/20) * (ns_PF  - s_PF)
-
-tibble(
-  stage     = c("Juv","Imm","EF","ES","ENB","IF","IS","PF"),
-  baseline  = c(s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
-  y1 =c(s_Juv_20y1, s_Imm_20y1, s_EF_20y1, s_ES_20y1, s_ENB_20y1, s_IF_20y1, s_IS_20y1, s_PF_20y1),
-  y5 =c(s_Juv_20y5, s_Imm_20y5, s_EF_20y5, s_ES_20y5, s_ENB_20y5, s_IF_20y5, s_IS_20y5, s_PF_20y5),
-  y10=c(s_Juv_20y10,s_Imm_20y10,s_EF_20y10,s_ES_20y10,s_ENB_20y10,s_IF_20y10,s_IS_20y10,s_PF_20y10),
-  y15=c(s_Juv_20y15,s_Imm_20y15,s_EF_20y15,s_ES_20y15,s_ENB_20y15,s_IF_20y15,s_IS_20y15,s_PF_20y15),
-  y19=c(s_Juv_20y19,s_Imm_20y19,s_EF_20y19,s_ES_20y19,s_ENB_20y19,s_IF_20y19,s_IS_20y19,s_PF_20y19),
-  full_3of3=c(s_Juv_20y20,s_Imm_20y20,s_EF_20y20,s_ES_20y20,s_ENB_20y20,s_IF_20y20,s_IS_20y20,s_PF_20y20)
-) %>% print()
 ```
 
 **20-year phase-in matrices**
-```{r part5-20yr-matrices}
+```{r part5-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_20y1 <- matrix(data = c(
   0,0,0,0,0, 0.5*s_Juv_20y1,0,0.5*s_Juv_20y1,0,0,0,
@@ -1480,26 +1231,45 @@ m_20y20 <- matrix(data = c(
   0,0,0,0,0, s_IS_20y20*(1-r_IS), s_IF_20y20*(1-r_IF), s_ES_20y20*(1-r_ES), s_EF_20y20*(1-r_EF), s_ENB_20y20*(1-r_ENB), s_PF_20y20*(1-r_PF)
 ), nrow=11, byrow=TRUE)
 
-phase_list_20y <- list(m_20y1,m_20y2,m_20y3,m_20y4,m_20y5,
-                       m_20y6,m_20y7,m_20y8,m_20y9,m_20y10,
-                       m_20y11,m_20y12,m_20y13,m_20y14,m_20y15,
-                       m_20y16,m_20y17,m_20y18,m_20y19,m_20y20)
+phase_list_20y <- list(m_20y1, m_20y2, m_20y3, m_20y4, m_20y5,
+                       m_20y6, m_20y7, m_20y8, m_20y9, m_20y10,
+                       m_20y11, m_20y12, m_20y13, m_20y14, m_20y15,
+                       m_20y16, m_20y17, m_20y18, m_20y19, m_20y20)
+```
+
+**project with 5-year phase-in**
+```{r part3-project}
+mat_phasein <- matrix(0, nrow = years + 1, ncol = 11)
+colnames(mat_phasein) <- stage_names
+mat_phasein[1, ] <- n0_vec
+
+for (k in 1:years) {
+  A <- if (k <= 5) phase_list[[k]] else m_3of3
+  mat_phasein[k + 1, ] <- A %*% mat_phasein[k, ]
+}
+
+proj_part3_total <- as.data.frame(mat_phasein) %>%
+  mutate(year     = 0:years,
+         N        = rowSums(across(all_of(stage_names))),
+         scenario = "5-year phase-in") %>%
+  select(year, N, scenario)
 ```
 
 ---
 
 *PART 6 — ALL PROJECTIONS AND COMPARISON PLOTS*
 
-Matrix sequence for each scenario:
-- 10-yr phase-in:            k=1-10: phase_list_10y[[k]];  k>10: m_3of3
-- 20-yr phase-in:            k=1-20: phase_list_20y[[k]];  k>20: m_3of3
-- 5-yr delay + immediate:    k=1-5:  m_base;               k>5:  m_3of3
-- 10-yr delay + immediate:   k=1-10: m_base;               k>10: m_3of3
-- 20-yr delay + immediate:   k=1-20: m_base;               k>20: m_3of3
-- 5-yr delay + 5-yr phase:   k=1-5:  m_base; k=6-10: phase_list[[k-5]];  k>10: m_3of3
-- 10-yr delay + 5-yr phase:  k=1-10: m_base; k=11-15: phase_list[[k-10]]; k>15: m_3of3
-- 20-yr delay + 5-yr phase:  k=1-20: m_base; k=21-25: phase_list[[k-20]]; k>25: m_3of3
+Matrix selection logic per scenario:
+- 10-yr phase-in:           k=1-10: phase_list_10y[[k]];  k>10: m_3of3
+- 20-yr phase-in:           k=1-20: phase_list_20y[[k]];  k>20: m_3of3
+- 5-yr delay + immediate:   k=1-5:  m_base;               k>5:  m_3of3
+- 10-yr delay + immediate:  k=1-10: m_base;               k>10: m_3of3
+- 20-yr delay + immediate:  k=1-20: m_base;               k>20: m_3of3
+- 5-yr delay + 5-yr phase:  k=1-5:  m_base; k=6-10:  phase_list[[k-5]];  k>10: m_3of3
+- 10-yr delay + 5-yr phase: k=1-10: m_base; k=11-15: phase_list[[k-10]]; k>15: m_3of3
+- 20-yr delay + 5-yr phase: k=1-20: m_base; k=21-25: phase_list[[k-20]]; k>25: m_3of3
 
+**run all projections**
 ```{r part6-all-projections}
 # Helper: run matrix projection and return total-N data frame
 run_proj <- function(phase_fn, scenario_label) {
@@ -1510,38 +1280,32 @@ run_proj <- function(phase_fn, scenario_label) {
     mat[k + 1, ] <- phase_fn(k) %*% mat[k, ]
   }
   as.data.frame(mat) %>%
-    mutate(year = 0:years,
-           N    = rowSums(across(all_of(stage_names))),
+    mutate(year     = 0:years,
+           N        = rowSums(across(all_of(stage_names))),
            scenario = scenario_label) %>%
     select(year, N, scenario)
 }
 
-# 10-year phase-in
 proj_10y <- run_proj(
   function(k) if (k <= 10) phase_list_10y[[k]] else m_3of3,
   "10-year phase-in")
 
-# 20-year phase-in
 proj_20y <- run_proj(
   function(k) if (k <= 20) phase_list_20y[[k]] else m_3of3,
   "20-year phase-in")
 
-# 5-year delay then immediate 3/3
 proj_d5_imm <- run_proj(
   function(k) if (k <= 5)  m_base else m_3of3,
   "5-yr delay, then immediate 3/3")
 
-# 10-year delay then immediate 3/3
 proj_d10_imm <- run_proj(
   function(k) if (k <= 10) m_base else m_3of3,
   "10-yr delay, then immediate 3/3")
 
-# 20-year delay then immediate 3/3
 proj_d20_imm <- run_proj(
   function(k) if (k <= 20) m_base else m_3of3,
   "20-yr delay, then immediate 3/3")
 
-# 5-year delay then 5-year phase-in
 proj_d5_p5 <- run_proj(
   function(k) {
     if      (k <= 5)  m_base
@@ -1550,7 +1314,6 @@ proj_d5_p5 <- run_proj(
   },
   "5-yr delay, then 5-yr phase-in")
 
-# 10-year delay then 5-year phase-in
 proj_d10_p5 <- run_proj(
   function(k) {
     if      (k <= 10) m_base
@@ -1559,7 +1322,6 @@ proj_d10_p5 <- run_proj(
   },
   "10-yr delay, then 5-yr phase-in")
 
-# 20-year delay then 5-year phase-in
 proj_d20_p5 <- run_proj(
   function(k) {
     if      (k <= 20) m_base
@@ -1568,10 +1330,9 @@ proj_d20_p5 <- run_proj(
   },
   "20-yr delay, then 5-yr phase-in")
 
-# Combine all scenarios (including Part 1 scalar and Part 3 phase-in already computed)
 all_scenarios <- bind_rows(
-  proj_part1,           # No mitigation + Immediate 3/3
-  proj_part3_total,     # 5-year phase-in
+  proj_part1,
+  proj_part3_total,
   proj_10y,
   proj_20y,
   proj_d5_imm,
@@ -1596,9 +1357,9 @@ all_scenarios <- bind_rows(
   )))
 ```
 
-**plot Part 6a — phase-in speed comparison**
-```{r plot-part6a, fig.width = 9, fig.height = 5}
-p_phasein_compare <- all_scenarios %>%
+**plot 6a — phase-in speed comparison**
+```{r plot-6a, fig.width = 9, fig.height = 5}
+p_6a <- all_scenarios %>%
   filter(scenario %in% c("No mitigation (baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-year phase-in",
@@ -1607,6 +1368,12 @@ p_phasein_compare <- all_scenarios %>%
   ggplot(aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
     "No mitigation (baseline)"      = "#d73027",
     "Immediate 3/3 (100% coverage)" = "#253494",
@@ -1619,19 +1386,23 @@ p_phasein_compare <- all_scenarios %>%
     "5-year phase-in"               = "solid",
     "10-year phase-in"              = "solid",
     "20-year phase-in"              = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
   labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Phase-in speed comparison — ", target_period, " baseline"),
-       subtitle = "Darker green = faster phase-in") +
+       subtitle = "Darker green = faster phase-in; orange dots = observed breeding pairs") +
   themeo + theme(legend.position = "bottom")
-p_phasein_compare
+p_6a
 ```
 
-**plot Part 6b — delay then immediate comparison**
-```{r plot-part6b, fig.width = 9, fig.height = 5}
-p_delay_imm <- all_scenarios %>%
+**plot 6b — cost of delaying then implementing immediately**
+```{r plot-6b, fig.width = 9, fig.height = 5}
+p_6b <- all_scenarios %>%
   filter(scenario %in% c("No mitigation (baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then immediate 3/3",
@@ -1640,31 +1411,41 @@ p_delay_imm <- all_scenarios %>%
   ggplot(aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"       = "#d73027",
-    "Immediate 3/3 (100% coverage)"  = "#253494",
-    "5-yr delay, then immediate 3/3" = "#2166ac",
-    "10-yr delay, then immediate 3/3"= "#74add1",
-    "20-yr delay, then immediate 3/3"= "#abd9e9")) +
+    "No mitigation (baseline)"        = "#d73027",
+    "Immediate 3/3 (100% coverage)"   = "#253494",
+    "5-yr delay, then immediate 3/3"  = "#2166ac",
+    "10-yr delay, then immediate 3/3" = "#74add1",
+    "20-yr delay, then immediate 3/3" = "#abd9e9")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"       = "dashed",
-    "Immediate 3/3 (100% coverage)"  = "solid",
-    "5-yr delay, then immediate 3/3" = "solid",
-    "10-yr delay, then immediate 3/3"= "solid",
-    "20-yr delay, then immediate 3/3"= "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+    "No mitigation (baseline)"        = "dashed",
+    "Immediate 3/3 (100% coverage)"   = "solid",
+    "5-yr delay, then immediate 3/3"  = "solid",
+    "10-yr delay, then immediate 3/3" = "solid",
+    "20-yr delay, then immediate 3/3" = "solid")) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
   labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying immediate 3/3 — ", target_period, " baseline"),
-       subtitle = "Darker blue = shorter delay before full implementation") +
+       subtitle = "Darker blue = shorter delay; orange dots = observed breeding pairs") +
   themeo + theme(legend.position = "bottom")
-p_delay_imm
+p_6b
 ```
 
-**plot Part 6c — delay then 5-year phase-in comparison**
-```{r plot-part6c, fig.width = 9, fig.height = 5}
-p_delay_phase <- all_scenarios %>%
+**plot 6c — cost of delaying then using 5-year phase-in**
+```{r plot-6c, fig.width = 9, fig.height = 5}
+p_6c <- all_scenarios %>%
   filter(scenario %in% c("No mitigation (baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then 5-yr phase-in",
@@ -1673,6 +1454,12 @@ p_delay_phase <- all_scenarios %>%
   ggplot(aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
     "No mitigation (baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
@@ -1685,72 +1472,30 @@ p_delay_phase <- all_scenarios %>%
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
     "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
   labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying 5-yr phase-in — ", target_period, " baseline"),
-       subtitle = "Darker purple = shorter delay before phase-in begins") +
+       subtitle = "Darker purple = shorter delay; orange dots = observed breeding pairs") +
   themeo + theme(legend.position = "bottom")
-p_delay_phase
+p_6c
 ```
 
-**plot Part 6d — all scenarios**
-```{r plot-part6d, fig.width = 11, fig.height = 6}
-p_all_scenarios <- ggplot(all_scenarios,
-                           aes(x = year, y = N, color = scenario, linetype = scenario)) +
+**plot 6d — all scenarios with observed breeding pairs**
+```{r plot-6d, fig.width = 11, fig.height = 6}
+p_6d <- ggplot(all_scenarios, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.7) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
-    "Immediate 3/3 (100% coverage)"   = "#253494",
-    "5-year phase-in"                 = "#1a9641",
-    "10-year phase-in"                = "#78c679",
-    "20-year phase-in"                = "#addd8e",
-    "5-yr delay, then immediate 3/3"  = "#2166ac",
-    "10-yr delay, then immediate 3/3" = "#74add1",
-    "20-yr delay, then immediate 3/3" = "#abd9e9",
-    "5-yr delay, then 5-yr phase-in"  = "#762a83",
-    "10-yr delay, then 5-yr phase-in" = "#af8dc3",
-    "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
-  scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
-    "Immediate 3/3 (100% coverage)"   = "solid",
-    "5-year phase-in"                 = "solid",
-    "10-year phase-in"                = "solid",
-    "20-year phase-in"                = "solid",
-    "5-yr delay, then immediate 3/3"  = "solid",
-    "10-yr delay, then immediate 3/3" = "solid",
-    "20-yr delay, then immediate 3/3" = "solid",
-    "5-yr delay, then 5-yr phase-in"  = "solid",
-    "10-yr delay, then 5-yr phase-in" = "solid",
-    "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10)) +
-  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("All mitigation scenarios — ", target_period, " baseline"),
-       subtitle = "Green = phase-in speed; blue = delay then immediate; purple = delay then phase-in") +
-  themeo +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 7))
-p_all_scenarios
-```
-
-**plot Part 6e — all scenarios with observed breeding pairs**
-```{r plot-part6e, fig.width = 11, fig.height = 6}
-p_all_scenarios_obs <- ggplot(all_scenarios,
-                               aes(x = year, y = N, color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.7) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  geom_point(data = bird_obs,
-             aes(x = year, y = N_scaled),
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
              inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
-  geom_line(data = bird_obs,
-            aes(x = year, y = N_scaled),
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
             inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
-  geom_text(data = bird_obs,
-            aes(x = year, y = N_scaled, label = season),
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
     "No mitigation (baseline)"        = "#d73027",
@@ -1784,474 +1529,14 @@ p_all_scenarios_obs <- ggplot(all_scenarios,
                                          labels = scales::comma)) +
   labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
-       title = paste0("All mitigation scenarios with observed breeding pairs — ",
-                      target_period, " baseline"),
-       subtitle = "Orange dots = observed Bird Island breeding pairs (Poncet et al.); secondary axis scaled to total N") +
+       title = paste0("All mitigation scenarios — ", target_period, " baseline"),
+       subtitle = "Green = phase-in speed; blue = delay then immediate; purple = delay then phase-in; orange dots = observed") +
   themeo +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 7))
-p_all_scenarios_obs
+  theme(legend.position = "right", legend.text = element_text(size = 7))
+p_6d
 ```
 
 ---
-
-*PART 7 — TRANSIENT DYNAMICS: SSD SHIFT AND REALIZED LAMBDA*
-
-As mitigation improves survival, the population SSD shifts toward a higher proportion of
-breeders. During the transition from m_base SSD to m_3of3 SSD, the realized growth rate
-each year (N(t+1)/N(t)) may temporarily exceed the asymptotic lambda_3of3 as the
-immature recruitment pulse moves into the breeding stages.
-
-**SSD comparison: baseline vs full mitigation**
-```{r part7-ssd-compare}
-# Compute SSD for full mitigation matrix
-SSD_3of3 <- as.numeric(eigen(m_3of3)$vectors[, 1] / sum(eigen(m_3of3)$vectors[, 1]))
-
-ssd_df <- tibble(
-  stage    = stage_names,
-  baseline = SSD,
-  full_3of3 = SSD_3of3
-) %>%
-  mutate(
-    group = case_when(
-      stage %in% c("J2", "J3")              ~ "Juveniles",
-      stage %in% c("Imm4", "Imm5", "PB")   ~ "Immatures / pre-breeders",
-      stage %in% c("IS", "IF", "ES", "EF") ~ "Breeders",
-      stage %in% c("ENB", "Sabb")          ~ "Non-breeders"
-    ),
-    stage = factor(stage, levels = stage_names)
-  ) %>%
-  pivot_longer(cols = c(baseline, full_3of3),
-               names_to  = "matrix",
-               values_to = "proportion") %>%
-  mutate(matrix = recode(matrix,
-    baseline  = "No mitigation (baseline)",
-    full_3of3 = "Full 3/3 mitigation"))
-
-# Print proportions by broad group to see the shift
-ssd_df %>%
-  group_by(matrix, group) %>%
-  summarise(group_pct = sum(proportion) * 100, .groups = "drop") %>%
-  pivot_wider(names_from = matrix, values_from = group_pct) %>%
-  print()
-```
-
-**plot Part 7a — SSD stage proportions: baseline vs full mitigation**
-```{r plot-part7a-ssd, fig.width = 8, fig.height = 5}
-p_ssd_compare <- ggplot(ssd_df, aes(x = stage, y = proportion * 100,
-                                     fill = matrix)) +
-  geom_col(position = "dodge", width = 0.7) +
-  scale_fill_manual(values = c("No mitigation (baseline)" = "#d73027",
-                                "Full 3/3 mitigation"      = "#253494"),
-                    name = NULL) +
-  scale_y_continuous(labels = function(x) paste0(round(x, 1), "%")) +
-  labs(x = "Stage", y = "% of total population (SSD)",
-       title = "Stable stage distribution: baseline vs full 3/3 mitigation",
-       subtitle = "Shift in SSD determines direction and magnitude of transient dynamics") +
-  themeo +
-  theme(legend.position = "bottom",
-        axis.text.x = element_text(angle = 30, hjust = 1))
-p_ssd_compare
-```
-
-**plot Part 7b — realized lambda over time by scenario**
-```{r plot-part7b-realized-lambda, fig.width = 11, fig.height = 5}
-# Realized lambda = N(t+1)/N(t) each year — departs from asymptotic lambda during
-# the transient period as population structure shifts toward the new SSD
-realized_lambda_df <- all_scenarios %>%
-  group_by(scenario) %>%
-  arrange(year) %>%
-  mutate(realized_lambda = N / lag(N)) %>%
-  filter(!is.na(realized_lambda))
-
-p_realized_lambda <- ggplot(realized_lambda_df,
-                             aes(x = year, y = realized_lambda,
-                                 color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.7) +
-  geom_hline(yintercept = lambda_base,  color = "#d73027", linetype = "dashed",
-             linewidth = 0.5, alpha = 0.6) +
-  geom_hline(yintercept = lambda_3of3, color = "#253494", linetype = "dashed",
-             linewidth = 0.5, alpha = 0.6) +
-  annotate("text", x = years * 0.98, y = lambda_base  + 0.0005,
-           label = paste0("\u03BB baseline = ", round(lambda_base, 4)),
-           color = "#d73027", size = 2.8, hjust = 1) +
-  annotate("text", x = years * 0.98, y = lambda_3of3 + 0.0005,
-           label = paste0("\u03BB 3/3 = ", round(lambda_3of3, 4)),
-           color = "#253494", size = 2.8, hjust = 1) +
-  scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
-    "Immediate 3/3 (100% coverage)"   = "#253494",
-    "5-year phase-in"                 = "#1a9641",
-    "10-year phase-in"                = "#78c679",
-    "20-year phase-in"                = "#addd8e",
-    "5-yr delay, then immediate 3/3"  = "#2166ac",
-    "10-yr delay, then immediate 3/3" = "#74add1",
-    "20-yr delay, then immediate 3/3" = "#abd9e9",
-    "5-yr delay, then 5-yr phase-in"  = "#762a83",
-    "10-yr delay, then 5-yr phase-in" = "#af8dc3",
-    "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
-  scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
-    "Immediate 3/3 (100% coverage)"   = "solid",
-    "5-year phase-in"                 = "solid",
-    "10-year phase-in"                = "solid",
-    "20-year phase-in"                = "solid",
-    "5-yr delay, then immediate 3/3"  = "solid",
-    "10-yr delay, then immediate 3/3" = "solid",
-    "20-yr delay, then immediate 3/3" = "solid",
-    "5-yr delay, then 5-yr phase-in"  = "solid",
-    "10-yr delay, then 5-yr phase-in" = "solid",
-    "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10)) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
-       y = "Realized \u03BB  (N(t+1) / N(t))",
-       color = NULL, linetype = NULL,
-       title = paste0("Realized growth rate over time — transient dynamics — ",
-                      target_period, " baseline"),
-       subtitle = paste0("Dashed horizontal lines = asymptotic \u03BB; ",
-                         "deviations reflect transient dynamics as population structure shifts toward new SSD")) +
-  themeo +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 7))
-p_realized_lambda
-```
-
-**plot Part 7c — all scenarios extended to 200 years**
-```{r plot-part7c-all-200yr, fig.width = 11, fig.height = 6}
-years_200 <- 200
-
-# Re-run all scenarios for 200-year horizon using same matrix-selection logic
-run_proj_200 <- function(phase_fn, scenario_label) {
-  mat <- matrix(0, nrow = years_200 + 1, ncol = 11)
-  colnames(mat) <- stage_names
-  mat[1, ] <- n0_vec
-  for (k in 1:years_200) {
-    mat[k + 1, ] <- phase_fn(k) %*% mat[k, ]
-  }
-  as.data.frame(mat) %>%
-    mutate(year = 0:years_200,
-           N    = rowSums(across(all_of(stage_names))),
-           scenario = scenario_label) %>%
-    select(year, N, scenario)
-}
-
-all_scenarios_200 <- bind_rows(
-  run_proj_200(function(k) m_base,  "No mitigation (baseline)"),
-  run_proj_200(function(k) m_3of3,  "Immediate 3/3 (100% coverage)"),
-  run_proj_200(function(k) if (k <= 5)  phase_list[[k]] else m_3of3,
-               "5-year phase-in"),
-  run_proj_200(function(k) if (k <= 10) phase_list_10y[[k]] else m_3of3,
-               "10-year phase-in"),
-  run_proj_200(function(k) if (k <= 20) phase_list_20y[[k]] else m_3of3,
-               "20-year phase-in"),
-  run_proj_200(function(k) if (k <= 5)  m_base else m_3of3,
-               "5-yr delay, then immediate 3/3"),
-  run_proj_200(function(k) if (k <= 10) m_base else m_3of3,
-               "10-yr delay, then immediate 3/3"),
-  run_proj_200(function(k) if (k <= 20) m_base else m_3of3,
-               "20-yr delay, then immediate 3/3"),
-  run_proj_200(function(k) {
-    if      (k <= 5)  m_base
-    else if (k <= 10) phase_list[[k - 5]]
-    else              m_3of3 },
-    "5-yr delay, then 5-yr phase-in"),
-  run_proj_200(function(k) {
-    if      (k <= 10) m_base
-    else if (k <= 15) phase_list[[k - 10]]
-    else              m_3of3 },
-    "10-yr delay, then 5-yr phase-in"),
-  run_proj_200(function(k) {
-    if      (k <= 20) m_base
-    else if (k <= 25) phase_list[[k - 20]]
-    else              m_3of3 },
-    "20-yr delay, then 5-yr phase-in")
-) %>%
-  mutate(scenario = factor(scenario, levels = levels(all_scenarios$scenario)))
-
-p_all_200yr <- ggplot(all_scenarios_200,
-                       aes(x = year, y = N, color = scenario, linetype = scenario)) +
-  geom_line(linewidth = 0.7) +
-  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  geom_point(data = bird_obs,
-             aes(x = year, y = N_scaled),
-             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
-  geom_line(data = bird_obs,
-            aes(x = year, y = N_scaled),
-            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
-  geom_text(data = bird_obs,
-            aes(x = year, y = N_scaled, label = season),
-            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
-    "Immediate 3/3 (100% coverage)"   = "#253494",
-    "5-year phase-in"                 = "#1a9641",
-    "10-year phase-in"                = "#78c679",
-    "20-year phase-in"                = "#addd8e",
-    "5-yr delay, then immediate 3/3"  = "#2166ac",
-    "10-yr delay, then immediate 3/3" = "#74add1",
-    "20-yr delay, then immediate 3/3" = "#abd9e9",
-    "5-yr delay, then 5-yr phase-in"  = "#762a83",
-    "10-yr delay, then 5-yr phase-in" = "#af8dc3",
-    "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
-  scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
-    "Immediate 3/3 (100% coverage)"   = "solid",
-    "5-year phase-in"                 = "solid",
-    "10-year phase-in"                = "solid",
-    "20-year phase-in"                = "solid",
-    "5-yr delay, then immediate 3/3"  = "solid",
-    "10-yr delay, then immediate 3/3" = "solid",
-    "20-yr delay, then immediate 3/3" = "solid",
-    "5-yr delay, then 5-yr phase-in"  = "solid",
-    "10-yr delay, then 5-yr phase-in" = "solid",
-    "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years_200, 20), limits = c(-10, years_200)) +
-  scale_y_continuous(labels = scales::comma,
-                     breaks = scales::pretty_breaks(n = 6),
-                     sec.axis = sec_axis(~ . / pairs_scale,
-                                         name = "Breeding pairs (Bird Island)",
-                                         labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline (200-year horizon)",
-       y = "Population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("All scenarios — 200-year horizon — ", target_period, " baseline"),
-       subtitle = "Orange dots = observed breeding pairs; secondary axis = breeding pairs equivalent") +
-  themeo +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 7))
-p_all_200yr
-```
-
----
-
-*PART 8 — HISTORICAL REGULATORY SCENARIO*
-
-Phased mitigation matching the approximate real regulatory timeline:
-1995–2009 = 1/3 measures (tori lines only); 2010–2019 = 1/3 assumed continuing;
-2020–2025 = 2/3 measures (tori lines + night setting); 2026+ = 3/3 full mitigation.
-Year 0 = 1990; k=1–4 = m_base; k=5–19 = m_1of3; k=20–29 = m_1of3 (gap assumption);
-k=30–35 = m_2of3; k=36+ = m_3of3.
-
-**Part 8a — survival rates for 1/3 and 2/3 mitigation scenarios**
-```{r part8a-historical-survival-rates}
-# 1/3 mitigation: tori lines only
-eff_1of3 <- eff_tori_lines  # 0.75
-
-# 2/3 mitigation: tori lines + night setting (multiplicative independence assumed)
-eff_2of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set)  # 0.90
-
-# --- 1/3 mitigation survival rates ---
-ns_Juv_1of3 <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_1of3) + nm_juv)
-ns_Imm_1of3 <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_1of3) + nm_imm)
-ns_EF_1of3  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_1of3) + nm_efb)
-ns_ES_1of3  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_1of3) + nm_esb)
-ns_ENB_1of3 <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_1of3) + nm_enb)
-ns_IF_1of3  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_1of3) + nm_ifb)
-ns_IS_1of3  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_1of3) + nm_isb)
-ns_PF_1of3  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_1of3) + nm_pf)
-
-# --- 2/3 mitigation survival rates ---
-ns_Juv_2of3 <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_2of3) + nm_juv)
-ns_Imm_2of3 <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_2of3) + nm_imm)
-ns_EF_2of3  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_2of3) + nm_efb)
-ns_ES_2of3  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_2of3) + nm_esb)
-ns_ENB_2of3 <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_2of3) + nm_enb)
-ns_IF_2of3  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_2of3) + nm_ifb)
-ns_IS_2of3  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_2of3) + nm_isb)
-ns_PF_2of3  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_2of3) + nm_pf)
-```
-
-**Part 8b — m_1of3 matrix (tori lines only, 1/3 efficacy)**
-```{r part8b-m1of3}
-m_1of3 <- matrix(data = c(
-  0,           0,            0,            0,            0,                                                    0.5*ns_Juv_1of3,               0,                             0.5*ns_Juv_1of3,               0,                             0,                               0,
-  ns_Juv_1of3, 0,            0,            0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           ns_Juv_1of3,  0,            0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            ns_Imm_1of3,  0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            ns_Imm_1of3,  ns_Imm_1of3*r_Imm*(1-b_Imm)+ns_Imm_1of3*(1-r_Imm),   0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            ns_Imm_1of3*r_Imm*b_Imm*k_Imm,                        0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            ns_Imm_1of3*r_Imm*b_Imm*(1-k_Imm),                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            0,                                                    ns_IS_1of3*r_IS*b_IS*k_IS,     ns_IF_1of3*r_IF*b_IF*k_IF,     ns_ES_1of3*r_ES*b_ES*k_ES,     ns_EF_1of3*r_EF*b_EF*k_EF,     ns_ENB_1of3*r_ENB*b_ENB*k_ENB,   ns_PF_1of3*r_PF*b_PF*k_PF,
-  0,           0,            0,            0,            0,                                                    ns_IS_1of3*r_IS*b_IS*(1-k_IS), ns_IF_1of3*r_IF*b_IF*(1-k_IF), ns_ES_1of3*r_ES*b_ES*(1-k_ES), ns_EF_1of3*r_EF*b_EF*(1-k_EF), ns_ENB_1of3*r_ENB*b_ENB*(1-k_ENB),ns_PF_1of3*r_PF*b_PF*(1-k_PF),
-  0,           0,            0,            0,            0,                                                    ns_IS_1of3*r_IS*(1-b_IS),      ns_IF_1of3*r_IF*(1-b_IF),      ns_ES_1of3*r_ES*(1-b_ES),      ns_EF_1of3*r_EF*(1-b_EF),      ns_ENB_1of3*r_ENB*(1-b_ENB),     ns_PF_1of3*r_PF*(1-b_PF),
-  0,           0,            0,            0,            0,                                                    ns_IS_1of3*(1-r_IS),           ns_IF_1of3*(1-r_IF),           ns_ES_1of3*(1-r_ES),           ns_EF_1of3*(1-r_EF),           ns_ENB_1of3*(1-r_ENB),           ns_PF_1of3*(1-r_PF)
-), nrow = 11, byrow = TRUE)
-
-lambda_1of3 <- as.numeric(eigen(m_1of3)$values[1])
-```
-
-**Part 8c — m_2of3 matrix (tori lines + night setting, 2/3 efficacy)**
-```{r part8c-m2of3}
-m_2of3 <- matrix(data = c(
-  0,           0,            0,            0,            0,                                                    0.5*ns_Juv_2of3,               0,                             0.5*ns_Juv_2of3,               0,                             0,                               0,
-  ns_Juv_2of3, 0,            0,            0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           ns_Juv_2of3,  0,            0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            ns_Imm_2of3,  0,            0,                                                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            ns_Imm_2of3,  ns_Imm_2of3*r_Imm*(1-b_Imm)+ns_Imm_2of3*(1-r_Imm),   0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            ns_Imm_2of3*r_Imm*b_Imm*k_Imm,                        0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            ns_Imm_2of3*r_Imm*b_Imm*(1-k_Imm),                    0,                             0,                             0,                             0,                             0,                               0,
-  0,           0,            0,            0,            0,                                                    ns_IS_2of3*r_IS*b_IS*k_IS,     ns_IF_2of3*r_IF*b_IF*k_IF,     ns_ES_2of3*r_ES*b_ES*k_ES,     ns_EF_2of3*r_EF*b_EF*k_EF,     ns_ENB_2of3*r_ENB*b_ENB*k_ENB,   ns_PF_2of3*r_PF*b_PF*k_PF,
-  0,           0,            0,            0,            0,                                                    ns_IS_2of3*r_IS*b_IS*(1-k_IS), ns_IF_2of3*r_IF*b_IF*(1-k_IF), ns_ES_2of3*r_ES*b_ES*(1-k_ES), ns_EF_2of3*r_EF*b_EF*(1-k_EF), ns_ENB_2of3*r_ENB*b_ENB*(1-k_ENB),ns_PF_2of3*r_PF*b_PF*(1-k_PF),
-  0,           0,            0,            0,            0,                                                    ns_IS_2of3*r_IS*(1-b_IS),      ns_IF_2of3*r_IF*(1-b_IF),      ns_ES_2of3*r_ES*(1-b_ES),      ns_EF_2of3*r_EF*(1-b_EF),      ns_ENB_2of3*r_ENB*(1-b_ENB),     ns_PF_2of3*r_PF*(1-b_PF),
-  0,           0,            0,            0,            0,                                                    ns_IS_2of3*(1-r_IS),           ns_IF_2of3*(1-r_IF),           ns_ES_2of3*(1-r_ES),           ns_EF_2of3*(1-r_EF),           ns_ENB_2of3*(1-r_ENB),           ns_PF_2of3*(1-r_PF)
-), nrow = 11, byrow = TRUE)
-
-lambda_2of3 <- as.numeric(eigen(m_2of3)$values[1])
-
-# Print lambdas for all four regulatory stages
-tibble(
-  scenario  = c("No mitigation (baseline)", "1/3 — tori lines only", "2/3 — tori + night setting", "3/3 — full mitigation"),
-  lambda    = c(lambda_base, lambda_1of3, lambda_2of3, lambda_3of3),
-  eff       = c(0, eff_1of3, eff_2of3, eff_3of3)
-)
-```
-
-**Part 8d — historical timeline projection**
-```{r part8d-historical-projection}
-# Timeline (year 0 = 1990):
-#   k =  1– 4 : m_base   (1990–1994, pre-regulation baseline)
-#   k =  5–19 : m_1of3   (1995–2009, tori lines introduced)
-#   k = 20–29 : m_1of3   (2010–2019, assumed 1/3 continues; gap in data)
-#   k = 30+   : m_2of3   (2020+, current regs — tori lines + night setting — assumed to continue)
-
-hist_fn <- function(k) {
-  if (k <= 4)        m_base
-  else if (k <= 29)  m_1of3
-  else               m_2of3
-}
-
-# Run 60-year projection (1990–2050) for the historical scenario
-years_hist <- 60
-
-mat_hist <- matrix(0, nrow = years_hist + 1, ncol = 11)
-colnames(mat_hist) <- stage_names
-mat_hist[1, ] <- n0_vec
-
-for (k in 1:years_hist) {
-  mat_hist[k + 1, ] <- hist_fn(k) %*% mat_hist[k, ]
-}
-
-proj_hist <- as.data.frame(mat_hist) %>%
-  mutate(year      = 0:years_hist,
-         N         = rowSums(across(all_of(stage_names))),
-         scenario  = "Historical regulatory timeline")
-
-# Baselines for comparison: no mitigation and immediate 2/3 from year 0
-mat_hist_base  <- matrix(0, nrow = years_hist + 1, ncol = 11)
-mat_hist_23    <- matrix(0, nrow = years_hist + 1, ncol = 11)
-colnames(mat_hist_base) <- colnames(mat_hist_23) <- stage_names
-mat_hist_base[1, ] <- mat_hist_23[1, ] <- n0_vec
-
-for (k in 1:years_hist) {
-  mat_hist_base[k + 1, ] <- m_base  %*% mat_hist_base[k, ]
-  mat_hist_23[k + 1, ]   <- m_2of3  %*% mat_hist_23[k, ]
-}
-
-proj_hist_base <- as.data.frame(mat_hist_base) %>%
-  mutate(year = 0:years_hist, N = rowSums(across(all_of(stage_names))),
-         scenario = "No mitigation (baseline)")
-
-proj_hist_23 <- as.data.frame(mat_hist_23) %>%
-  mutate(year = 0:years_hist, N = rowSums(across(all_of(stage_names))),
-         scenario = "Immediate 2/3 from 1990 (upper bound)")
-
-hist_combined <- bind_rows(proj_hist_base, proj_hist, proj_hist_23) %>%
-  mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
-    "Historical regulatory timeline",
-    "Immediate 2/3 from 1990 (upper bound)"
-  )))
-```
-
-**Part 8e — plot historical scenario**
-```{r part8e-plot-historical, fig.width = 10, fig.height = 6}
-# Shading rectangles mark each regulatory phase
-phase_rects <- tibble(
-  xmin  = c(0,  5, 20, 30),
-  xmax  = c(5, 20, 30, years_hist),
-  label = c("Baseline\n(pre-reg)", "1/3 mitigation\n(tori lines)",
-            "1/3 continued\n(gap assumption)", "2/3 mitigation\n(tori+night,\ncurrent regs)"),
-  fill  = c("#f7f7f7", "#fee8c8", "#fdd49e", "#fdbb84")
-)
-
-p_historical <- ggplot() +
-  geom_rect(data = phase_rects,
-            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = label),
-            alpha = 0.15, inherit.aes = FALSE) +
-  scale_fill_manual(name = "Regulatory phase",
-                    values = setNames(phase_rects$fill, phase_rects$label)) +
-  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
-             color = "darkorange", size = 2.5, inherit.aes = FALSE) +
-  geom_line(data = hist_combined,
-            aes(x = year, y = N, color = scenario, linetype = scenario),
-            linewidth = 0.9) +
-  scale_color_manual(values = c(
-    "No mitigation (baseline)"              = "black",
-    "Historical regulatory timeline"        = "#e08214",
-    "Immediate 2/3 from 1990 (upper bound)" = "#1b7837")) +
-  scale_linetype_manual(values = c(
-    "No mitigation (baseline)"              = "dashed",
-    "Historical regulatory timeline"        = "solid",
-    "Immediate 2/3 from 1990 (upper bound)" = "solid")) +
-  scale_x_continuous(
-    breaks = c(0, 5, 20, 30, 60),
-    labels = c("1990", "1995", "2010", "2020", "2050"),
-    limits = c(0, years_hist)) +
-  scale_y_continuous(labels = scales::comma,
-                     sec.axis = sec_axis(~ . / pairs_scale,
-                                         name = "Breeding pairs (Bird Island)",
-                                         labels = scales::comma)) +
-  labs(x = "Year",
-       y = "Population (N individuals)",
-       color = NULL, linetype = NULL,
-       title = paste0("Historical regulatory scenario — ", target_period, " baseline"),
-       subtitle = "Shading = regulatory phase; orange dots = observed breeding pairs; green = immediate 2/3 from 1990 (upper bound)") +
-  themeo +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 8))
-p_historical
-```
-
----
-
-**age class trends from dem_props (Clay 2019)**
-```{r plot-age-trends, fig.width = 8, fig.height = 5}
-# Use the 4 survey periods only (exclude the 1990-2009 aggregate and J1)
-# Mid-year of each 5-year period used for x-axis placement
-age_trends <- dem_props %>%
-  filter(Dem_class != "J1",
-         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
-  mutate(
-    year_mid = case_when(
-      Period == "1990-1994" ~ 1992,
-      Period == "1995-1999" ~ 1997,
-      Period == "2000-2004" ~ 2002,
-      Period == "2005-2009" ~ 2007
-    ),
-    Dem_class = factor(Dem_class,
-                       levels = c("SB", "FB", "NB", "IMM", "J2+3"),
-                       labels = c("Successful breeders", "Failed breeders",
-                                  "Non-breeders", "Immatures", "Juveniles (J2+3)"))
-  )
-
-p_age_trends <- ggplot(age_trends, aes(x = year_mid, y = Pop,
-                                        color = Dem_class, group = Dem_class)) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 2.5) +
-  scale_color_brewer(palette = "Dark2") +
-  scale_x_continuous(breaks = c(1992, 1997, 2002, 2007),
-                     labels = c("1990-94", "1995-99", "2000-04", "2005-09")) +
-  scale_y_continuous(labels = scales::comma) +
-  labs(x = NULL,
-       y = "Population (N individuals)",
-       color = "Age class",
-       title = "Bird Island WAAL population by age class — Clay et al. 2019",
-       subtitle = "5-year period averages; excludes J1") +
-  themeo +
-  theme(legend.position = "right")
-p_age_trends
-```
 
 ## Save figures
 
@@ -2259,25 +1544,15 @@ p_age_trends
 dir.create(here("output/figures"), showWarnings = FALSE, recursive = TRUE)
 
 fig_path <- function(name) here("output/figures",
-                                 paste0(name, "_", target_period, "_", date_sfx, ".png"))
+                                 paste0(name, "_", target_period, "_", output_sfx, ".png"))
 
-ggsave(fig_path("08_proj_part1_breeding_pairs"),       p_part1,              width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part1_age_class_obs"),       p_part1_obs,          width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_age_class_trends"),               p_age_trends,         width = 8,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part1_long_breeding_pairs"), p_part1_long,         width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part1_long_age_class_obs"),  p_part1_obs_long,     width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part2_total_validation"),    p_part2_total,        width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part2_stage_groups"),        p_part2_stages,       width = 10, height = 6, dpi = 200)
-ggsave(fig_path("08_proj_part2_composition"),         p_part2_composition,  width = 10, height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part3_phasein"),             p_part3,              width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part6a_phasein_compare"),   p_phasein_compare,    width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part6b_delay_immediate"),   p_delay_imm,          width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part6c_delay_phasein"),     p_delay_phase,        width = 9,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part6d_all_scenarios"),     p_all_scenarios,      width = 11, height = 6, dpi = 200)
-ggsave(fig_path("08_proj_part6e_all_scenarios_obs"), p_all_scenarios_obs,  width = 11, height = 6, dpi = 200)
-ggsave(fig_path("08_proj_part7a_ssd_compare"),       p_ssd_compare,        width = 8,  height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part7b_realized_lambda"),   p_realized_lambda,    width = 11, height = 5, dpi = 200)
-ggsave(fig_path("08_proj_part7c_all_200yr"),         p_all_200yr,          width = 11, height = 6, dpi = 200)
-ggsave(fig_path("08_proj_part8_historical"),         p_historical,         width = 10, height = 6, dpi = 200)
-message("18 figures saved to output/figures/ with suffix ", date_sfx)
+ggsave(fig_path("09_1a_100yr_breeding_pairs"),     p_1a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_1b_100yr_age_classes"),        p_1b,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_1c_500yr_breeding_pairs"),     p_1c,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_1d_500yr_age_classes"),        p_1d,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6a_phasein_compare"),          p_6a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6b_delay_immediate"),          p_6b,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6c_delay_phasein"),            p_6c,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6d_all_scenarios"),            p_6d,  width = 11, height = 6, dpi = 200)
+message("9 figures saved to output/figures/ with suffix ", output_sfx)
 ```

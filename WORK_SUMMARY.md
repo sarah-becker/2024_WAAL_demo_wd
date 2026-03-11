@@ -1,5 +1,34 @@
 # Work Summary - WAAL Bycatch Analysis
 
+## Session: March 10, 2026
+
+### Script 08 — Population Projections (`scripts/08_WAAL_pop_projections.Rmd`)
+
+**Major restructure:** Removed `build_3of3_matrix()` function and all coverage/phase-in machinery. Replaced with two manually-built matrices:
+- `m_base` — no mitigation (Pardo observed survival rates)
+- `m_3of3` — full 3/3 mitigation (FM reduced by eff_3of3 = 96.5%, rates from 06a output)
+
+**Results:** λ (no mitigation) = 0.97494, λ (full 3/3) = 1.00378, N₀ = 15,518 birds (1990–1994)
+
+**Projections:** Simple homework-style for-loops: `N(t+1) = lambda * N(t)` for both scenarios over 100 years.
+
+**Removed:** Uncertainty simulation section (~500 lines of beta-distribution MC), Part 2 coverage/phase-in section (placeholder left for later).
+
+**Validation overlays added to plots:**
+- `dem_obs` — 5-year period totals from Clay 2019 dem_props (black triangles, years 0/5/10/15)
+- `bird_obs` — Bird Island breeding pair counts from Poncet et al. survey (1983/84, 2003/04, 2014/15, 2023/24), scaled to total N via pairs_scale ≈ 13
+- `dem_obs_split` — adults (SB+FB+NB) vs immatures (IMM+J2+3) from dem_props
+
+**Two projection figures:**
+- `p_part1` — projection + black triangles (dem_props total) + orange breeding pair dots, dual y-axis (N left / breeding pairs right)
+- `p_part1_obs` — projection + dem_props adult/immature lines, dual y-axis (N left / % of N₀ right)
+
+**Additional figure:** `p_age_trends` — age class population trends across 4 periods from dem_props
+
+**Key finding discussed:** Observed Bird Island breeding pair decline tracks closer to no-mitigation trajectory than full-3/3 trajectory, consistent with partial real-world compliance. IMM class nearly doubled 1990–2009 masking adult decline in total N.
+
+
+
 ## Session: February 27, 2026
 
 ### Overview
@@ -1753,3 +1782,23 @@ Replaced 2-entry pooled list with 8-entry stage-specific list. All four scripts 
 2. **Verify λ values:** Re-run 06a–06d with corrected stage-specific VRs to confirm λ < 1 at baseline and sensible mitigation response curves
 
 *Last updated: February 26, 2026*
+
+---
+
+## Session: March 11, 2026
+
+### Script 08 — Historical Regulatory Scenario (Part 8)
+- Added Parts 8a–8e: regulatory timeline 1990–94 (no mitigation) → 1995–2019 (1/3, tori lines) → 2020+ (2/3, tori + night setting)
+- Built `m_1of3` and `m_2of3` matrices; `hist_fn` uses 3-branch switch
+- Removed 3/3 future branch — scenario assumes current 2/3 regs continue indefinitely
+- Comparison baseline: "immediate 2/3 from 1990 (upper bound)"
+- Bug fixed: `aes(x = year_offset, y = N_total)` → `aes(x = year, y = N_scaled)` in `p_historical`
+- `parameter_sources.md` updated: added `eff_1of3`, `eff_2of3` rows and 2010–2019 gap assumption
+
+### Script 09 — New Summary Script (`scripts/09_WAAL_pop_projections_summary.Rmd`)
+- New self-contained script: vital rates → matrices → scalar projections (100yr, 500yr) → stage-structured projections → 5/10/20yr phase-in scenarios → all-scenarios combined
+- All plots include `bird_obs` orange dot overlay with dual y-axis (N / breeding pairs)
+- `pairs_scale` validation block added (after `print(bird_obs)`): computes SSD-implied breeding pairs and compares to assumed 1200 baseline — SSD implies 1660 pairs (21.4% of N0 in active breeding stages); gap reflects population not being at SSD in 1990–94 (mid-decline)
+- `date_sfx` split into `input_sfx` (hardcoded, for loading 06a CSV) and `output_sfx` (auto today's date, for saving figures)
+
+*Last updated: March 11, 2026*

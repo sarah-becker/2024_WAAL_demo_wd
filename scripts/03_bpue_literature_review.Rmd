@@ -67,9 +67,8 @@ bpue_raw <- bpue_raw %>%
   )
 
 # Summary of what we have
-bpue_raw %>%
-  count(fishery_type, fleet, name = "n_rows") %>%
-  print(n = 50)
+bpue_summary <- bpue_raw %>%
+  count(fishery_type, fleet, name = "n_rows")
 ```
 
 ## Manual bounding box standardization
@@ -119,9 +118,29 @@ bbox_lookup <- tribble(
   "20-60S, 90-20 W",
   -60, -20, -90, -20, "",
 
-  # --- Huang 2017: Taiwan PLL, all regions (FLAG: same bbox for all!) ---
+  # --- Huang 2017: Taiwan PLL, SE Atlantic ---
   "25-60 S, 30 W-20 E",
-  -60, -25, -30, 20, "FLAG: Huang 2017 uses same bbox for all regions - needs manual correction in CSV",
+  -60, -25, -30, 20, "",
+
+  # --- Huang 2017: Taiwan PLL, SW Atlantic ---
+  "25-60 S, 70-30 W",
+  -60, -25, -70, -30, "",
+
+  # --- Huang 2017: Taiwan PLL, SE Pacific (crosses dateline) ---
+  "25-60 S, 160-70 W",
+  -60, -25, 160, 290, "Crosses dateline; lon_max=290 (=-70+360)",
+
+  # --- Huang 2017: Taiwan PLL, SW Pacific (crosses dateline) ---
+  "25-60 S, 130 E-160 W",
+  -60, -25, 130, 200, "Crosses dateline; lon_max=200 (=-160+360)",
+
+  # --- Huang 2017: Taiwan PLL, SE Indian ---
+  "25-60 S, 75-130 E",
+  -60, -25, 75, 130, "",
+
+  # --- Huang 2017: Taiwan PLL, SW Indian ---
+  "25-60 S, 20-75 E",
+  -60, -25, 20, 75, "",
 
   # --- Bugoni et al. 2008: Brazil PLL, SW Atlantic ---
   "22-38 S, 26-58 W",
@@ -231,22 +250,13 @@ tibble(
 ) %>% print()
 ```
 
-## Flag known issues
+## Flag known issues - zero waal bpue recorded
 
 ```{r flag-issues}
-# Huang 2017 entries that need manual bbox correction
-huang_flag <- bpue_std %>%
-  filter(str_detect(citation, fixed("Huang 2017", ignore_case = TRUE))) %>%
-  select(row_id, fleet, year_group, region, bbox_raw, bbox_notes)
-
-huang_flag %>% print(n = 20)
-
 # Entries with BPUE = 0
 zero_bpue <- bpue_std %>%
   filter(!is.na(bpue) & bpue == 0) %>%
   select(row_id, fishery_type, fleet, year_group, citation, notes_sarah)
-
-zero_bpue %>% print(n = 10)
 ```
 
 ## Save standardized data
@@ -284,7 +294,7 @@ pll_data <- pll_data %>%
   filter(!is.na(year_group))
 
 # Available PLL fleets
-pll_data %>% count(fleet, sort = TRUE) %>% print(n = 30)
+avail_pll <- pll_data %>% count(fleet, sort = TRUE) 
 ```
 
 ## Demersal longline effort
@@ -304,7 +314,7 @@ dll_data <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FA
   filter(!is.na(year_group))
 
 # Available DLL fleets
-dll_data %>% count(fleet, sort = TRUE) %>% print(n = 20)
+avail_dll <- dll_data %>% count(fleet, sort = TRUE) 
 ```
 
 ## Load basemap
@@ -363,33 +373,41 @@ BPUE entries that span multiple year groups (e.g., "2001-2005, 2006-2010")
 get duplicated so they appear on each relevant year group panel.
 
 ```{r expand-periods}
-target_year_groups <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
+target_year_groups <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009", "2010-2014", "2015-2019")
 
-# Parse the year_group field, which may contain comma-separated periods
-# Also handle non-standard periods like "1995-2000" -> map to nearest target group(s)
+# Parse the year_group field, which may contain comma-separated periods.
+# Uses overlap logic: any study period overlapping a target period is included.
+# Handles shorthand years (e.g. "1990-94"), leading spaces, and arbitrary ranges.
 expand_to_target_periods <- function(yg_string) {
   if (is.na(yg_string) | yg_string == "") return(character(0))
 
-  # Split on comma
+  # Target period boundaries (must match target_year_groups order)
+  period_bounds <- tibble(
+    period = target_year_groups,
+    start  = c(1990, 1995, 2000, 2005, 2010, 2015),
+    end    = c(1994, 1999, 2004, 2009, 2014, 2019)
+  )
+
+  # Split on comma, trim whitespace
   periods <- str_trim(str_split(yg_string, ",")[[1]])
 
-  # Map each listed period to target year groups
   matched <- map(periods, function(p) {
-    # Direct match
-    if (p %in% target_year_groups) return(p)
-    # Handle non-standard ranges by checking overlap with target periods
-    # "1995-2000" spans both 1995-1999 and 2000-2004
-    if (p == "1995-2000") return(c("1995-1999", "2000-2004"))
-    # "2005-2010" maps to 2005-2009 (2010 is outside analysis period)
-    if (p == "2005-2010") return("2005-2009")
-    # leading-space variants
-    if (p == " 1996-2000") return(c("1995-1999", "2000-2004"))
-    if (p == " 2011-2015") return(character(0))
-    if (p == "2011-2015") return(character(0))
-    # If it contains a target, match it
-    matches <- target_year_groups[map_lgl(target_year_groups, ~str_detect(p, .x))]
-    if (length(matches) > 0) return(matches)
-    return(character(0))
+    # Extract all 2- or 4-digit numbers from the string
+    nums <- as.numeric(str_extract_all(p, "\\d{2,4}")[[1]])
+    if (length(nums) < 1) return(character(0))
+
+    start_yr <- nums[1]
+    end_yr   <- if (length(nums) >= 2) nums[2] else nums[1]
+
+    # Handle 2-digit end year (e.g. "1990-94" -> 1994)
+    if (end_yr < 100) {
+      end_yr <- (start_yr %/% 100) * 100 + end_yr
+    }
+
+    # Return all target periods that overlap with [start_yr, end_yr]
+    period_bounds %>%
+      filter(start_yr <= end & end_yr >= start) %>%
+      pull(period)
   }) %>% unlist() %>% unique()
 
   return(matched)
@@ -416,17 +434,63 @@ bpue_expanded %>%
 
 ```{r effort-raster-function}
 make_effort_raster <- function(effort_data, fleet_name, yr_group) {
+  is_dll <- "dataset" %in% names(effort_data)
+
   effort_subset <- effort_data %>%
     filter(fleet == fleet_name, year_group == yr_group) %>%
-    group_by(Lon, Lat) %>%
+    { if (is_dll) group_by(., Lon, Lat, dataset) else group_by(., Lon, Lat, RFMO) } %>%
     summarise(mean_effort = mean(Hooks, na.rm = TRUE), .groups = "drop")
 
   if (nrow(effort_subset) < 2) return(NULL)
 
-  tryCatch(
-    rast(effort_subset, type = "xyz", crs = "EPSG:4326"),
-    error = function(e) NULL
-  )
+  # DLL only: check if NZ data is mixed with other sources
+  # NZ uses x.0 grid centers; all other DLL sources use x.5 — must rasterize separately
+  # to avoid checkerboard artifacts, matching the approach in script 01
+  has_nz    <- is_dll && any(effort_subset$dataset == "New Zealand", na.rm = TRUE)
+  has_other <- is_dll && any(effort_subset$dataset != "New Zealand", na.rm = TRUE)
+
+  if (has_nz & has_other) {
+    # Rasterize non-NZ and NZ separately, then resample NZ to align grids before adding
+    non_nz <- effort_subset %>% filter(dataset != "New Zealand") %>%
+      select(Lon, Lat, mean_effort)
+    nz     <- effort_subset %>% filter(dataset == "New Zealand") %>%
+      select(Lon, Lat, mean_effort)
+
+    rast_other <- tryCatch(
+      rast(non_nz, type = "xyz", crs = "EPSG:4326"),
+      error = function(e) {
+        message("Rasterization failed (non-NZ) for fleet: ", fleet_name,
+                " period: ", yr_group, " — ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (is.null(rast_other)) return(NULL)
+
+    rast_nz <- tryCatch(
+      rast(nz, type = "xyz", crs = "EPSG:4326"),
+      error = function(e) {
+        message("Rasterization failed (NZ) for fleet: ", fleet_name,
+                " period: ", yr_group, " — ", conditionMessage(e))
+        NULL
+      }
+    )
+    if (is.null(rast_nz)) return(rast_other)
+
+    rast_nz_aligned <- resample(rast_nz, rast_other, method = "bilinear")
+    return(subst(subst(rast_other, NA, 0) + subst(rast_nz_aligned, NA, 0), 0, NA))
+
+  } else {
+    # Single grid convention — rasterize directly
+    tryCatch(
+      rast(effort_subset %>% select(Lon, Lat, mean_effort),
+           type = "xyz", crs = "EPSG:4326"),
+      error = function(e) {
+        message("Rasterization failed for fleet: ", fleet_name,
+                " period: ", yr_group, " — ", conditionMessage(e))
+        NULL
+      }
+    )
+  }
 }
 ```
 
@@ -450,16 +514,10 @@ create_fleet_map <- function(fishery, fleet_name, effort_data, bpue_data,
     bpue_period <- bpue_fleet %>%
       filter(plot_year_group == yg)
 
-    # Determine map extent from effort data extent or default to Southern Hemisphere
-    if (!is.null(effort_rast)) {
-      e <- ext(effort_rast)
-      # Pad extent slightly
-      xlim <- c(max(e[1] - 10, -180), min(e[2] + 10, 180))
-      ylim <- c(max(e[3] - 5, -80), min(e[4] + 5, 10))
-    } else {
-      xlim <- c(-180, 180)
-      ylim <- c(-70, 0)
-    }
+    # Fixed Southern Ocean extent for all fleet maps — ensures consistent view
+    # and prevents bounding boxes or effort being clipped by dynamic extents
+    xlim <- c(-180, 180)
+    ylim <- c(-80, 0)
 
     p <- ggplot()
 
@@ -544,13 +602,14 @@ create_fleet_map <- function(fishery, fleet_name, effort_data, bpue_data,
 ```{r pll-maps, fig.width=14, fig.height=10, results='asis'}
 dir.create(here("output/maps/bpue_review"), showWarnings = FALSE, recursive = TRUE)
 
-# Get PLL fleets from BPUE data that have at least one non-empty row
-pll_bpue_fleets <- bpue_std %>%
-  filter(fishery_type == "PLL") %>%
-  distinct(fleet) %>%
-  pull(fleet)
+# All PLL fleets: union of BPUE and effort fleets covers three cases:
+# (1) has BPUE + effort, (2) has effort but no BPUE, (3) has BPUE but no effort
+pll_all_fleets <- union(
+  bpue_std %>% filter(fishery_type == "PLL") %>% distinct(fleet) %>% pull(fleet),
+  pll_data %>% distinct(fleet) %>% pull(fleet)
+) %>% sort()
 
-for (fl in pll_bpue_fleets) {
+for (fl in pll_all_fleets) {
   p <- create_fleet_map(
     fishery = "PLL",
     fleet_name = fl,
@@ -566,12 +625,13 @@ for (fl in pll_bpue_fleets) {
 ## DLL fleet maps
 
 ```{r dll-maps, fig.width=14, fig.height=10, results='asis'}
-dll_bpue_fleets <- bpue_std %>%
-  filter(fishery_type == "DLL") %>%
-  distinct(fleet) %>%
-  pull(fleet)
+# All DLL fleets: union of BPUE and effort fleets
+dll_all_fleets <- union(
+  bpue_std %>% filter(fishery_type == "DLL") %>% distinct(fleet) %>% pull(fleet),
+  dll_data %>% distinct(fleet) %>% pull(fleet)
+) %>% sort()
 
-for (fl in dll_bpue_fleets) {
+for (fl in dll_all_fleets) {
   p <- create_fleet_map(
     fishery = "DLL",
     fleet_name = fl,
@@ -596,8 +656,6 @@ temporal_gaps <- bpue_std %>%
   select(fishery_type, fleet, year_group) %>%
   distinct() %>%
   arrange(fishery_type, fleet, year_group)
-
-temporal_gaps %>% print(n = 100)
 ```
 
 ## Spatial gap analysis
@@ -643,21 +701,20 @@ check_spatial_coverage <- function(fishery, fleet_name, yr_group,
 }
 
 # Run for all PLL fleets with BPUE data
-pll_gaps <- map_dfr(pll_bpue_fleets, function(fl) {
+pll_gaps <- map_dfr(pll_all_fleets, function(fl) {
   map_dfr(target_year_groups, function(yg) {
     check_spatial_coverage("PLL", fl, yg, pll_data, bpue_expanded)
   })
 })
 
 # Run for all DLL fleets with BPUE data
-dll_gaps <- map_dfr(dll_bpue_fleets, function(fl) {
+dll_gaps <- map_dfr(dll_all_fleets, function(fl) {
   map_dfr(target_year_groups, function(yg) {
     check_spatial_coverage("DLL", fl, yg, dll_data, bpue_expanded)
   })
 })
 
 spatial_gaps <- bind_rows(pll_gaps, dll_gaps) %>% arrange(fishery, fleet, year_group)
-spatial_gaps %>% print(n = 100)
 
 # Save
 write_csv(spatial_gaps, here("output/spatial_gap_analysis.csv"))
@@ -699,6 +756,32 @@ ggsave(here("output/maps/bpue_review/coverage_heatmap.png"),
        p_heatmap, width = 14, height = 8, dpi = 300)
 ```
 
+```{r}
+# Southern Hemisphere only — filter to fleets with effort at lat <= 0                                                                                               
+coverage_plot_so <- spatial_gaps %>%   
+  filter(has_effort) %>%  
+  filter((fishery == "PLL" & fleet %in% pll_effort_fleets_so) | (fishery == "DLL" & fleet %in% dll_effort_fleets_so))    
+
+p_heatmap_so <- ggplot(coverage_plot_so,          
+   aes(x = year_group, y = fleet, fill = pct_covered)) +       
+    geom_tile(color = "white", linewidth = 0.5) +     
+  geom_text(aes(label = ifelse(is.na(pct_covered), "no effort",    
+                               paste0(pct_covered, "%"))),          
+            size = 3) +     
+  facet_wrap(~fishery, scales = "free_y") +       
+  scale_fill_gradient2(low = "red", mid = "yellow", high = "darkgreen",   midpoint = 50, na.value = "grey90",     
+                       name = "% Effort Cells\nCovered by BPUE" ) +   
+  labs(  title = "BPUE Spatial Coverage: Southern Hemisphere Fleets Only",  
+         subtitle = "Red = fishing effort exists but no BPUE study covers it. Grey = no effort data for this fleet.",    
+         x = "Year Group", y = "Fleet"   ) +     
+  theme_minimal() +       
+  theme(   plot.title = element_text(size = 14, face = "bold"),  axis.text.x = element_text(angle = 45, hjust = 1)    )    
+
+print(p_heatmap_so)    
+
+ggsave(here("output/maps/bpue_review/coverage_heatmap_southern_hemisphere.png"), p_heatmap_so, width = 14, height = 8, dpi = 300)     
+```
+
 ## Fleets with effort data but NO BPUE entries at all
 
 These fleets appear in the fishing effort data but have no corresponding
@@ -715,11 +798,29 @@ dll_effort_fleets <- dll_data %>% distinct(fleet) %>% pull()
 dll_bpue_all_fleets <- bpue_std %>% filter(fishery_type == "DLL") %>% distinct(fleet) %>% pull()
 dll_missing <- setdiff(dll_effort_fleets, dll_bpue_all_fleets)
 
-tibble(
+effort_no_bpue <- tibble(
   fishery = c(rep("PLL", length(pll_missing)), rep("DLL", length(dll_missing))),
   fleet = c(pll_missing, dll_missing),
-  note = "Has fishing effort data but NO BPUE entry in spreadsheet"
-) %>% print(n = 50)
+  note = "Has fishing effort data but NO BPUE entry in spreadsheet")
+
+# Crop to Southern Hemisphere (lat <= 0) — consistent with script 01 map extent
+# Shows which effort-only fleets are actually operating in the WAAL range
+pll_missing_so <- pll_data %>%
+  filter(fleet %in% pll_missing, Lat <= 0) %>%
+  group_by(fleet) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+dll_missing_so <- dll_data %>%
+  filter(fleet %in% dll_missing, Lat <= 0) %>%
+  group_by(fleet) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+cat("PLL fleets with effort but no BPUE — Southern Hemisphere hooks:\n")
+print(pll_missing_so)
+cat("\nDLL fleets with effort but no BPUE — Southern Hemisphere hooks:\n")
+print(dll_missing_so)
 ```
 
 ## Fleets with BPUE data but NO fishing effort data
@@ -740,26 +841,29 @@ bpue_no_effort <- tibble(
   fleet = c(pll_bpue_no_effort, dll_bpue_no_effort),
   note = "Has BPUE data but NO fishing effort data"
 )
-
-bpue_no_effort %>% print(n = 50)
 ```
 
 ## Combined gap summary
 
 ```{r combined-gap-summary}
+# Crop effort fleets to Southern Hemisphere (lat <= 0) before gap summary
+# to exclude fleets operating only in northern/tropical regions
+pll_effort_fleets_so <- pll_data %>% filter(Lat <= 0) %>% distinct(fleet) %>% pull()
+dll_effort_fleets_so <- dll_data %>% filter(Lat <= 0) %>% distinct(fleet) %>% pull()
+
 # Full two-way mismatch table: for every fleet x fishery, do we have effort, BPUE, or both?
 all_fleets <- bind_rows(
   bpue_std %>% select(fishery_type, fleet) %>% rename(fishery = fishery_type),
-  tibble(fishery = "PLL", fleet = pll_effort_fleets),
-  tibble(fishery = "DLL", fleet = dll_effort_fleets)
+  tibble(fishery = "PLL", fleet = pll_effort_fleets_so),
+  tibble(fishery = "DLL", fleet = dll_effort_fleets_so)
 ) %>%
   distinct()
 
 fleet_data_status <- all_fleets %>%
   mutate(
     has_effort = case_when(
-      fishery == "PLL" ~ fleet %in% pll_effort_fleets,
-      fishery == "DLL" ~ fleet %in% dll_effort_fleets
+      fishery == "PLL" ~ fleet %in% pll_effort_fleets_so,
+      fishery == "DLL" ~ fleet %in% dll_effort_fleets_so
     ),
     has_bpue = case_when(
       fishery == "PLL" ~ fleet %in% pll_bpue_all_fleets,
@@ -773,8 +877,6 @@ fleet_data_status <- all_fleets %>%
     )
   ) %>%
   arrange(fishery, status, fleet)
-
-fleet_data_status %>% print(n = 60)
 ```
 
 # Part 6: Regional Gap Table
@@ -796,6 +898,31 @@ region_defs <- tribble(
   "SE Pacific",         -180,      -70,      -60,        0,
   "Southern Ocean",     -180,      180,      -90,      -60
 )
+```
+
+## Verify region definitions
+
+```{r map-regions, fig.width=14, fig.height=7}
+# Build sf polygons from region_defs for mapping
+region_sf <- region_defs %>%
+  rowwise() %>%
+  mutate(geometry = list(st_polygon(list(matrix(
+    c(lon_min, lat_min, lon_max, lat_min, lon_max, lat_max,
+      lon_min, lat_max, lon_min, lat_min),
+    ncol = 2, byrow = TRUE
+  ))))) %>%
+  ungroup() %>%
+  mutate(geometry = st_sfc(geometry, crs = 4326)) %>%
+  st_as_sf()
+
+ggplot() +
+  geom_sf(data = region_sf, aes(fill = region), alpha = 0.3, color = "black", linewidth = 0.5) +
+  geom_sf(data = ne_land, fill = "grey80", color = "grey50", linewidth = 0.2) +
+  geom_sf_label(data = region_sf, aes(label = region), size = 3) +
+  coord_sf(xlim = c(-180, 180), ylim = c(-90, 0), expand = FALSE) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Ocean region definitions") +
+  theme_minimal()
 ```
 
 ## Assign effort cells to regions

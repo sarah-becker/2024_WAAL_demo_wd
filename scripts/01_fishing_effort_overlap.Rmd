@@ -134,6 +134,33 @@ pll_data <- bind_rows(pll_data, wcpfc_std)
 pll_data <- pll_data %>%
   filter(Year >= 1990, Year <= 2009)
 
+# Harmonize fleet names: standardize WCPFC ISO codes to full country names
+pll_data <- pll_data %>%
+  mutate(Flag = case_when(
+    Flag == "JP"  ~ "Japan",
+    Flag == "KR"  ~ "South Korea",
+    Flag == "TW"  ~ "Taiwan",
+    Flag == "CN"  ~ "China",
+    Flag == "US"  ~ "USA",
+    Flag == "ES"  ~ "Spain",
+    Flag == "AU"  ~ "Australia",
+    Flag == "NZ"  ~ "New Zealand",
+    Flag == "PF"  ~ "French Polynesia",
+    Flag == "VU"  ~ "Vanuatu",
+    Flag == "BZ"  ~ "Belize",
+    Flag == "NC"  ~ "New Caledonia",
+    Flag == "FJ"  ~ "Fiji",
+    Flag == "TO"  ~ "Tonga",
+    Flag == "WS"  ~ "Samoa",
+    Flag == "FM"  ~ "Micronesia",
+    Flag == "PG"  ~ "Papua New Guinea",
+    Flag == "PW"  ~ "Palau",
+    Flag == "CK"  ~ "Cook Islands",
+    Flag == "MH"  ~ "Marshall Islands",
+    Flag == "NU"  ~ "Niue",
+    TRUE          ~ Flag
+  ))
+
 # Save disaggregated PLL table for future fleet/RFMO partitioning
 write_csv(pll_data, here("output/pll_effort_by_fleet.csv"))
 
@@ -289,6 +316,30 @@ dll_data <- dll_data %>%
   filter(Year >= 1990, Year <= 2009) %>%
   filter(!is.na(Lon), !is.na(Lat)) %>%
   mutate(Lon = ifelse(Lon > 180, Lon - 360, Lon))
+
+# Harmonize fleet names: standardize CCAMLR ISO codes to full country names
+dll_data <- dll_data %>%
+  mutate(Fleet = case_when(
+    Fleet == "ARG" ~ "Argentina",
+    Fleet == "AUS" ~ "Australia",
+    Fleet == "BGR" ~ "Bulgaria",
+    Fleet == "CHL" ~ "Chile",
+    Fleet == "ESP" ~ "Spain",
+    Fleet == "FRA" ~ "France",
+    Fleet == "GBR" ~ "United Kingdom",
+    Fleet == "JPN" ~ "Japan",
+    Fleet == "KOR" ~ "South Korea",
+    Fleet == "NAM" ~ "Namibia",
+    Fleet == "NOR" ~ "Norway",
+    Fleet == "NZL" ~ "New Zealand",
+    Fleet == "RUS" ~ "Russia",
+    Fleet == "SUN" ~ "USSR",
+    Fleet == "UKR" ~ "Ukraine",
+    Fleet == "URY" ~ "Uruguay",
+    Fleet == "USA" ~ "USA",
+    Fleet == "ZAF" ~ "South Africa",
+    TRUE           ~ Fleet
+  ))
 
 # Save disaggregated DLL table for future fleet/RFMO partitioning
 write_csv(dll_data, here("output/dll_effort_by_fleet.csv"))

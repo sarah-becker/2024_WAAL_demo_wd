@@ -5,6 +5,8 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+note - we may want to switch the total fishing maps to actual numbers not normalized
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   echo = TRUE,

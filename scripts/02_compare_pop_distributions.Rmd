@@ -28,7 +28,7 @@ This script calculates the proportion of wandering albatrosses in each grid cell
 
 **Key assumptions:**
 - Marion Island and Prince Edward Island birds follow the same distribution as Crozet (Nel et al. 2002, cited in Tuck et al. 2015)
-- Bird Island represents ~60% of the South Georgia population
+- Bird Island represents ~60% of the South Georgia population (Mackley et al 2025 - census study)
 - We use a "clipped" calculation approach that only estimates percentages in cells where South Georgia birds occur, avoiding spurious values in areas outside their range
 
 # Setup
@@ -72,14 +72,8 @@ pop_dists_zero <- map(pop_dists, ~subst(.x, NA, 0))
 # Calculate sum for each distribution
 pop_sums <- map_dbl(pop_dists_zero, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
 
-cat("Current calculated sums:\n")
-print(pop_sums)
-
 # Hardcoded values from original script
 hardcoded_sums <- c(crozet = 13135.49, kerguelen = 8601.457, south_georgia = 18769.6)
-
-cat("\nHardcoded sums from original script:\n")
-print(hardcoded_sums)
 
 # Compare calculated vs hardcoded
 comparison <- tibble(
@@ -90,27 +84,11 @@ comparison <- tibble(
   percent_diff = 100 * (calculated - hardcoded) / hardcoded
 )
 
-cat("\nComparison of calculated vs hardcoded normalization values:\n")
-print(comparison)
-
-# Check if differences are negligible (< 0.1%)
-if (all(abs(comparison$percent_diff) < 0.1)) {
-  cat("\n✓ Values match within 0.1% - using calculated values\n")
-  norm_values <- pop_sums
-} else {
-  cat("\n⚠ WARNING: Values differ by >0.1%\n")
-  cat("This could explain why maps look different.\n")
-  cat("Using calculated values for correct normalization.\n")
-  norm_values <- pop_sums
-}
-
 # Normalize each distribution (sum = 1)
-pop_dists_norm <- map2(pop_dists_zero, norm_values, ~.x / .y)
+pop_dists_norm <- map2(pop_dists_zero, pop_sums, ~.x / .y)
 
 # Verify normalization
 norm_sums <- map_dbl(pop_dists_norm, ~global(.x, fun = "sum", na.rm = TRUE)[1,1])
-cat("\nNormalized distribution sums (should be ~1):\n")
-print(norm_sums)
 ```
 
 # Define Population Proportions
@@ -118,6 +96,7 @@ print(norm_sums)
 Breeding pair estimates from literature. The actual total is 5,947 pairs (excluding Macquarie's 4 pairs). Previous analyses used "~6,000" as a round number, but we use the precise total here to ensure proportions sum to 1.0.
 
 **Sources:**
+ALL from IUCN RED LIST ASSESSMENT https://www.iucnredlist.org/species/22698305/132640680#population
 - South Georgia: 1,553 pairs (Poncet et al. 2006)
 - Prince Edward Island: 1,800 pairs (Ryan et al. 2009)
 - Marion Island: 1,900 pairs (ACAP 2009)
@@ -142,23 +121,16 @@ breeding_pairs <- breeding_pairs %>%
     percent = proportion * 100
   )
 
-cat("Total breeding pairs:", total_pairs, "\n\n")
-print(breeding_pairs)
-
 # Extract individual proportions
 prop_crozet <- breeding_pairs$proportion[breeding_pairs$population == "Crozet"]
 prop_kerg <- breeding_pairs$proportion[breeding_pairs$population == "Kerguelen"]
 prop_southg <- breeding_pairs$proportion[breeding_pairs$population == "South Georgia"]
 
-# PEI = Prince Edward + Marion, using Crozet distribution as proxy
+# PEI = Prince Edward + Marion, % of global pop in these two breeding sites
 prop_pei <- sum(breeding_pairs$proportion[breeding_pairs$population %in% c("Prince Edward", "Marion")])
 
 # Bird Island is approximately 60% of South Georgia population
 prop_bird_island <- prop_southg * 0.6
-
-cat("\nKey proportions:\n")
-cat("South Georgia:", round(prop_southg, 3), "\n")
-cat("Bird Island:", round(prop_bird_island, 3), "\n")
 ```
 
 # Calculate Weighted Distributions and Percentages
@@ -167,7 +139,7 @@ Weight each normalized distribution by its proportion of the global population, 
 
 **Method: Clipped to South Georgia cells**
 
-We use a "clipped" approach where other population distributions are masked to only include cells where South Georgia birds occur. This prevents artifactual high percentages in cells where South Georgia has zero density but other populations are present (which would incorrectly show 0% or 100% SG birds).
+We use a "clipped" approach where other population distributions are masked to only include cells where South Georgia birds occur. This prevents artifactual high percentages in cells where South Georgia has effectively zero density but still nonzero very low raster values where other populations are not present (which would incorrectly 100% SG birds where there are basically none).
 
 **Rationale:**
 - Alternative methods (one-step threshold, two-step masking) produce spurious values in areas outside South Georgia's range
@@ -176,6 +148,8 @@ We use a "clipped" approach where other population distributions are masked to o
 
 ```{r calculate-weighted-distributions}
 # Create SG mask: areas with SG birds (filter out very small values < 0.0001)
+global(pop_dists_norm$south_georgia, fun = c("min", "max"), na.rm = TRUE)  
+                        
 sg_mask <- ifel(pop_dists_norm$south_georgia < 0.0001, NA, pop_dists_norm$south_georgia)
 
 # Clip other population distributions to only SG cells
@@ -198,10 +172,6 @@ total_global_clipped <- weighted_crozet_clipped +
 # Calculate percentage of birds from South Georgia and Bird Island
 pct_south_georgia <- weighted_sg_nosmall / total_global_clipped
 pct_bird_island <- pct_south_georgia * 0.6  # Bird Island is ~60% of SG population
-
-cat("Clipped calculation complete:\n")
-cat("  Cells with data:", nrow(as.data.frame(pct_south_georgia, na.rm = TRUE)), "\n")
-cat("  Max % from SG:", round(global(pct_south_georgia, "max", na.rm = TRUE)[1,1], 3), "\n")
 ```
 
 # Calculate Total Bird Density (All Populations)
@@ -223,11 +193,6 @@ total_bird_density <- weighted_dists_full$crozet +
                       weighted_dists_full$kerguelen +
                       weighted_dists_full$pei +
                       weighted_dists_full$south_georgia
-
-cat("\nTotal bird density (all populations):\n")
-cat("  Sum:", round(global(total_bird_density, "sum", na.rm = TRUE)[1,1], 3), "(should be ~1)\n")
-cat("  Max:", round(global(total_bird_density, "max", na.rm = TRUE)[1,1], 6), "\n")
-cat("  Cells with data:", nrow(as.data.frame(total_bird_density, na.rm = TRUE)), "\n")
 ```
 
 # Mapping
@@ -365,10 +330,6 @@ names(sg_high_df) <- "pct"
 
 high_sg_cells <- sum(sg_high_df$pct > 0.5, na.rm = TRUE)
 total_cells <- nrow(sg_high_df)
-
-cat("\nGrid cells where South Georgia > 50% of birds:\n")
-cat(high_sg_cells, "out of", total_cells, "cells (",
-    round(100 * high_sg_cells / total_cells, 1), "%)\n")
 ```
 
 # Save Processed Data
@@ -404,9 +365,6 @@ writeRaster(total_bird_density,
 # Save summary statistics
 write_csv(breeding_pairs, here("output/breeding_pairs_summary.csv"))
 write_csv(summary_stats, here("output/percentage_summary_stats.csv"))
-
-cat("\nAll outputs saved successfully\n")
-cat("Percentage rasters saved (clipped to SG cells method)\n")
 ```
 
 # Session Info

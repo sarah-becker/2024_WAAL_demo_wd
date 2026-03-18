@@ -455,6 +455,66 @@ p_1d <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
 p_1d
 ```
 
+**plot 1e — 500-year projection, log(N) y-axis**
+```{r plot-1e, fig.width = 9, fig.height = 5}
+p_1e <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "log\u2081\u2080(N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year projection, log scale — ", target_period, " baseline"),
+       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
+                         ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
+                         ";  orange dots = census breeding pairs\n"#,
+                        # "Straight lines in log space reflect constant fixed lambda"
+                         )) +
+  themeo + theme(legend.position = "bottom")
+p_1e
+```
+
+**plot 1f — annual lambda (N(t+1)/N(t)) over 500-year horizon**
+```{r plot-1f, fig.width = 9, fig.height = 5}
+# compute per-year realized lambda from the scalar projection
+lambda_ts <- proj_part1_long %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_1f <- ggplot(lambda_ts, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB over 500-year horizon — ", target_period, " baseline") ) + #,
+       # subtitle = paste0("Fixed-lambda scalar model: lines are flat at \u03BB (no mitigation) = ",
+       #                   round(lambda_base, 5), " and \u03BB (full 3/3) = ", round(lambda_3of3, 5),
+       #                   "\nDashed grey line = \u03BB = 1 (population stable)")) +
+  themeo + theme(legend.position = "bottom")
+p_1f
+```
+
 ---
 
 *PART 2 — STAGE-STRUCTURED MATRIX PROJECTION (still with fixed lambda but using matrices directly)*
@@ -505,8 +565,144 @@ proj_part2 <- bind_rows(
 proj_part2_groups <- proj_part2 %>%
   group_by(year, scenario, group) %>%
   summarise(N = sum(N), .groups = "drop")
+
+# total N per year per scenario (for log/lambda plots)
+proj_part2_total <- proj_part2 %>%
+  group_by(year, scenario) %>%
+  summarise(N = sum(N), .groups = "drop") %>%
+  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+                                                 "Immediate 3/3 (100% coverage)")))
 ```
 
+**plot 2a — 100-year stage-structured projection, N**
+```{r plot-2a, fig.width = 9, fig.height = 5}
+p_2a <- ggplot(proj_part2_total, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = "Years since 1990 baseline",
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("100-year stage-structured projection — ", target_period, " baseline"),
+       subtitle = "Orange dots = census breeding pairs") +
+  themeo + theme(legend.position = "bottom")
+p_2a
+```
+
+**500-year stage-structured projection (Part 2 extension)**
+```{r part2-project-long}
+mat_base_long  <- matrix(0, nrow = yearslong + 1, ncol = 11)
+mat_mitig_long <- matrix(0, nrow = yearslong + 1, ncol = 11)
+colnames(mat_base_long)  <- stage_names
+colnames(mat_mitig_long) <- stage_names
+mat_base_long[1, ]  <- n0_vec
+mat_mitig_long[1, ] <- n0_vec
+
+for (k in 1:yearslong) {
+  mat_base_long[k + 1, ]  <- m_base %*% mat_base_long[k, ]
+  mat_mitig_long[k + 1, ] <- m_3of3 %*% mat_mitig_long[k, ]
+}
+
+proj_part2_total_long <- bind_rows(
+  as.data.frame(mat_base_long)  %>% mutate(year = 0:yearslong, scenario = "No mitigation (baseline)"),
+  as.data.frame(mat_mitig_long) %>% mutate(year = 0:yearslong, scenario = "Immediate 3/3 (100% coverage)")
+) %>%
+  mutate(N        = rowSums(across(all_of(stage_names))),
+         scenario = factor(scenario, levels = c("No mitigation (baseline)",
+                                                 "Immediate 3/3 (100% coverage)"))) %>%
+  select(year, N, scenario)
+```
+
+**plot 2c — 500-year stage-structured projection, N**
+```{r plot-2c, fig.width = 9, fig.height = 5}
+p_2c <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year stage-structured projection — ", target_period, " baseline"),
+       subtitle = "Orange dots = census breeding pairs") +
+  themeo + theme(legend.position = "bottom")
+p_2c
+```
+
+**plot 2e — 500-year stage-structured projection, log(N) y-axis**
+```{r plot-2e, fig.width = 9, fig.height = 5}
+p_2e <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "log\u2081\u2080(N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year stage-structured projection, log scale — ", target_period, " baseline"))+ #,
+     #  subtitle = "Straight lines in log space confirm constant per-year matrix eigenvalue") +
+  themeo + theme(legend.position = "bottom")
+p_2e
+```
+
+**plot 2f — annual lambda (N(t+1)/N(t)) over 500-year horizon, stage-structured**
+```{r plot-2f, fig.width = 9, fig.height = 5}
+lambda_ts_2 <- proj_part2_total_long %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_2f <- ggplot(lambda_ts_2, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB — stage-structured model, 500-year horizon — ", target_period, " baseline") ) + #,
+       # subtitle = paste0("Fixed matrices: flat lines confirm dominant eigenvalue is constant\n",
+       #                   "Dashed grey line = \u03BB = 1 (population stable)")) +
+  themeo + theme(legend.position = "bottom")
+p_2f
+```
 
 *PART 3 — 5-YEAR PHASE-IN*
 
@@ -1255,6 +1451,156 @@ proj_part3_total <- as.data.frame(mat_phasein) %>%
   select(year, N, scenario)
 ```
 
+**plot 3a — 100-year 5-yr phase-in projection, N**
+```{r plot-3a, fig.width = 9, fig.height = 5}
+# combine 100-year baseline/immediate with 5-yr phase-in for comparison
+proj_part3_compare <- bind_rows(
+  proj_part2_total,
+  proj_part3_total
+) %>%
+  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+                                                 "Immediate 3/3 (100% coverage)",
+                                                 "5-year phase-in")))
+
+p_3a <- ggplot(proj_part3_compare, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_line(data = bird_obs, aes(x = year, y = N_scaled),
+            inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494",
+                                 "5-year phase-in"               = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid",
+                                    "5-year phase-in"               = "solid")) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = "Years since 1990 baseline",
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("100-year projection with 5-yr phase-in — ", target_period, " baseline"),
+       subtitle = "Orange dots = census breeding pairs") +
+  themeo + theme(legend.position = "bottom")
+p_3a
+```
+
+**500-year 5-year phase-in projection (Part 3 extension)**
+```{r part3-project-long}
+mat_phasein_long <- matrix(0, nrow = yearslong + 1, ncol = 11)
+colnames(mat_phasein_long) <- stage_names
+mat_phasein_long[1, ] <- n0_vec
+
+for (k in 1:yearslong) {
+  A <- if (k <= 5) phase_list[[k]] else m_3of3
+  mat_phasein_long[k + 1, ] <- A %*% mat_phasein_long[k, ]
+}
+
+proj_part3_total_long <- as.data.frame(mat_phasein_long) %>%
+  mutate(year     = 0:yearslong,
+         N        = rowSums(across(all_of(stage_names))),
+         scenario = "5-year phase-in") %>%
+  select(year, N, scenario)
+
+# combine with baseline and immediate 3/3 for context in plots
+proj_part3_compare_long <- bind_rows(
+  proj_part2_total_long,
+  proj_part3_total_long
+) %>%
+  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+                                                 "Immediate 3/3 (100% coverage)",
+                                                 "5-year phase-in")))
+```
+
+**plot 3c — 500-year 5-yr phase-in projection, N**
+```{r plot-3c, fig.width = 9, fig.height = 5}
+p_3c <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs, aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494",
+                                 "5-year phase-in"               = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid",
+                                    "5-year phase-in"               = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year projection with 5-yr phase-in — ", target_period, " baseline"),
+       subtitle = "Orange dots = census breeding pairs") +
+  themeo + theme(legend.position = "bottom")
+p_3c
+```
+
+**plot 3e — 500-year 5-yr phase-in projection, log(N) y-axis**
+```{r plot-3e, fig.width = 9, fig.height = 5}
+p_3e <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494",
+                                 "5-year phase-in"               = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid",
+                                    "5-year phase-in"               = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_log10(labels = scales::comma,
+                breaks = scales::trans_breaks("log10", function(x) 10^x)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = "log\u2081\u2080(N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("500-year projection with 5-yr phase-in, log scale — ", target_period, " baseline"))+ #,
+      # subtitle = "Green = 5-yr phase-in; converges to immediate 3/3 trajectory after year 5") +
+  themeo + theme(legend.position = "bottom")
+p_3e
+```
+
+**plot 3f — annual lambda (N(t+1)/N(t)) over 500 years, 5-yr phase-in**
+```{r plot-3f, fig.width = 9, fig.height = 5}
+lambda_ts_3 <- proj_part3_compare_long %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_3f <- ggplot(lambda_ts_3, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)" = "#253494",
+                                 "5-year phase-in"               = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)" = "solid",
+                                    "5-year phase-in"               = "solid")) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB — 5-yr phase-in scenario, 500-year horizon — ", target_period, " baseline"),
+       subtitle = paste0("Green line ramps up over years 1\u20135 as survival improves step-by-step,\n",
+                         "then levels off at \u03BB (full 3/3); dashed grey = \u03BB = 1")) +
+  themeo + theme(legend.position = "bottom")
+p_3f
+```
+
 ---
 
 *PART 6 — ALL PROJECTIONS AND COMPARISON PLOTS*
@@ -1536,7 +1882,143 @@ p_6d <- ggplot(all_scenarios, aes(x = year, y = N, color = scenario, linetype = 
 p_6d
 ```
 
+**plot 6e — annual lambda, delay-then-immediate scenarios**
+```{r plot-6e, fig.width = 9, fig.height = 5}
+lambda_delay_imm <- all_scenarios %>%
+  filter(scenario %in% c("No mitigation (baseline)",
+                          "Immediate 3/3 (100% coverage)",
+                          "5-yr delay, then immediate 3/3",
+                          "10-yr delay, then immediate 3/3",
+                          "20-yr delay, then immediate 3/3")) %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_6e <- ggplot(lambda_delay_imm, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c(
+    "No mitigation (baseline)"        = "#d73027",
+    "Immediate 3/3 (100% coverage)"   = "#253494",
+    "5-yr delay, then immediate 3/3"  = "#2166ac",
+    "10-yr delay, then immediate 3/3" = "#74add1",
+    "20-yr delay, then immediate 3/3" = "#abd9e9")) +
+  scale_linetype_manual(values = c(
+    "No mitigation (baseline)"        = "dashed",
+    "Immediate 3/3 (100% coverage)"   = "solid",
+    "5-yr delay, then immediate 3/3"  = "solid",
+    "10-yr delay, then immediate 3/3" = "solid",
+    "20-yr delay, then immediate 3/3" = "solid")) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = "Years since 1990 baseline",
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB — cost of delaying immediate 3/3 — ", target_period, " baseline"),
+       subtitle = "Step jump in \u03BB at end of delay period; darker blue = shorter delay\nDashed grey = \u03BB = 1") +
+  themeo + theme(legend.position = "bottom")
+p_6e
+```
+
+**plot 6f — annual lambda, delay-then-phase-in scenarios**
+```{r plot-6f, fig.width = 9, fig.height = 5}
+lambda_delay_phasein <- all_scenarios %>%
+  filter(scenario %in% c("No mitigation (baseline)",
+                          "Immediate 3/3 (100% coverage)",
+                          "5-yr delay, then 5-yr phase-in",
+                          "10-yr delay, then 5-yr phase-in",
+                          "20-yr delay, then 5-yr phase-in")) %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_6f <- ggplot(lambda_delay_phasein, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c(
+    "No mitigation (baseline)"        = "#d73027",
+    "Immediate 3/3 (100% coverage)"   = "#253494",
+    "5-yr delay, then 5-yr phase-in"  = "#762a83",
+    "10-yr delay, then 5-yr phase-in" = "#af8dc3",
+    "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
+  scale_linetype_manual(values = c(
+    "No mitigation (baseline)"        = "dashed",
+    "Immediate 3/3 (100% coverage)"   = "solid",
+    "5-yr delay, then 5-yr phase-in"  = "solid",
+    "10-yr delay, then 5-yr phase-in" = "solid",
+    "20-yr delay, then 5-yr phase-in" = "solid")) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = "Years since 1990 baseline",
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB — cost of delaying 5-yr phase-in — ", target_period, " baseline"),
+       subtitle = "Ramp in \u03BB over 5-yr phase-in after delay ends; darker purple = shorter delay\nDashed grey = \u03BB = 1") +
+  themeo + theme(legend.position = "bottom")
+p_6f
+```
+
+**plot 6g — annual lambda, all 6 delay scenarios**
+```{r plot-6g, fig.width = 11, fig.height = 5}
+lambda_all_delays <- all_scenarios %>%
+  filter(scenario %in% c("No mitigation (baseline)",
+                          "Immediate 3/3 (100% coverage)",
+                          "5-yr delay, then immediate 3/3",
+                          "10-yr delay, then immediate 3/3",
+                          "20-yr delay, then immediate 3/3",
+                          "5-yr delay, then 5-yr phase-in",
+                          "10-yr delay, then 5-yr phase-in",
+                          "20-yr delay, then 5-yr phase-in")) %>%
+  group_by(scenario) %>%
+  arrange(year) %>%
+  mutate(lambda_t = N / lag(N)) %>%
+  filter(!is.na(lambda_t))
+
+p_6g <- ggplot(lambda_all_delays, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  scale_color_manual(values = c(
+    "No mitigation (baseline)"        = "#d73027",
+    "Immediate 3/3 (100% coverage)"   = "#253494",
+    "5-yr delay, then immediate 3/3"  = "#2166ac",
+    "10-yr delay, then immediate 3/3" = "#74add1",
+    "20-yr delay, then immediate 3/3" = "#abd9e9",
+    "5-yr delay, then 5-yr phase-in"  = "#762a83",
+    "10-yr delay, then 5-yr phase-in" = "#af8dc3",
+    "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
+  scale_linetype_manual(values = c(
+    "No mitigation (baseline)"        = "dashed",
+    "Immediate 3/3 (100% coverage)"   = "solid",
+    "5-yr delay, then immediate 3/3"  = "solid",
+    "10-yr delay, then immediate 3/3" = "solid",
+    "20-yr delay, then immediate 3/3" = "solid",
+    "5-yr delay, then 5-yr phase-in"  = "dashed",
+    "10-yr delay, then 5-yr phase-in" = "dashed",
+    "20-yr delay, then 5-yr phase-in" = "dashed")) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = "Years since 1990 baseline",
+       y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
+       color = NULL, linetype = NULL,
+       title = paste0("Annual \u03BB — all delay scenarios — ", target_period, " baseline")) + #,
+       #subtitle = "Blue = delay then immediate (solid); purple = delay then 5-yr phase-in (dashed); darker = shorter delay\nDashed grey = \u03BB = 1") +
+  themeo + theme(legend.position = "right", legend.text = element_text(size = 7))
+p_6g
+```
+
 ---
+```{r}
+# dominant eigenvector of m_3of3 = SSD
+  ev <- eigen(m_3of3)
+  ssd <- Re(ev$vectors[, 1])
+  ssd <- ssd / sum(ssd)  # normalize
+
+  # compare proportions to n0_vec / sum(n0_vec)
+  round(cbind(ssd, n0_vec / sum(n0_vec)), 4)
+
+```
 
 ## Save figures
 
@@ -1550,9 +2032,22 @@ ggsave(fig_path("09_1a_100yr_breeding_pairs"),     p_1a,  width = 9,  height = 5
 ggsave(fig_path("09_1b_100yr_age_classes"),        p_1b,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_1c_500yr_breeding_pairs"),     p_1c,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_1d_500yr_age_classes"),        p_1d,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_1e_500yr_logN"),               p_1e,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_1f_500yr_annual_lambda"),      p_1f,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_2a_100yr_matrix_N"),            p_2a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_2c_500yr_matrix_N"),            p_2c,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_2e_500yr_matrix_logN"),        p_2e,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_2f_500yr_matrix_lambda"),      p_2f,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_3a_100yr_phasein_N"),           p_3a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_3c_500yr_phasein_N"),           p_3c,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_3e_500yr_phasein_logN"),       p_3e,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_3f_500yr_phasein_lambda"),     p_3f,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6a_phasein_compare"),          p_6a,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6b_delay_immediate"),          p_6b,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6c_delay_phasein"),            p_6c,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6d_all_scenarios"),            p_6d,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_6e_lambda_delay_immediate"),   p_6e,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6f_lambda_delay_phasein"),     p_6f,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_6g_lambda_all_delays"),        p_6g,  width = 11, height = 5, dpi = 200)
 message("9 figures saved to output/figures/ with suffix ", output_sfx)
 ```

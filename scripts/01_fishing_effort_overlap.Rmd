@@ -10,8 +10,8 @@ knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
   message = FALSE,
-  fig.width = 10,
-  fig.height = 8
+  fig.width = 7,
+  fig.height = 10
 )
 ```
 
@@ -34,6 +34,7 @@ library(here)
 library(viridis)
 library(RColorBrewer)
 library(scales)
+library(patchwork)
 
 # Date suffix for versioned output files — prevents overwriting previous runs
 date_sfx <- format(Sys.Date(), "%Y-%m-%d")
@@ -81,6 +82,61 @@ bird_layers <- list(
 # Load pelagic longline data
 pll_data <- read_csv(here("data/Pel_LL_effort.csv"))
 
+# Remove existing WCPFC rows — replaced with updated WCPFC dataset below
+pll_data <- pll_data %>%
+  filter(RFMO != "WCPFC")
+
+# Load new WCPFC pelagic longline data
+wcpfc_raw <- read_csv(
+  here("data/WCPFC_L_PUBLIC_BY_YY_MM_FLAG/WCPFC_L_PUBLIC_BY_YY_MM_FLAG.csv")
+)
+
+# Convert CWP 5-degree cell codes to decimal degree centroids
+# CWP codes give the boundary furthest from the origin:
+#   N lat: equatorward boundary → centroid = deg + 2.5  (e.g. "00N" → 2.5°N)
+#   S lat: poleward boundary    → centroid = -(deg - 2.5) (e.g. "05S" → -2.5°S)
+#   E lon: western boundary     → centroid = deg + 2.5  (e.g. "120E" → 122.5°E)
+#   W lon: western boundary     → centroid = -(deg - 2.5) (e.g. "155W" → -152.5°W)
+# Note: there is no "00S" — "05S" is the equatorward-most S cell (0–5°S)
+parse_lat5 <- function(x) {
+  deg <- as.numeric(stringr::str_extract(x, "\\d+"))
+  hem <- stringr::str_sub(x, -1, -1)
+  ifelse(hem == "S", -(deg - 2.5), deg + 2.5)
+}
+
+parse_lon5 <- function(x) {
+  deg <- as.numeric(stringr::str_extract(x, "\\d+"))
+  hem <- stringr::str_sub(x, -1, -1)
+  ifelse(hem == "W", -(deg - 2.5), deg + 2.5)
+}
+
+# Retain relevant columns and rename to match pll_data structure
+# HHOOKS is in units of hundreds of hooks — multiply by 100 to get individual hooks
+wcpfc_std <- wcpfc_raw %>%
+  select(YY, MM, flag_code, LAT5, LON5, HHOOKS) %>%
+  mutate(
+    Lat   = parse_lat5(LAT5),
+    Lon   = parse_lon5(LON5),
+    RFMO  = "WCPFC",
+    Hooks = HHOOKS * 100
+  ) %>%
+  rename(
+    Year  = YY,
+    Month = MM,
+    Flag  = flag_code
+  ) %>%
+  select(Year, Month, RFMO, Flag, Lon, Lat, Hooks)
+
+# Combine with remaining pelagic data
+pll_data <- bind_rows(pll_data, wcpfc_std)
+
+# Filter to 1990-2009 to match WAAL distributions
+pll_data <- pll_data %>%
+  filter(Year >= 1990, Year <= 2009)
+
+# Save disaggregated PLL table for future fleet/RFMO partitioning
+write_csv(pll_data, here("output/pll_effort_by_fleet.csv"))
+
 # Calculate summary statistics
 total_pel_hooks <- sum(pll_data$Hooks, na.rm = TRUE)
 mean_annual_pel <- pll_data %>%
@@ -89,8 +145,30 @@ mean_annual_pel <- pll_data %>%
   pull(total_hooks) %>%
   mean()
 
-cat("Total pelagic hooks:", scales::comma(total_pel_hooks), "\n")
-cat("Mean annual pelagic hooks:", scales::comma(mean_annual_pel), "\n")
+tibble(metric = c("Total pelagic hooks", "Mean annual pelagic hooks"),
+       value  = c(scales::comma(total_pel_hooks), scales::comma(mean_annual_pel)))
+
+# Summary by RFMO
+pll_summary_rfmo <- pll_data %>%
+  group_by(RFMO) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+pll_summary_rfmo %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
+# Summary by Flag (fleet)
+pll_summary_flag <- pll_data %>%
+  group_by(Flag) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+pll_summary_flag %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
 
 # Calculate mean annual effort by location:
 # Step 1 — sum hooks across months within each year to get total annual effort per cell
@@ -127,57 +205,78 @@ rast_pll_cumulative_scaled <- rast_pll_cumulative / 1e6
 # Load demersal longline data from multiple sources
 ccamlr_data <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"))
 arg_data <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"))
-chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"))
+chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv")) %>%
+  filter(FISHERY != "Pel LL SWO")  # Exclude pelagic swordfish rows (PLL, not DLL)
 falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"))
 namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"))
 saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"))
 nz_data <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"), show_col_types = FALSE)
 
 # Standardize column names for each dataset
+# fleet_col: optional column name to retain as Fleet (e.g. vessel nationality in CCAMLR)
+# rfmo: RFMO affiliation string, NA for datasets not reported through an RFMO
 standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",
-                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month") {
-  data %>%
-    select(all_of(c(year_col, month_col, lat_col, lon_col, hooks_col))) %>%
+                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month",
+                                  fleet_col = NULL, rfmo = NA) {
+  cols <- c(year_col, month_col, lat_col, lon_col, hooks_col)
+  if (!is.null(fleet_col)) cols <- c(cols, fleet_col)
+
+  out <- data %>%
+    select(all_of(cols)) %>%
     rename(
-      Year = all_of(year_col),
+      Year  = all_of(year_col),
       Month = all_of(month_col),
-      Lat = all_of(lat_col),
-      Lon = all_of(lon_col),
+      Lat   = all_of(lat_col),
+      Lon   = all_of(lon_col),
       Hooks = all_of(hooks_col)
     ) %>%
-    mutate(dataset = dataset_name)
+    mutate(dataset = dataset_name, RFMO = rfmo)
+
+  if (!is.null(fleet_col)) {
+    out <- out %>% rename(Fleet = all_of(fleet_col))
+  } else {
+    # For single-country datasets, use dataset name as fleet identifier
+    out <- out %>% mutate(Fleet = dataset_name)
+  }
+
+  out
 }
 
 # Standardize each dataset
 ccamlr_std <- standardize_dem_data(
   ccamlr_data, "CCAMLR",
   lon_col = "longitude_5deg", lat_col = "latitude_5deg",
-  hooks_col = "hook_count", year_col = "year", month_col = "month"
+  hooks_col = "hook_count", year_col = "year", month_col = "month",
+  fleet_col = "vessel_nationality_code", rfmo = "CCAMLR"
 )
 
-arg_std <- standardize_dem_data(arg_data, "Argentina", lon_col = "Lng", hooks_col = "Effort")
-chile_std <- standardize_dem_data(chile_data, "Chile", lon_col = "Lng", hooks_col = "Effort")
-falk_std <- standardize_dem_data(falk_data, "Falklands", lon_col = "Lng", hooks_col = "Effort")
-namibia_std <- namibia_data %>% mutate(dataset = "Namibia")
-saf_std <- saf_data %>% rename(Hooks = Effort) %>% mutate(dataset = "South Africa")
+arg_std   <- standardize_dem_data(arg_data,  "Argentina", lon_col = "Lng", hooks_col = "Effort")
+chile_std <- standardize_dem_data(chile_data, "Chile",    lon_col = "Lng", hooks_col = "Effort")
+falk_std  <- standardize_dem_data(falk_data,  "Falklands", lon_col = "Lng", hooks_col = "Effort")
+namibia_std <- namibia_data %>% mutate(dataset = "Namibia",      RFMO = NA_character_, Fleet = "Namibia")
+saf_std     <- saf_data %>% rename(Hooks = Effort) %>%
+                             mutate(dataset = "South Africa", RFMO = NA_character_, Fleet = "South Africa")
 nz_std <- nz_data %>%
   select(year, month_number, truncated_lat, truncated_long, total_hooks) %>%
   rename(Year = year, Month = month_number, Lat = truncated_lat,
          Lon = truncated_long, Hooks = total_hooks) %>%
-  mutate(dataset = "New Zealand")
+  mutate(dataset = "New Zealand", RFMO = NA_character_, Fleet = "New Zealand")
 # Note: NZ data uses x.0 cell centers (e.g. 170, 175); other DLL sources use x.5 (e.g. 172.5, 177.5)
 # NZ is rasterized separately and resampled to the x.5 grid below to avoid checkerboard artifacts
 
 # Diagnostic: compare coordinate grid offsets across datasets before combining
 # Different 5-degree grid anchors will cause rasterization issues (checkerboard)
-cat("Grid alignment check — first 5 unique Lon values per source (before wrapping):\n")
-cat("  CCAMLR:     ", paste(head(sort(unique(ccamlr_std$Lon)), 5), collapse = ", "), "\n")
-cat("  Argentina:  ", paste(head(sort(unique(arg_std$Lon)), 5), collapse = ", "), "\n")
-cat("  Chile:      ", paste(head(sort(unique(chile_std$Lon)), 5), collapse = ", "), "\n")
-cat("  Falklands:  ", paste(head(sort(unique(falk_std$Lon)), 5), collapse = ", "), "\n")
-cat("  Namibia:    ", paste(head(sort(unique(namibia_std$Lon)), 5), collapse = ", "), "\n")
-cat("  S. Africa:  ", paste(head(sort(unique(saf_std$Lon)), 5), collapse = ", "), "\n")
-cat("  New Zealand:", paste(head(sort(unique(nz_std$Lon)), 5), collapse = ", "), "\n")
+# Grid alignment check — first 5 unique Lon values per source (before wrapping)
+tribble(
+  ~source,        ~first_5_lon_values,
+  "CCAMLR",       paste(head(sort(unique(ccamlr_std$Lon)), 5), collapse = ", "),
+  "Argentina",    paste(head(sort(unique(arg_std$Lon)),    5), collapse = ", "),
+  "Chile",        paste(head(sort(unique(chile_std$Lon)),  5), collapse = ", "),
+  "Falklands",    paste(head(sort(unique(falk_std$Lon)),   5), collapse = ", "),
+  "Namibia",      paste(head(sort(unique(namibia_std$Lon)),5), collapse = ", "),
+  "S. Africa",    paste(head(sort(unique(saf_std$Lon)),    5), collapse = ", "),
+  "New Zealand",  paste(head(sort(unique(nz_std$Lon)),     5), collapse = ", ")
+)
 
 # Combine all demersal data
 dll_data <- bind_rows(
@@ -191,6 +290,9 @@ dll_data <- dll_data %>%
   filter(!is.na(Lon), !is.na(Lat)) %>%
   mutate(Lon = ifelse(Lon > 180, Lon - 360, Lon))
 
+# Save disaggregated DLL table for future fleet/RFMO partitioning
+write_csv(dll_data, here("output/dll_effort_by_fleet.csv"))
+
 # Calculate summary statistics
 total_dem_hooks <- sum(dll_data$Hooks, na.rm = TRUE)
 mean_annual_dem <- dll_data %>%
@@ -199,8 +301,30 @@ mean_annual_dem <- dll_data %>%
   pull(total_hooks) %>%
   mean()
 
-cat("Total demersal hooks:", scales::comma(total_dem_hooks), "\n")
-cat("Mean annual demersal hooks:", scales::comma(mean_annual_dem), "\n")
+tibble(metric = c("Total demersal hooks", "Mean annual demersal hooks"),
+       value  = c(scales::comma(total_dem_hooks), scales::comma(mean_annual_dem)))
+
+# Summary by dataset and RFMO
+dll_summary_dataset <- dll_data %>%
+  group_by(dataset, RFMO) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+dll_summary_dataset %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
+# Summary by Fleet (CCAMLR broken out by vessel nationality)
+dll_summary_fleet <- dll_data %>%
+  group_by(Fleet) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks))
+
+dll_summary_fleet %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
 
 # Process non-NZ and NZ sources separately — they use different 5° grid conventions
 # Non-NZ: cell centers at x.5 (e.g. 172.5, 177.5); NZ: cell centers at x.0 (e.g. 170, 175)
@@ -262,17 +386,17 @@ rast_dll_cumulative_scaled <- rast_dll_cumulative / 1e6
 library(dplyr)
 
 dll_summary <- dll_data %>%
-  group_by(.data[["dataset"]]) %>%
+  group_by(dataset, RFMO, Fleet) %>%
   summarise(
-    min_year = min(.data[["Year"]], na.rm = TRUE),
-    max_year = max(.data[["Year"]], na.rm = TRUE),
-    min_lat  = min(.data[["Lat"]],  na.rm = TRUE),
-    max_lat  = max(.data[["Lat"]],  na.rm = TRUE),
-    min_lon  = min(.data[["Lon"]],  na.rm = TRUE),
-    max_lon  = max(.data[["Lon"]],  na.rm = TRUE),
-    total_hooks = sum(.data[["Hooks"]], na.rm = TRUE),
+    min_year = min(Year, na.rm = TRUE),
+    max_year = max(Year, na.rm = TRUE),
+    min_lat  = min(Lat,  na.rm = TRUE),
+    max_lat  = max(Lat,  na.rm = TRUE),
+    min_lon  = min(Lon,  na.rm = TRUE),
+    max_lon  = max(Lon,  na.rm = TRUE),
+    total_hooks = sum(Hooks, na.rm = TRUE),
     n_records   = n(),
-    n_years     = n_distinct(.data[["Year"]]),
+    n_years     = n_distinct(Year),
     .groups = "drop"
   )
 
@@ -303,17 +427,16 @@ calculate_overlap <- function(bird_layers, fishing_rast, extent) {
 
   # Calculate overlap for each age class
   overlaps <- map(bird_layers, function(bird_rast) {
-    bird_crop <- crop(bird_rast, extent)
-    # Normalize so values represent the proportion of the population in each cell
-    bird_norm <- bird_crop / global(bird_crop, fun = "sum", na.rm = TRUE)[1,1]
-    # Resample normalized distribution to match fishing raster grid
-    # method = "average" aggregates all fine-resolution bird cells within each
-    # coarse 5-degree fishing cell (na.rm implicit), which correctly captures
-    # high at-sea density around land masses like South Georgia rather than
-    # point-sampling at the cell center where land NA values can dominate
-    bird_resample <- resample(bird_norm, fishing_crop, method = "average")
-    # Overlap index: hooks weighted by proportion of population present
-    overlap <- fishing_crop * bird_resample
+    # Normalize against the full Clay et al. 2019 raster extent (-180 to 180,
+    # -90 to 0) before cropping, so proportions reflect each cell's share of
+    # the global tracked population — ensures values are comparable across age
+    # classes (wide-ranging juveniles are not artificially inflated relative to
+    # experienced breeders that rarely leave the study area)
+    bird_norm <- bird_rast / global(bird_rast, fun = "sum", na.rm = TRUE)[1,1]
+    # Crop normalized distribution to fishing raster extent
+    bird_crop <- crop(bird_norm, fishing_crop)
+    # Overlap index: hooks weighted by proportion of global population present
+    overlap <- fishing_crop * bird_crop
     return(overlap)
   })
 
@@ -323,12 +446,31 @@ calculate_overlap <- function(bird_layers, fishing_rast, extent) {
 # Calculate overlaps for both fishery types
 dem_overlaps <- calculate_overlap(bird_layers, rast_dll, ext_dem)
 pel_overlaps <- calculate_overlap(bird_layers, rast_pll, ext_pel)
+
+#testing a different version that does not remove anything from any dataset, instead extending so that all cover the full southern ocean
+# Full-extent overlap — resample fishing rasters to the bird raster grid as template,
+# snapping to identical extent, resolution, and origin. New cells filled with NA
+# (= 0 in sums). Tests whether the artificial ext_dem/ext_pel limits affect estimates.
+bird_template <- bird_layers[[1]]
+
+dll_aligned <- resample(rast_dll, bird_template, method = "bilinear")
+pll_aligned <- resample(rast_pll, bird_template, method = "bilinear")
+
+dem_overlap_simple <- map(bird_layers, ~{
+  bird_norm <- .x / global(.x, fun = "sum", na.rm = TRUE)[1,1]
+  dll_aligned * bird_norm
+})
+
+pel_overlap_simple <- map(bird_layers, ~{
+  bird_norm <- .x / global(.x, fun = "sum", na.rm = TRUE)[1,1]
+  pll_aligned * bird_norm
+})
 ```
 
 ```{r summarize-total-hooks}
 # Function to sum total hooks in overlap areas
-sum_overlap_hooks <- function(overlap_list) {
-  map_dbl(overlap_list, ~global(.x, "sum", na.rm = TRUE)[1,1])
+sum_overlap_hooks <- function(overlap_list) { #takes list of the overlap rasters
+  map_dbl(overlap_list, ~global(.x, "sum", na.rm = TRUE)[1,1]) #calculate total hook-weighted by bird density across all grid cells
 }
 
 # Calculate total hooks overlapping with each age class
@@ -341,6 +483,19 @@ hooks_summary <- tibble(
 
 print(hooks_summary)
 
+# Compare cropped-extent vs full-extent overlap approaches
+hooks_comparison <- tibble(
+  age_class            = names(bird_layers),
+  dem_cropped          = sum_overlap_hooks(dem_overlaps),
+  dem_full             = sum_overlap_hooks(dem_overlap_simple),
+  dem_diff_pct         = round((dem_full - dem_cropped) / dem_cropped * 100, 2),
+  pel_cropped          = sum_overlap_hooks(pel_overlaps),
+  pel_full             = sum_overlap_hooks(pel_overlap_simple),
+  pel_diff_pct         = round((pel_full - pel_cropped) / pel_cropped * 100, 2)
+)
+
+print(hooks_comparison) # they are identical, good.
+
 # Save summary table
 write_csv(hooks_summary, here(paste0("output/overlap_hooks_summary_", date_sfx, ".csv")))
 ```
@@ -352,6 +507,204 @@ write_csv(hooks_summary, here(paste0("output/overlap_hooks_summary_", date_sfx, 
 ```{r load-basemap}
 # Load Natural Earth land polygons for mapping
 ne_land <- st_read(here("data/ne_10m_land/ne_10m_land.shp"), quiet = TRUE)
+```
+
+## CCAMLR Fleet Double-Count Diagnostic
+
+```{r diagnostic-ccamlr-fleet-overlap, fig.width=12, fig.height=8}
+# Check for potential double-counting between CCAMLR fleet rows and standalone
+# national datasets for all fleet codes that have a corresponding source file.
+#
+# NZL is handled separately using the grid-aligned raster (rast_dll_nz_aligned)
+# because the standalone NZ file uses x.0 cell centers vs x.5 for all other sources.
+# All other fleets are already on the x.5 grid in dll_data and can be matched directly.
+
+# CCAMLR code → standalone dataset name
+fleet_dataset_map <- tribble(
+  ~ccamlr_code, ~standalone_dataset,
+  "ARG",        "Argentina",
+  "CHL",        "Chile",
+  "ZAF",        "South Africa",
+  "NAM",        "Namibia",
+  "GBR",        "Falklands"
+)
+
+# Summarise mean annual effort per cell for a subset of dll_data
+mean_annual_cells <- function(data) {
+  data %>%
+    group_by(Lon, Lat, Year) %>%
+    summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+    group_by(Lon, Lat) %>%
+    summarise(mean_effort = mean(annual_hooks, na.rm = TRUE), .groups = "drop")
+}
+
+# Build comparison list for non-NZ fleets
+comparisons <- map2(fleet_dataset_map$ccamlr_code, fleet_dataset_map$standalone_dataset,
+  function(code, standalone) {
+    ccamlr_cells     <- mean_annual_cells(dll_data %>% filter(dataset == "CCAMLR", Fleet == code))
+    standalone_cells <- mean_annual_cells(dll_data %>% filter(dataset == standalone))
+    matched          <- standalone_cells %>%
+                          inner_join(ccamlr_cells %>% select(Lon, Lat), by = c("Lon", "Lat"))
+    list(ccamlr_code = code, standalone_name = standalone,
+         ccamlr = ccamlr_cells, standalone = standalone_cells, matched = matched)
+  }
+)
+names(comparisons) <- fleet_dataset_map$ccamlr_code
+
+# NZL: use grid-aligned raster for standalone (converts x.0 → x.5 grid)
+nz_aligned_df    <- as.data.frame(rast_dll_nz_aligned, xy = TRUE, na.rm = TRUE) %>%
+                      rename(Lon = x, Lat = y)
+ccamlr_nzl_cells <- mean_annual_cells(dll_data %>% filter(dataset == "CCAMLR", Fleet == "NZL"))
+comparisons[["NZL"]] <- list(
+  ccamlr_code     = "NZL",
+  standalone_name = "New Zealand",
+  ccamlr          = ccamlr_nzl_cells,
+  standalone      = nz_aligned_df,
+  matched         = nz_aligned_df %>%
+                      inner_join(ccamlr_nzl_cells %>% select(Lon, Lat), by = c("Lon", "Lat"))
+)
+
+# Summary table: CCAMLR fleet vs standalone dataset spatial overlap
+map_dfr(comparisons, function(comp) {
+  tibble(
+    ccamlr_code     = comp$ccamlr_code,
+    standalone      = comp$standalone_name,
+    ccamlr_hooks    = round(sum(comp$ccamlr$mean_effort,  na.rm = TRUE)),
+    matched_hooks   = round(sum(comp$matched$mean_effort, na.rm = TRUE)),
+    ccamlr_cells    = nrow(comp$ccamlr),
+    matched_cells   = nrow(comp$matched)
+  )
+})
+
+# Reference totals for % context — all in mean annual hooks (same units as matched_h
+# from mean_annual_cells(), so comparisons are consistent across scales)
+# rast_dll is the mean annual effort raster; global sum = total mean annual DLL hooks
+dll_mean_annual_total <- global(rast_dll, "sum", na.rm = TRUE)[1,1]
+
+# Southern Ocean: lat <= -30 (conventional boundary for DLL albatross overlap)
+dll_so_mean_annual <- dll_data %>%
+  filter(Lat <= -30) %>%
+  group_by(Year) %>%
+  summarise(h = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  pull(h) %>%
+  mean()
+
+# CCAMLR total: mean annual hooks across all fleet codes
+ccamlr_mean_annual <- dll_data %>%
+  filter(dataset == "CCAMLR") %>%
+  group_by(Year) %>%
+  summarise(h = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  pull(h) %>%
+  mean()
+
+# Standalone totals per dataset: mean annual hooks for each non-CCAMLR source
+standalone_mean_annual <- dll_data %>%
+  filter(dataset != "CCAMLR") %>%
+  group_by(dataset, Year) %>%
+  summarise(h = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(dataset) %>%
+  summarise(mean_annual = mean(h), .groups = "drop")
+
+# % context table: matched_hooks (standalone side of overlap) as % of key reference totals
+map_dfr(comparisons, function(comp) {
+  standalone_ma <- standalone_mean_annual %>%
+    filter(dataset == comp$standalone_name) %>%
+    pull(mean_annual)
+  matched_h <- sum(comp$matched$mean_effort, na.rm = TRUE)
+  tibble(
+    fleet              = comp$ccamlr_code,
+    standalone_dataset = comp$standalone_name,
+    matched_hooks      = round(matched_h),
+    pct_total_dll      = round(100 * matched_h / dll_mean_annual_total, 3),
+    pct_so_dll         = round(100 * matched_h / dll_so_mean_annual,    3),
+    pct_ccamlr         = round(100 * matched_h / ccamlr_mean_annual,    3),
+    pct_standalone     = if (length(standalone_ma) == 0 || standalone_ma == 0) NA_real_
+                         else round(100 * matched_h / standalone_ma, 3)
+  )
+})
+
+# Map function
+make_diag_map <- function(df, title, map_extent) {
+  if (nrow(df) == 0) {
+    return(ggplot() +
+      labs(title = paste(title, "(no matched cells)")) +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 9, face = "bold")))
+  }
+  ggplot(df, aes(x = Lon, y = Lat, fill = mean_effort)) +
+    geom_tile(width = 5, height = 5) +
+    geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+    coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+    scale_fill_viridis_c(name = "Mean annual\nhooks", labels = scales::comma,
+                         na.value = "transparent") +
+    labs(title = title) +
+    theme_minimal() +
+    theme(plot.title  = element_text(size = 9, face = "bold"),
+          legend.position = "bottom")
+}
+
+# Temporal overlap check for NZL — the only fleet with meaningful spatial matches
+# NZ standalone uses x.0 grid vs CCAMLR x.5, so match within 2.5° (same 5° cell area)
+# Data notes from NZ data holder confirm x.0 values are cell midpoints, not corners
+nz_raw <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"),
+                   show_col_types = FALSE) %>%
+  mutate(Lon = ifelse(truncated_long > 180, truncated_long - 360, truncated_long),
+         Lat = truncated_lat) %>%
+  filter(year >= 1990, year <= 2009)
+
+ccamlr_nzl_raw <- dll_data %>%
+  filter(dataset == "CCAMLR", Fleet == "NZL")
+
+# Cross join and keep pairs within 2.5° (accounts for x.0 vs x.5 grid offset)
+nzl_temporal <- ccamlr_nzl_raw %>%
+  rename(ccamlr_lon = Lon, ccamlr_lat = Lat, ccamlr_year = Year, ccamlr_hooks = Hooks) %>%
+  cross_join(
+    nz_raw %>%
+      select(nz_lon = Lon, nz_lat = Lat, nz_year = year, nz_hooks = total_hooks)
+  ) %>%
+  filter(abs(ccamlr_lon - nz_lon) <= 2.5,
+         abs(ccamlr_lat - nz_lat) <= 2.5)
+
+same_year_overlap <- nzl_temporal %>%
+  filter(ccamlr_year == nz_year) %>%
+  group_by(ccamlr_lon, ccamlr_lat, ccamlr_year) %>%
+  summarise(ccamlr_hooks = sum(ccamlr_hooks, na.rm = TRUE),
+            nz_hooks     = sum(nz_hooks,     na.rm = TRUE),
+            .groups = "drop") %>%
+  arrange(ccamlr_lon, ccamlr_lat, ccamlr_year)
+
+# NZL temporal overlap summary
+tibble(
+  metric = c("Proximity-matched cell pairs (same 5° area)",
+             "Cell-year combinations with same-year data in both",
+             "Cell-year combinations with different-year data only"),
+  count  = c(
+    nrow(nzl_temporal %>% distinct(ccamlr_lon, ccamlr_lat, nz_lon, nz_lat)),
+    nrow(same_year_overlap),
+    nrow(nzl_temporal %>% filter(ccamlr_year != nz_year) %>%
+           distinct(ccamlr_lon, ccamlr_lat, nz_lon, nz_lat))
+  )
+)
+
+# Same-year matches — hooks per cell-year (genuine double-count risk)
+print(same_year_overlap, n = Inf)
+
+# Print one map pair per fleet
+walk(comparisons, function(comp) {
+  all_lons <- c(comp$ccamlr$Lon, comp$standalone$Lon)
+  all_lats <- c(comp$ccamlr$Lat, comp$standalone$Lat)
+  ext <- c(min(all_lons) - 5, max(all_lons) + 5,
+           min(all_lats) - 5, max(all_lats) + 5)
+
+  p1 <- make_diag_map(comp$ccamlr,  paste0("CCAMLR — ", comp$ccamlr_code), ext)
+  p2 <- make_diag_map(comp$matched, paste0(comp$standalone_name, " — matched cells only"), ext)
+
+  print(
+    p1 + p2 +
+      plot_annotation(title = paste("Double-count diagnostic:", comp$ccamlr_code,
+                                    "vs", comp$standalone_name))
+  )
+})
 ```
 
 ## Fishing Effort Maps
@@ -620,7 +973,7 @@ ggsave(here(paste0("output/maps/fishing_effort_pelagic_cumulative_scaled_log_", 
        p_pel_cumulative_scaled_log, width = 10, height = 6, dpi = 300)
 ```
 
-check a mismatched section
+check a mismatched section that doesn't show up in Clay et al 2019
 ```{r}
   # DLL sources in that box
   dll_data %>%
@@ -666,7 +1019,6 @@ dist_maps <- map2(bird_layers, names(bird_layers),
                    ~map_waal_distribution(.x, .y, ext_bird))
 
 # Display in grid
-library(patchwork)
 wrap_plots(dist_maps, ncol = 2)
 
 # Save individual maps
@@ -847,6 +1199,13 @@ iwalk(dem_overlaps, function(r, age) {
 iwalk(pel_overlaps, function(r, age) {
   writeRaster(r, here(paste0("output/rasters/overlap_pelagic_", age, "_", date_sfx, ".tif")), overwrite = TRUE)
 })
+
+# Save fleet/RFMO summary tables (numeric values, no comma formatting)
+# Useful for downstream fleet-level bycatch partitioning
+write_csv(pll_summary_rfmo,  here(paste0("output/pll_summary_by_rfmo_",     date_sfx, ".csv")))
+write_csv(pll_summary_flag,  here(paste0("output/pll_summary_by_flag_",     date_sfx, ".csv")))
+write_csv(dll_summary_dataset, here(paste0("output/dll_summary_by_dataset_", date_sfx, ".csv")))
+write_csv(dll_summary_fleet,   here(paste0("output/dll_summary_by_fleet_",   date_sfx, ".csv")))
 ```
 
 # Session Info

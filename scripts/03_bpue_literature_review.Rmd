@@ -260,7 +260,8 @@ write_csv(bpue_std, here("data/BPUE_2926_standardized.csv"))
 ## Pelagic longline effort
 
 ```{r load-pll}
-pll_data <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE)
+# Read cleaned PLL effort from script 01 output (includes corrected WCPFC data, filtered to 1990-2009)
+pll_data <- read_csv(here("output/pll_effort_by_fleet.csv"), show_col_types = FALSE)
 
 # Standardize fleet names to match BPUE CSV naming
 pll_data <- pll_data %>%
@@ -289,60 +290,10 @@ pll_data %>% count(fleet, sort = TRUE) %>% print(n = 30)
 ## Demersal longline effort
 
 ```{r load-dll}
-# Load all demersal sources (same approach as script 01)
-ccamlr_data <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"), show_col_types = FALSE)
-arg_data <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"), show_col_types = FALSE)
-chile_data <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"), show_col_types = FALSE)
-falk_data <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"), show_col_types = FALSE)
-namibia_data <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"), show_col_types = FALSE)
-saf_data <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"), show_col_types = FALSE)
-nz_data <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"), show_col_types = FALSE)
-
-# Standardize column names
-standardize_dem_data <- function(data, dataset_name, lon_col = "Lon", lat_col = "Lat",
-                                  hooks_col = "Hooks", year_col = "Year", month_col = "Month") {
-  data %>%
-    select(all_of(c(year_col, month_col, lat_col, lon_col, hooks_col))) %>%
-    rename(Year = all_of(year_col), Month = all_of(month_col),
-           Lat = all_of(lat_col), Lon = all_of(lon_col),
-           Hooks = all_of(hooks_col)) %>%
-    mutate(fleet = dataset_name)
-}
-
-ccamlr_std <- standardize_dem_data(
-  ccamlr_data, "CCAMLR",
-  lon_col = "longitude_5deg", lat_col = "latitude_5deg",
-  hooks_col = "hook_count", year_col = "year", month_col = "month"
-)
-arg_std <- standardize_dem_data(arg_data, "Argentina", lon_col = "Lng", hooks_col = "Effort")
-chile_std <- standardize_dem_data(chile_data, "Chile", lon_col = "Lng", hooks_col = "Effort")
-falk_std <- standardize_dem_data(falk_data, "Falklands", lon_col = "Lng", hooks_col = "Effort")
-namibia_std <- namibia_data %>%
-  mutate(fleet = "Namibia") %>%
-  select(Year, Month, Lat, Lon, Hooks, fleet)
-saf_std <- saf_data %>%
-  rename(Hooks = Effort) %>%
-  mutate(fleet = "South Africa") %>%
-  select(Year, Month, Lat, Lon, Hooks, fleet)
-
-nz_std <- standardize_dem_data(
-  nz_data, "New Zealand",
-  lon_col = "truncated_long", lat_col = "truncated_lat",
-  hooks_col = "total_hooks", year_col = "year", month_col = "month_number"
-)
-
-# Combine and clean
-# Note: NZ rows with missing coordinates are dropped via filter(!is.na) below
-dll_data <- bind_rows(ccamlr_std, arg_std, chile_std, falk_std, namibia_std, saf_std, nz_std) %>%
-  filter(!is.na(Lon), !is.na(Lat)) %>%
-  mutate(
-    RFMO = case_when(
-      fleet == "CCAMLR" ~ "CCAMLR",
-      TRUE ~ NA_character_
-    ),
-    Lon = ifelse(Lon > 180, Lon - 360, Lon)
-  ) %>%
-  filter(Year >= 1990, Year <= 2009) %>%
+# Read cleaned DLL effort from script 01 output (all sources combined, Chile PLL filtered,
+# NZ coordinates at x.0 cell midpoints per data holder notes, filtered to 1990-2009)
+dll_data <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  rename(fleet = Fleet) %>%
   mutate(year_group = case_when(
     Year >= 1990 & Year <= 1994 ~ "1990-1994",
     Year >= 1995 & Year <= 1999 ~ "1995-1999",

@@ -238,7 +238,7 @@ notably different from 1 suggests median would better represent a typical year i
 
 ```{r mean-vs-median-effort}
 # --- PLL: sum Hooks to annual totals per year ---
-pll_annual <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE) %>%
+pll_annual <- read_csv(here("output/pll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
   filter(Year >= 1990, Year <= 2009) %>%
   mutate(
     year_group = case_when(
@@ -251,47 +251,20 @@ pll_annual <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE) %
   group_by(fishery = "PLL", year_group, year = Year) %>%
   summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop")
 
-# --- DLL: load each source, standardise to (year, hooks, fleet), combine ---
-dll_ccamlr <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"),
-                        show_col_types = FALSE) %>%
-  transmute(year = year, hooks = hook_count, fleet = "CCAMLR")
-
-dll_arg   <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = Year, hooks = Effort, fleet = "Argentina")
-
-dll_chile <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = Year, hooks = Effort, fleet = "Chile")
-
-dll_falk  <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = Year, hooks = Effort, fleet = "Falklands")
-
-dll_nam   <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = Year, hooks = Hooks, fleet = "Namibia")
-
-dll_saf   <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = Year, hooks = Effort, fleet = "South Africa")
-
-dll_nz    <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"),
-                       show_col_types = FALSE) %>%
-  transmute(year = year, hooks = total_hooks, fleet = "New Zealand")
-
-dll_annual <- bind_rows(dll_ccamlr, dll_arg, dll_chile, dll_falk, dll_nam, dll_saf, dll_nz) %>%
-  filter(year >= 1990, year <= 2009) %>%
+# --- DLL: read cleaned output from script 01 (Chile PLL filtered, all sources combined) ---
+dll_annual <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  rename(fleet = Fleet) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
   mutate(
     year_group = case_when(
-      year >= 1990 & year <= 1994 ~ "1990-1994",
-      year >= 1995 & year <= 1999 ~ "1995-1999",
-      year >= 2000 & year <= 2004 ~ "2000-2004",
-      year >= 2005 & year <= 2009 ~ "2005-2009"
+      Year >= 1990 & Year <= 1994 ~ "1990-1994",
+      Year >= 1995 & Year <= 1999 ~ "1995-1999",
+      Year >= 2000 & Year <= 2004 ~ "2000-2004",
+      Year >= 2005 & Year <= 2009 ~ "2005-2009"
     )
   ) %>%
-  group_by(fishery = "DLL", year_group, year) %>%
-  summarise(annual_hooks = sum(hooks, na.rm = TRUE), .groups = "drop")
+  group_by(fishery = "DLL", year_group, year = Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop")
 
 # Combine PLL + DLL
 effort_by_year <- bind_rows(pll_annual, dll_annual) %>%
@@ -504,57 +477,19 @@ no spatial filtering applied (this is total global effort, not overlap-weighted)
 # Filtering to Lat <= -20 restricts to the southern ocean study area where WAAL occur,
 # matching the published Tuck 2015 figure scale (~200–400M hooks/year).
 # NA Flag values are relabeled "Other" so they collapse with other minor fleets.
-pll_raw_yr <- read_csv(here("data/Pel_LL_effort.csv"), show_col_types = FALSE) %>%
+pll_raw_yr <- read_csv(here("output/pll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
   filter(Year >= 1990, Year <= 2009, Lat <= -20) %>%
   mutate(Flag = ifelse(is.na(Flag), "Other", Flag)) %>%
   group_by(Year, fleet = Flag) %>%
   summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
   mutate(fishery = "PLL")
 
-# ── DLL by year: read each source, assign fleet label, sum across spatial cells ──
-ccamlr_yr <- read_csv(here("data/DATA_PRODUCT_725/C2_725.csv"),
-                      show_col_types = FALSE) %>%
-  filter(year >= 1990, year <= 2009) %>%
-  group_by(Year = year, fleet = "CCAMLR") %>%
-  summarise(total_hooks = sum(hook_count, na.rm = TRUE), .groups = "drop")
-
-arg_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Arg_Dem_LL.csv"),
-                   show_col_types = FALSE) %>%
+# ── DLL by year: read cleaned output from script 01 (Chile PLL filtered, all sources combined) ──
+dll_raw_yr <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  rename(fleet = Fleet) %>%
   filter(Year >= 1990, Year <= 2009) %>%
-  group_by(Year, fleet = "Argentina") %>%
-  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
-
-chile_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Chile_LL.csv"),
-                     show_col_types = FALSE) %>%
-  filter(FISHERY != "Pel LL SWO", Year >= 1990, Year <= 2009) %>%
-  group_by(Year, fleet = "Chile") %>%
-  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
-
-falk_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Falklands demersal LL.csv"),
-                    show_col_types = FALSE) %>%
-  filter(Year >= 1990, Year <= 2009) %>%
-  group_by(Year, fleet = "Falklands") %>%
-  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
-
-namibia_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Namibia Dem Hks Est.csv"),
-                       show_col_types = FALSE) %>%
-  filter(Year >= 1990, Year <= 2009) %>%
-  group_by(Year, fleet = "Namibia") %>%
-  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop")
-
-saf_yr <- read_csv(here("data/DemData_Clay2019_Dryad/Saf_KKlip_Dem.csv"),
-                   show_col_types = FALSE) %>%
-  filter(Year >= 1990, Year <= 2009) %>%
-  group_by(Year, fleet = "South Africa") %>%
-  summarise(total_hooks = sum(Effort, na.rm = TRUE), .groups = "drop")
-
-nz_yr <- read_csv(here("data/Rep Log 17287 BLL effort truncated.csv"),
-                  show_col_types = FALSE) %>%
-  filter(year >= 1990, year <= 2009) %>%
-  group_by(Year = year, fleet = "New Zealand") %>%
-  summarise(total_hooks = sum(total_hooks, na.rm = TRUE), .groups = "drop")
-
-dll_raw_yr <- bind_rows(ccamlr_yr, arg_yr, chile_yr, falk_yr, namibia_yr, saf_yr, nz_yr) %>%
+  group_by(Year, fleet) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
   mutate(fishery = "DLL")
 
 # ── Combine PLL + DLL ───────────────────────────────────────────────────────

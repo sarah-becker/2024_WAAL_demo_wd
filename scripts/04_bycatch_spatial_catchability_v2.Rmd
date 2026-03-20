@@ -5,7 +5,8 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-note - we may want to switch the total fishing maps to actual numbers not normalized
+note - we may want to switch the total density maps to actual numbers not normalized (decided not to as global estimates of 20100 are just MI and additional assumptions are needed to get total population)
+also, may want to update the gap filling fallback calculation (mean per fishery) to be hooks-weighted
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -20,8 +21,7 @@ knitr::opts_chunk$set(
 # Overview
 
 This script implements a **spatially-varying catchability approach** using fleet-by-period
-effort data and the BPUE literature review from script 04. It replaces the placeholder
-studies and expert elicitation in script 03d.
+effort data and the BPUE literature review from script 04. 
 
 ## Method
 
@@ -37,16 +37,18 @@ where B_study = hooks-weighted mean TOTAL WAAL density in the study's bounding b
 This extracts "pure catchability" — the per-hook risk per unit bird density.
 β is a property of the fishery's gear/practices, independent of location.
 
-**Step 2: Compute fishery-level mean beta**
+This^ builds fleet × period-specific catchability rasters spatially. 
 
-Average β across all studies within each fishery type (PLL, DLL) to get a single
-catchability value representing how dangerous each gear type is per hook per bird.
+**Step 2: Calculate bycatch using BI-specific bird density**
 
-**Step 3: Calculate bycatch using BI-specific bird density**
+For each fleet × fishery × period combo, it checks which effort cells fall within each BPUE study's bounding box and assigns that study's beta to those cells. Where multiple studies overlap a cell, it averages their betas. 
+
+It then used this equation:
 
 ```
 bycatch_cell = β_fishery × hooks_cell × BI_birds_cell
 ```
+to get bycatch per cell per fleet/fishery/time period. This is summed across each raster per fleet to get fleet bycatch, then across fishery (for each time period) to get total bycatch per fishery per time perid.
 
 Uses Bird Island age-class density rasters directly (from script 02).
 Total bycatch depends on the spatial overlap of hooks and BI birds.
@@ -86,10 +88,6 @@ clay_raw <- list(
   j2j3 = rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_J2+3_1990-2009.tif")),
   imm  = rast(here("data/WAAL_dist_Clay2019/WA_AllMonths_Both_IMM_1990-2009.tif"))
 )
-
-cat("Clay raw extents:\n")
-cat("  FB:", as.vector(ext(clay_raw$fb)), "\n")
-cat("  Total bird density:", as.vector(ext(total_bird_density)), "\n")
 ```
 
 ## Demographic proportions
@@ -123,17 +121,23 @@ pop_sizes <- c(
 )
 ```
 
-## Build BI density rasters from Clay originals
+## Build BI age-class density rasters
 
-Construct BI age-class density rasters directly from Clay distributions on the
-correct bird distribution grid (-90..0). Previous versions loaded pre-built
-rasters from script 03_final which were on the fishing effort grid (-50..65),
-cutting off South Georgia at -54°S.
+Builds `bi_dists`, the BI bird density rasters used in bycatch calculations (Section 9).
+Each cell value represents the proportion of the global WAAL population that are BI
+birds of that age class. J1 is excluded as it is not a stage in the demographic model.
 
-Steps:
-1. Normalize each Clay age-class distribution to sum to 1
-2. Weight by age-class proportion and BI's share of global population
-3. Result: proportion of global WAAL population that are BI birds of each age class, per cell
+Three steps applied sequentially to the raw Clay distributions:
+1. Normalize each age-class distribution to sum to 1 (`clay_norm`)
+2. Weight by age-class demographic proportion (`clay_weighted`)
+3. Scale by BI share of global population (`bi_dists`)
+
+After step 3, each age-class raster sums to `prop_BI × age_class_props[age]`, not 1.
+The remaining code verifies these sums are correct.
+
+Note: constructed directly from Clay distributions on the correct bird distribution
+grid (-90..0). Previous versions loaded pre-built rasters from script 03_final which
+were on the fishing effort grid (-50..65), cutting off South Georgia at -54°S.
 
 ```{r build-bi-density}
 # Population proportions (from script 02)
@@ -146,10 +150,6 @@ total_pairs <- sum(breeding_pairs$pairs)
 prop_southg <- breeding_pairs$pairs[breeding_pairs$population == "South Georgia"] / total_pairs
 prop_BI <- prop_southg * 0.6
 
-cat("Population proportions:\n")
-cat("  South Georgia:", round(prop_southg, 4), "of global\n")
-cat("  Bird Island:", round(prop_BI, 4), "of global\n\n")
-
 # Normalize Clay distributions (replace NA with 0, then divide by sum)
 clay_norm <- map(clay_raw, function(r) {
   r_zero <- subst(r, NA, 0)
@@ -159,8 +159,6 @@ clay_norm <- map(clay_raw, function(r) {
 
 # Verify normalization
 clay_sums <- map_dbl(clay_norm, ~global(.x, "sum", na.rm = TRUE)[1, 1])
-cat("Clay normalized sums (should be ~1):\n")
-print(round(clay_sums, 4))
 
 # Weight each age class by its demographic proportion
 clay_weighted <- map2(clay_norm, age_class_props, function(r, prop) {
@@ -173,16 +171,22 @@ bi_dists <- map(clay_weighted, function(r) {
 })
 
 # Total BI bird density (sum across age classes)
-bi_density_total <- Reduce("+", bi_dists)
+bi_density_total <- app(rast(bi_dists), sum, na.rm = TRUE)
 
-cat("\nBI density raster sums:\n")
-bi_sums <- map_dbl(bi_dists, ~global(.x, "sum", na.rm = TRUE)[1, 1])
-print(round(bi_sums, 6))
-cat("Total BI density sum:", round(global(bi_density_total, "sum", na.rm = TRUE)[1, 1], 6), "\n")
-cat("Expected (prop_BI × sum of age_class_props):",
-    round(prop_BI * sum(age_class_props), 6), "\n")
-cat("\nBI density extent:", as.vector(ext(bi_density_total)), "\n")
-cat("Total bird density extent:", as.vector(ext(total_bird_density)), "\n")
+# Verify BI density sums: each age class should sum to prop_BI * age_class_props[age]
+# Total across all age classes should equal prop_BI (~0.157)
+check <- tibble(
+  age_class = names(bi_dists),
+  sum = map_dbl(bi_dists, ~global(.x, "sum", na.rm = TRUE)[1, 1]),
+  expected = prop_BI * age_class_props
+) %>%
+  mutate(across(where(is.numeric), ~round(.x, 6)))
+
+# Total should equal prop_BI * sum(age_class_props)
+# (less than prop_BI because J1 is excluded — not a stage in the demographic model)
+round(global(bi_density_total, "sum", na.rm = TRUE)[1, 1], 6)
+round(prop_BI * sum(age_class_props), 6)
+check
 ```
 
 ## Basemap

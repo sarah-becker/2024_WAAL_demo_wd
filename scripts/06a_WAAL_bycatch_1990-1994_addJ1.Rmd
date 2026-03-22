@@ -316,26 +316,91 @@ tibble(
   efficacy_pct = round(c(eff_2of3, eff_3of3) * 100, 1)
 ) %>% print()
 
+# --- Bell et al. 2025 cross-check (Fig. 5, Wandering alb. SG panel) ---
+# F values digitized from log-scale figure — pending more precise reads
+# 20S = south of 20°S (primary); 25S = south of 25°S
+# ACAP = ACAP 2023 spec, ICCAT = ICCAT 2011 spec
+# BLW = Branch Line Weighting, NS = Night Setting, BSL = Bird-Scaring Lines
+
+F_none_20S <- 0.034
+F_none_25S <- 0.026
+
+bell_F <- tribble(
+  ~scenario,     ~acap_20S, ~acap_25S, ~iccat_20S, ~iccat_25S,
+  "BLW_NS",      0.001,     0.001,     0.004,      0.003,
+  "BLW_BSL",     0.005,     0.004,     0.012,      0.010,
+  "NS_BSL",      0.003,     0.003,     0.003,      0.002,
+  "BLW_NS_BSL",  0.0009,    0.0007,    0.002,      0.001,
+  "HSD",         0.005,     0.004,     NA,         NA
+) %>%
+  mutate(
+    eff_acap_20S  = 1 - (acap_20S  / F_none_20S),
+    eff_acap_25S  = 1 - (acap_25S  / F_none_25S),
+    eff_iccat_20S = 1 - (iccat_20S / F_none_20S),
+    eff_iccat_25S = 1 - (iccat_25S / F_none_25S)
+  )
+
+# 2/3 cross-check: mean efficacy across the three 2-measure combinations
+bell_2of3_acap_20S  <- mean(bell_F$eff_acap_20S[bell_F$scenario  %in% c("BLW_NS", "BLW_BSL", "NS_BSL")])
+bell_2of3_iccat_20S <- mean(bell_F$eff_iccat_20S[bell_F$scenario %in% c("BLW_NS", "BLW_BSL", "NS_BSL")], na.rm = TRUE)
+bell_3of3_acap_20S  <- bell_F$eff_acap_20S[bell_F$scenario  == "BLW_NS_BSL"]
+bell_3of3_iccat_20S <- bell_F$eff_iccat_20S[bell_F$scenario == "BLW_NS_BSL"]
+
+tibble(
+  scenario       = c("2/3 (mean of 3 combos)", "3/3 (BLW + NS + BSL)"),
+  current_code   = round(c(eff_2of3, eff_3of3) * 100, 1),
+  bell_acap_20S  = round(c(bell_2of3_acap_20S,  bell_3of3_acap_20S)  * 100, 1),
+  bell_iccat_20S = round(c(bell_2of3_iccat_20S, bell_3of3_iccat_20S) * 100, 1)
+) %>% print()
+
 # Define named mitigation scenarios
 mitigation_scenarios <- tibble(
-  scenario = c("Hook shielding only",
+  scenario = c("Night setting only",
                "Line weighting only",
-               "Night setting only",
                "Tori lines only",
-               "2/3 (tori + night)",
-               "3/3 (tori + night + weight)",
+               "2/3 literature",
+               "3/3 literature",
+               "2/3 ACAP (Bell et al. 2025)",
+               "3/3 ACAP (Bell et al. 2025)",
+               "2/3 ICCAT (Bell et al. 2025)",
+               "3/3 ICCAT (Bell et al. 2025)",
                "Complete elimination"),
-  efficacy = c(eff_hook_shield,                                          # 0.35
+  efficacy = c(eff_night_set,                                            # 0.60
                eff_line_weight,                                          # 0.65
-               eff_night_set,                                            # 0.60
                eff_tori_lines,                                           # 0.75
                eff_2of3,                                                 # tori + night combined
                eff_3of3,                                                 # all three combined
-               1.0)                                                      # theoretical maximum
+               bell_2of3_acap_20S,                                       # Bell et al. 2025 ACAP 2/3 mean
+               bell_3of3_acap_20S,                                       # Bell et al. 2025 ACAP 3/3
+               bell_2of3_iccat_20S,                                      # Bell et al. 2025 ICCAT 2/3 mean
+               bell_3of3_iccat_20S,                                      # Bell et al. 2025 ICCAT 3/3
+               1.0),                                                     # theoretical maximum
+  source = c(rep("Literature", 5),
+             rep("Bell ACAP", 2),
+             rep("Bell ICCAT", 2),
+             "Literature")
 )
 
 mitigation_scenarios %>% mutate(efficacy_pct = round(efficacy * 100, 1)) %>% print()
 
+# Named color vector — 3 ramps by source group, ordered light-to-dark within each
+# Literature (blues), Bell ACAP (greens), Bell ICCAT (oranges)
+scenario_colors <- c(
+  "Night setting only"           = "#9ecae1",
+  "Line weighting only"          = "#6baed6",
+  "Tori lines only"              = "#3182bd",
+  "2/3 literature"               = "#08519c",
+  "3/3 literature"               = "#08306b",
+  "Complete elimination"         = "#030d1f",
+  "2/3 ACAP (Bell et al. 2025)"  = "#74c476",
+  "3/3 ACAP (Bell et al. 2025)"  = "#238b45",
+  "2/3 ICCAT (Bell et al. 2025)" = "#fd8d3c",
+  "3/3 ICCAT (Bell et al. 2025)" = "#d94701"
+)
+```
+
+
+```{r}
 coverage_seq <- seq(0, 1, by = 0.01)
 
 # Run all scenarios
@@ -398,9 +463,10 @@ p_blanket <- ggplot(blanket_results) +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(expand = FALSE) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors)
 p_blanket
 ```
+
 
 **plot mitigation scenarios — zoomed near lambda = 1 threshold**
 ```{r}
@@ -418,7 +484,7 @@ p_blanket_zoom <- ggplot(blanket_results) +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors)
 p_blanket_zoom
 ```
 
@@ -490,6 +556,7 @@ fleet_byc %>%
 Mitigation efficacy rates (eff_tori_lines, eff_night_set, eff_line_weight, eff_hook_shield, eff_2of3, eff_3of3) and mitigation_scenarios are defined in the blanket scenario section above.
 
 **define fleet-level mitigation status**
+These are placeholders, and will need to be verified. Best to leave these out of figures and reported results until these are updated with real values. 
 ```{r}
 # Define current mitigation status for each fleet
 # status: "none", "partial" (2/3 measures), "full" (3/3 measures, best practice)
@@ -499,7 +566,7 @@ Mitigation efficacy rates (eff_tori_lines, eff_night_set, eff_line_weight, eff_h
 fleet_mitigation <- tribble(
   ~fishery, ~fleet,                             ~status,    ~compliance,  ~notes,
   # --- DLL fleets ---
-  # CCAMLR row removed: fleet_byc uses country names, not "CCAMLR" — individual countries below carry CCAMLR status
+  # CCAMLR row removed: fleet_byc uses country names, not "CCAMLR" — some individual countries below carry CCAMLR status
   "DLL",    "Argentina",                         "partial",  0.70,         "PLACEHOLDER — some measures adopted; verify",
   "DLL",    "Australia",                         "full",     0.90,         "PLACEHOLDER — ACAP signatory, AFMA requirements; verify",
   "DLL",    "Bulgaria",                          "none",     0.0,          "PLACEHOLDER — historical Soviet-era fleet; verify",
@@ -801,20 +868,23 @@ scenario_results %>%
 ```{r}
 # Clean labels for plotting
 scenario_plot <- scenario_results %>%
+  filter(compliance_level != "compliance_current",
+         efficacy_scenario != "current") %>%
   mutate(
     efficacy_label = efficacy_scenario %>%
       gsub("_", " ", .) %>%
       tools::toTitleCase(),
     compliance_label = case_when(
       compliance_level == "full_compliance"    ~ "100%",
-      compliance_level == "compliance_current" ~ "Current",
+   #   compliance_level == "compliance_current" ~ "Current",
       compliance_level == "compliance_50"      ~ "50%",
       compliance_level == "compliance_75"      ~ "75%",
       compliance_level == "compliance_100"     ~ "100%",
       TRUE ~ compliance_level
     ),
     compliance_label = factor(compliance_label,
-      levels = c("Current", "50%", "75%", "100%"))
+      levels = c(#"Current", 
+                 "50%", "75%", "100%"))
   )
 
 p_scenarios <- ggplot(scenario_plot,
@@ -826,7 +896,7 @@ p_scenarios <- ggplot(scenario_plot,
   geom_text(aes(label = round(lambda, 4)),
             position = position_dodge(width = 0.7),
             hjust = -0.1, size = 2.5) +
-  scale_fill_manual(values = c("Current" = "#d95f02",
+  scale_fill_manual(values = c(#"Current" = "#d95f02",
                                 "50%"     = "#6baed6",
                                 "75%"     = "#2171b5",
                                 "100%"    = "#084594"),

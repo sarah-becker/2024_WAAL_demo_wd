@@ -199,6 +199,7 @@ check <- tibble(
 round(global(bi_density_total, "sum", na.rm = TRUE)[1, 1], 6)
 round(prop_BI * sum(age_class_props), 6)
 check
+round(sum(age_class_props), 6)
 ```
 
 ## Basemap
@@ -354,6 +355,40 @@ for (i in 1:nrow(fishery_period_combos)) {
   }
 }
 
+
+#checking rasters
+#For effort_rasters (flat list, keyed by fishery|fleet|year_group):       
+  # Summary table across all rasters                                                                                                                       
+  map_dfr(effort_rasters, ~global(.x, fun = c("min", "max", "sum"), na.rm = TRUE),                                                                         
+          .id = "key")                                                                                                                                     
+                                                                                                                                                           
+  # Spot-check one raster                                                                                                                                  
+ global(effort_rasters[["PLL|Japan|1990-1994"]], fun = c("min", "max", "sum"), na.rm = TRUE)                                                           
+                                                                                             
+  # Non-zero cell count for each                                                                                                                           
+  map_dfr(effort_rasters,                                                                                                                                  
+          ~tibble(n_nonzero = sum(values(.x) > 0, na.rm = TRUE),                                                                                           
+                  n_na = sum(is.na(values(.x)))),                                                                                                          
+          .id = "key")      
+  
+      # Find any rasters where sum == 0
+  map_dfr(effort_rasters, ~global(.x, fun = "sum", na.rm = TRUE), .id = "key") %>%                                                                         
+    filter(sum == 0)   
+    
+  # Do the source rows have valid hooks?                                                                                                                   
+  pll_data %>% filter(fleet == "Canada", year_group == "1990-1994") %>%                                                                                    
+    summarise(n = n(), n_na_hooks = sum(is.na(Hooks)), sum_hooks = sum(Hooks, na.rm = TRUE))                                                               
+                                                                                                                                                           
+  # Do coordinates fall within the template extent?                                                                                                        
+  pll_data %>% filter(fleet == "Canada", year_group == "1990-1994") %>%                                                                                    
+    summarise(lon_range = range(Lon, na.rm=TRUE), lat_range = range(Lat, na.rm=TRUE))                                                                      
+  ext(template)     
+                                                                                                                                                           
+  #For total_effort_by_fp (keyed by fishery|year_group):                                                                                                    
+  map_dfr(total_effort_by_fp, ~global(.x, fun = c("min", "max", "sum"), na.rm = TRUE),                                                                     
+          .id = "key")   
+
+     
 ```
 
 # Section 4: Load BPUE Literature Data
@@ -500,51 +535,78 @@ assign_region <- function(lon, lat) {
 
 # Section 6: Calculate Catchability per BPUE Study
 
-Beta (catchability) is the per-hook mortality risk per unit bird density. It is
-extracted from each BPUE study by dividing out the local bird density where the
-study was conducted:
+# Notation (Dan’s method)
+# C       = bycatch mortalities
+# H       = hooks
+# B       = number of birds
+# α_mn    = BPUE in the traditional sense: observed dead birds per 1000 hooks
+#           In code: bpue_1 = BPUE / 1000 (converted to birds per hook)
+# β       = catchability: probability of a bird being caught per hook per bird.
+#           Analogous to the interaction coefficient in Lotka-Volterra predator-prey
+#           equations. Necessary to partition total BPUE spatially.
 
-```
-β = BPUE / (1000 × B_study)
-```
+# Derivation:
+# Total bycatch can be expressed two ways:
+#   (1) C_total = α_mn × H_total          (definition of BPUE)
+#   (2) C_total = sum(H_i × B_i × β)      (sum across N spatial blocks i,
+#                                           where H_i × β = catch prob per bird
+#                                           in block i, × B_i birds)
+# Setting equal and solving for β:
+#   β = α_mn × H_total / sum(H_i × B_i)
+#
+# In the code, BPUE is in birds per 1000 hooks, so bpue_1 = BPUE / 1000:
+#   β = bpue_1 × H_total / sum(H_i × B_i)
+#
+# H_total and sum(H_i × B_i) are computed within each study’s bounding box
+# using the fleet effort raster (hooks per cell) and the total WAAL density raster.
+#
+# β is then applied spatially to estimate bycatch in each grid cell:
+#   C_cell = β × H_cell × B_BI_cell
+# where B_BI_cell is Bird Island bird density (not total WAAL density),
+# since we are estimating BI-specific bycatch.
+#
+# Beta is applied as a per-cell catchability surface (catchability_rasters).
+# Each cell's beta is the mean of all BPUE studies whose bounding box covers
+# that cell. Cells not covered by any study are gap-filled hierarchically:
+# fleet temporal extrapolation → regional mean → fishery mean. Bycatch per
+# cell is then:
+#   C_cell = beta_cell × hooks_cell × BI_birds_cell
+# summed across all cells to get total mortalities per fleet x period x age class.
 
-where B_study = hooks-weighted mean TOTAL WAAL density in the study's bounding box.
-This extracts "pure catchability" — a property of the fishery/gear, not the location.
-
-A single **fishery-level mean β** is then applied uniformly to all cells:
-
-```
-bycatch_cell = β_fishery × hooks_cell × BI_birds_cell
-```
-
-Bird density matters in the output because β is calibrated from study areas
-(typically high bird density) but applied to all effort cells (many with lower
-bird density). This avoids the cancellation that occurs when per-study betas
-are applied within their own bounding boxes.
 
 
-⏺ This chunk calculates the catchability coefficient (beta) for each BPUE study. Walking through it:
-              
-  The loop (line 539) iterates over every row in bpue_betas — one row per BPUE study × period.                                                                            
-                                                                                                                                                                          
-  Lines 540–548: Pulls the fishery, fleet, period and BPUE value for this study. Looks up the effort raster for that fleet × period. If there's no effort raster (fleet   
-  not in our data), skips to the next study.                                                                                                                              
-                                                                                                                                                                          
-  Lines 551–552: Gets the study's geographic bounding box from its sf geometry and converts it to a terra extent object for cropping.                                     
-  
-  Lines 555–556 — the tryCatch: Crops both the effort raster and total_bird_density to the study's bounding box. The tryCatch is there in case the bounding box falls     
-  entirely outside the raster extent, which would cause crop() to error. If either crop fails, line 558 skips that study. This is a legitimate edge case — some BPUE
-  studies may have bounding boxes outside the Southern Ocean where we have bird data — so the tryCatch is more defensible here than in the effort rasterization case      
-  earlier.        
 
-  Lines 561–565: Sums hooks and hooks×birds within the bounding box. Skips if hooks = 0 (no effort in the study area despite having an effort raster).                    
-  
-  Lines 567–572: Computes B_study — the hooks-weighted mean bird density in the study area. Then divides the BPUE by (1000 × B_study) to get beta — the per-hook mortality
-   rate per unit bird density, stripping out the local bird density to get a pure catchability value.
-                                                                                                                                                                          
-  Lines 595+: After the loop, averages beta across all studies within each fishery type (PLL/DLL) to get the fishery-level mean beta used in gap-filling.                 
-  
-  The tryCatch here is reasonable to keep — unlike the effort rasterization case, bounding box crop failures are genuinely possible and not indicative of a data problem.
+# This chunk calculates beta (catchability) for each BPUE study using Dan's equation:
+#   beta = bpue_1 * H_total / sum(H_i * B_i)
+# where bpue_1 = BPUE / 1000 (converted from birds per 1000 hooks to birds per hook).
+#
+# Line 612: The loop iterates over every row in bpue_betas — one row per BPUE study x period.
+#
+# Lines 613-621: Pulls fishery, fleet, period, and BPUE value for this study. Looks up
+#   the effort raster for that fleet x period. If there is no effort raster (fleet not
+#   in our data), skips to the next study.
+#
+# Lines 623-625: Gets the study's geographic bounding box from its sf geometry and
+#   converts it to a terra extent object for cropping.
+#
+# Lines 627-631 — the tryCatch: Crops both the effort raster and total_bird_density to
+#   the study bounding box. The tryCatch handles cases where the bounding box falls
+#   entirely outside the raster extent (crop() would error). This is a legitimate edge
+#   case — some BPUE studies have bounding boxes outside the Southern Ocean where we
+#   have bird data. If either crop fails, skips that study.
+#
+# Lines 633-634: Converts BPUE from birds per 1000 hooks to birds per hook (bpue_1).
+#
+# Lines 636-641: Computes H_total (total hooks in box) and sum(H_i * B_i) (sum of
+#   hooks x bird density across cells). Skips if either is zero or NA.
+#
+# Lines 643-647: Applies Dan's equation to get beta. Also stores B_study =
+#   sum(H_i * B_i) / H_total (hooks-weighted mean bird density) as a diagnostic —
+#   not used in the beta calculation.
+#
+# Lines 668+: After the loop, averages beta across all studies within each fishery
+#   type (PLL/DLL). This fishery-level mean beta is used only as a last-resort
+#   fallback in gap-filling (Section 7), not in the bycatch calculations themselves.
 
 ```{r calculate-betas}
 # Total BI density (sum across age classes, on template grid)
@@ -581,19 +643,21 @@ for (i in 1:nrow(bpue_betas)) {
 
   if (is.null(effort_crop) || is.null(birds_crop)) next
 
-  # Compute hooks-weighted mean TOTAL WAAL density in the box
-  hooks_in_box <- global(effort_crop, "sum", na.rm = TRUE)[1, 1]
+  # Convert BPUE from birds per 1000 hooks to birds per hook
+  bpue_1 <- bpue_val / 1000
+
+  # Compute H_total and sum(H_i x B_i) within the study bounding box
+  hooks_in_box         <- global(effort_crop, "sum", na.rm = TRUE)[1, 1]
   hooks_x_birds_in_box <- global(effort_crop * birds_crop, "sum", na.rm = TRUE)[1, 1]
 
   if (is.na(hooks_in_box) || hooks_in_box <= 0) next
   if (is.na(hooks_x_birds_in_box) || hooks_x_birds_in_box <= 0) next
 
-  B_study <- hooks_x_birds_in_box / hooks_in_box
-
-  bpue_betas$B_study[i] <- B_study
+  # Dan's equation: beta = bpue_1 * H_total / sum(H_i * B_i)
   bpue_betas$fleet_hooks_in_box[i] <- hooks_in_box
-  bpue_betas$beta[i] <- bpue_val / (1000 * B_study)
-  bpue_betas$has_effort_match[i] <- TRUE
+  bpue_betas$beta[i]               <- bpue_1 * hooks_in_box / hooks_x_birds_in_box
+  bpue_betas$B_study[i]            <- hooks_x_birds_in_box / hooks_in_box  # diagnostic: hooks-weighted mean bird density in study area
+  bpue_betas$has_effort_match[i]   <- TRUE
 }
 
 # Summary of per-study beta calculations
@@ -649,6 +713,82 @@ beta_by_fleet_type <- bpue_betas %>%
 beta_by_fleet_type %>%
   mutate(mean_beta = signif(mean_beta, 4)) %>%
   print(n = 20)
+```
+
+
+```{r}
+
+# --- Supplement: compare used vs skipped BPUE values ---                                                                                                
+
+  # Check whether existing region column is usable                                                                                                         
+  bpue_betas %>% count(region, useNA = "always")
+                                                                                                                                                           
+  # If region looks clean, use it directly; otherwise assign from centroid:                                                                                
+  # bpue_betas <- bpue_betas %>%
+  #   mutate(                                                                                                                                              
+  #     bbox_center_lon = (lon_min + lon_max) / 2,
+  #     bbox_center_lat = (lat_min + lat_max) / 2,                                                                                                         
+  #     region = map2_chr(bbox_center_lon, bbox_center_lat, assign_region)                                                                                 
+  #   )                                                                                                                                                    
+                                                                                                                                                           
+  # Mean BPUE for studies used in analysis (has_effort_match = TRUE)                                                                                       
+  bpue_used_summary <- bpue_betas %>%
+    filter(has_effort_match) %>%                                                                                                                           
+    group_by(fishery_type, fleet, plot_year_group, region) %>%
+    summarise(                                                                                                                                             
+      n_studies = n(),                                                                                                                                     
+      mean_bpue = mean(bpue, na.rm = TRUE),                                                                                                                
+      sd_bpue   = sd(bpue, na.rm = TRUE),                                                                                                                  
+      .groups   = "drop"                                                                                                                                   
+    )                                                                                                                                                      
+                                                                                                                                                           
+  # Overall means to compare against (fishery-level and global)                                                                                            
+  bpue_ref <- bpue_betas %>%
+    filter(has_effort_match) %>%                                                                                                                           
+    summarise(    
+      overall_mean_bpue = mean(bpue, na.rm = TRUE),
+      overall_sd_bpue   = sd(bpue, na.rm = TRUE)                                                                                                           
+    )
+                                                                                                                                                           
+  bpue_ref_by_fishery <- bpue_betas %>%                                                                                                                    
+    filter(has_effort_match) %>%
+    group_by(fishery_type) %>%                                                                                                                             
+    summarise(                                                                                                                                             
+      fishery_mean_bpue = mean(bpue, na.rm = TRUE),                                                                                                        
+      fishery_sd_bpue   = sd(bpue, na.rm = TRUE),                                                                                                          
+      .groups = "drop"                                                                                                                                     
+    )                                                                                                                                                      
+                                                                                                                                                           
+  # Skipped studies with comparisons to overall and fishery means                                                                                          
+  bpue_skipped_summary <- bpue_betas %>%
+    filter(!has_effort_match) %>%                                                                                                                          
+    left_join(bpue_ref_by_fishery, by = "fishery_type") %>%                                                                                                
+    mutate(
+      overall_mean  = bpue_ref$overall_mean_bpue,                                                                                                          
+      diff_from_overall = bpue - overall_mean,                                                                                                             
+      diff_from_fishery = bpue - fishery_mean_bpue,
+      pct_diff_fishery  = (bpue - fishery_mean_bpue) / fishery_mean_bpue * 100                                                                             
+    ) %>%                                                                                                                                                  
+    select(fishery_type, fleet, plot_year_group, region, bpue,                                                                                             
+           fishery_mean_bpue, diff_from_fishery, pct_diff_fishery,                                                                                         
+           overall_mean, diff_from_overall) %>%
+    mutate(across(where(is.numeric), ~signif(.x, 4)))                                                                                                      
+                                                                                                                                                           
+  print(bpue_used_summary, n = 100)                                                                                                                        
+  print(bpue_skipped_summary, n = 100)                                                                                                                     
+                                                                                                                                                           
+  # Quick visual: skipped vs used BPUE distributions by fishery type                                                                                       
+  bind_rows(                                                                                                                                               
+    bpue_betas %>% filter(has_effort_match) %>% mutate(group = "used"),                                                                                    
+    bpue_betas %>% filter(!has_effort_match) %>% mutate(group = "skipped")                                                                                 
+  ) %>%
+    ggplot(aes(x = bpue, fill = group)) +                                                                                                                  
+    geom_histogram(alpha = 0.6, bins = 30, position = "identity") +                                                                                        
+    facet_wrap(~fishery_type, scales = "free") +
+    scale_fill_manual(values = c("used" = "steelblue", "skipped" = "firebrick")) +                                                                         
+    labs(x = "BPUE", y = "Count", fill = NULL,
+         title = "BPUE distribution: used vs skipped studies") +                                                                                           
+    theme_bw()                                        
 ```
 
 # Section 7: Build Catchability Surface

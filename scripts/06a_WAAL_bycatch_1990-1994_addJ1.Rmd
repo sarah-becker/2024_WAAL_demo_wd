@@ -3,10 +3,21 @@ title: "WAAL Bycatch — Period 1990–1994"
 output: html_document
 ---
 
+TO DO:
+fine tune Bell et al. sceanrio vals from plot digitizer
+fine tune Pardo et al. VR ranges from plot digitizer
+
+6b-d then 7 using same assumptions
+9 updates as well
+4-9 into detailed methods doc
+detailed methods doc into reasonable methods section/SI
+analysis FINISHED and paper DRAFT by the end of the week (3/23)
+Dissertation draft FINISHED by the end of the following week
 ```{r, echo= FALSE, include =FALSE}
 library(here)
 library(tidyverse)
 library(RColorBrewer)
+library(patchwork)
 
 # Date of last run of 04_bycatch_spatial_catchability_v3-addJ1.Rmd
 # Update in_sfx to match the date suffix on the output files you want to load
@@ -346,6 +357,19 @@ bell_2of3_iccat_20S <- mean(bell_F$eff_iccat_20S[bell_F$scenario %in% c("BLW_NS"
 bell_3of3_acap_20S  <- bell_F$eff_acap_20S[bell_F$scenario  == "BLW_NS_BSL"]
 bell_3of3_iccat_20S <- bell_F$eff_iccat_20S[bell_F$scenario == "BLW_NS_BSL"]
 
+# Individual scenario efficacy scalars — used in efficacy_scenarios below
+eff_blw_ns_acap   <- bell_F$eff_acap_20S[bell_F$scenario  == "BLW_NS"]
+eff_blw_bsl_acap  <- bell_F$eff_acap_20S[bell_F$scenario  == "BLW_BSL"]
+eff_ns_bsl_acap   <- bell_F$eff_acap_20S[bell_F$scenario  == "NS_BSL"]
+eff_3of3_acap     <- bell_F$eff_acap_20S[bell_F$scenario  == "BLW_NS_BSL"]
+eff_hsd_acap      <- bell_F$eff_acap_20S[bell_F$scenario  == "HSD"]
+
+eff_blw_ns_iccat  <- bell_F$eff_iccat_20S[bell_F$scenario == "BLW_NS"]
+eff_blw_bsl_iccat <- bell_F$eff_iccat_20S[bell_F$scenario == "BLW_BSL"]
+eff_ns_bsl_iccat  <- bell_F$eff_iccat_20S[bell_F$scenario == "NS_BSL"]
+eff_3of3_iccat    <- bell_F$eff_iccat_20S[bell_F$scenario == "BLW_NS_BSL"]
+# HSD: no ICCAT data in Bell et al. 2025
+
 tibble(
   scenario       = c("2/3 (mean of 3 combos)", "3/3 (BLW + NS + BSL)"),
   current_code   = round(c(eff_2of3, eff_3of3) * 100, 1),
@@ -353,49 +377,36 @@ tibble(
   bell_iccat_20S = round(c(bell_2of3_iccat_20S, bell_3of3_iccat_20S) * 100, 1)
 ) %>% print()
 
-# Define named mitigation scenarios
+# Define named mitigation scenarios — all efficacies from Bell et al. 2025 ACAP 20S domain
 mitigation_scenarios <- tibble(
-  scenario = c("Night setting only",
-               "Line weighting only",
-               "Tori lines only",
-               "2/3 literature",
-               "3/3 literature",
-               "2/3 ACAP (Bell et al. 2025)",
-               "3/3 ACAP (Bell et al. 2025)",
-               "2/3 ICCAT (Bell et al. 2025)",
-               "3/3 ICCAT (Bell et al. 2025)",
+  scenario = c("HSD",
+               "BLW + NS",
+               "BLW + BSL",
+               "NS + BSL",
+               "Mean 2/3 ACAP",
+               "3/3 ACAP",
                "Complete elimination"),
-  efficacy = c(eff_night_set,                                            # 0.60
-               eff_line_weight,                                          # 0.65
-               eff_tori_lines,                                           # 0.75
-               eff_2of3,                                                 # tori + night combined
-               eff_3of3,                                                 # all three combined
-               bell_2of3_acap_20S,                                       # Bell et al. 2025 ACAP 2/3 mean
-               bell_3of3_acap_20S,                                       # Bell et al. 2025 ACAP 3/3
-               bell_2of3_iccat_20S,                                      # Bell et al. 2025 ICCAT 2/3 mean
-               bell_3of3_iccat_20S,                                      # Bell et al. 2025 ICCAT 3/3
-               1.0),                                                     # theoretical maximum
-  source = c(rep("Literature", 5),
-             rep("Bell ACAP", 2),
-             rep("Bell ICCAT", 2),
-             "Literature")
+  efficacy = c(eff_hsd_acap,                                            # Bell et al. 2025 ACAP: HSD
+               eff_blw_ns_acap,                                         # Bell et al. 2025 ACAP: BLW + NS
+               eff_blw_bsl_acap,                                        # Bell et al. 2025 ACAP: BLW + BSL
+               eff_ns_bsl_acap,                                         # Bell et al. 2025 ACAP: NS + BSL
+               bell_2of3_acap_20S,                                      # Bell et al. 2025 ACAP: mean of 3 x 2/3 combos
+               eff_3of3_acap,                                           # Bell et al. 2025 ACAP: BLW + NS + BSL
+               1.0),                                                    # theoretical maximum
+  source = c(rep("Bell ACAP", 6), "Theoretical")
 )
 
 mitigation_scenarios %>% mutate(efficacy_pct = round(efficacy * 100, 1)) %>% print()
 
-# Named color vector — 3 ramps by source group, ordered light-to-dark within each
-# Literature (blues), Bell ACAP (greens), Bell ICCAT (oranges)
+# Named color vector — HSD in orange, 2/3 combos light-to-medium green, mean 2/3 and 3/3 darker green, elimination near-black
 scenario_colors <- c(
-  "Night setting only"           = "#9ecae1",
-  "Line weighting only"          = "#6baed6",
-  "Tori lines only"              = "#3182bd",
-  "2/3 literature"               = "#08519c",
-  "3/3 literature"               = "#08306b",
-  "Complete elimination"         = "#030d1f",
-  "2/3 ACAP (Bell et al. 2025)"  = "#74c476",
-  "3/3 ACAP (Bell et al. 2025)"  = "#238b45",
-  "2/3 ICCAT (Bell et al. 2025)" = "#fd8d3c",
-  "3/3 ICCAT (Bell et al. 2025)" = "#d94701"
+  "HSD"                = "#d95f02",
+  "BLW + NS"           = "#a1d99b",
+  "BLW + BSL"          = "#74c476",
+  "NS + BSL"           = "#41ab5d",
+  "Mean 2/3 ACAP"      = "#238b45",
+  "3/3 ACAP"           = "#005a32",
+  "Complete elimination"= "#030d1f"
 )
 ```
 
@@ -558,134 +569,17 @@ Mitigation efficacy rates (eff_tori_lines, eff_night_set, eff_line_weight, eff_h
 **define fleet-level mitigation status**
 These are placeholders, and will need to be verified. Best to leave these out of figures and reported results until these are updated with real values. 
 ```{r}
-# Define current mitigation status for each fleet
-# status: "none", "partial" (2/3 measures), "full" (3/3 measures, best practice)
-# compliance: proportion of fleet actually using the measures (0-1)
-# PLACEHOLDERS — update based on RFMO/fleet-specific information
-
-fleet_mitigation <- tribble(
-  ~fishery, ~fleet,                             ~status,    ~compliance,  ~notes,
-  # --- DLL fleets ---
-  # CCAMLR row removed: fleet_byc uses country names, not "CCAMLR" — some individual countries below carry CCAMLR status
-  "DLL",    "Argentina",                         "partial",  0.70,         "PLACEHOLDER — some measures adopted; verify",
-  "DLL",    "Australia",                         "full",     0.90,         "PLACEHOLDER — ACAP signatory, AFMA requirements; verify",
-  "DLL",    "Bulgaria",                          "none",     0.0,          "PLACEHOLDER — historical Soviet-era fleet; verify",
-  "DLL",    "Chile",                             "partial",  0.60,         "PLACEHOLDER — some measures adopted; verify",
-  "DLL",    "Falklands",                         "full",     0.90,         "PLACEHOLDER — 3/3 measures, good compliance; verify",
-  "DLL",    "France",                            "full",     0.85,         "PLACEHOLDER — CCAMLR, EU, ACAP; verify",
-  "DLL",    "Japan",                             "full",     0.85,         "PLACEHOLDER — CCAMLR member, ACAP; verify",
-  "DLL",    "Namibia",                           "partial",  0.50,         "PLACEHOLDER — some measures; verify",
-  "DLL",    "New Zealand",                       "full",     0.85,         "PLACEHOLDER — ACAP signatory, observer coverage required; verify",
-  "DLL",    "Norway",                            "full",     0.85,         "PLACEHOLDER — ACAP signatory; verify",
-  "DLL",    "Russia",                            "partial",  0.50,         "PLACEHOLDER — CCAMLR member, variable enforcement; verify",
-  "DLL",    "South Africa",                      "full",     0.85,         "PLACEHOLDER — CCAMLR, 3/3 measures; verify",
-  "DLL",    "South Korea",                       "partial",  0.60,         "PLACEHOLDER — CCAMLR member; verify",
-  "DLL",    "Spain",                             "partial",  0.70,         "PLACEHOLDER — EU/ACAP; verify",
-  "DLL",    "USA",                               "partial",  0.80,         "PLACEHOLDER — NMFS requirements; verify",
-  "DLL",    "USSR",                              "none",     0.0,          "PLACEHOLDER — historical, pre-mitigation era",
-  "DLL",    "Ukraine",                           "partial",  0.40,         "PLACEHOLDER — limited enforcement data; verify",
-  "DLL",    "United Kingdom",                    "full",     0.90,         "PLACEHOLDER — South Georgia = UK territory, strong oversight; verify",
-  "DLL",    "Uruguay",                           "partial",  0.40,         "PLACEHOLDER — some measures, limited data; verify",
-  # --- PLL fleets ---
-  "PLL",    "Australia",                         "partial",  0.75,         "PLACEHOLDER — ACAP, AFMA; verify",
-  "PLL",    "Belize",                            "none",     0.0,          "flag of convenience",
-  "PLL",    "Brazil",                            "partial",  0.40,         "PLACEHOLDER — some measures, lower compliance; verify",
-  "PLL",    "China",                             "none",     0.0,          "PLACEHOLDER — limited adoption; verify",
-  "PLL",    "Cook Islands",                      "none",     0.0,          "PLACEHOLDER — Pacific flag state, limited data; verify",
-  "PLL",    "Cuba",                              "none",     0.0,          "no information",
-  "PLL",    "Fiji",                              "none",     0.0,          "PLACEHOLDER — Pacific flag state; verify",
-  "PLL",    "France Reunion",                    "partial",  0.60,         "PLACEHOLDER — EU requirements; verify",
-  "PLL",    "French Polynesia",                  "partial",  0.60,         "PLACEHOLDER — EU/French requirements; verify",
-  "PLL",    "Japan",                             "partial",  0.80,         "PLACEHOLDER — 2/3 in most RFMOs; verify",
-  "PLL",    "Korea",                             "partial",  0.50,         "PLACEHOLDER — 2/3 in some areas; verify",
-  "PLL",    "Namibia",                           "partial",  0.50,         "PLACEHOLDER — some measures; verify",
-  "PLL",    "New Caledonia",                     "partial",  0.60,         "PLACEHOLDER — French territory, EU rules; verify",
-  "PLL",    "New Zealand",                       "partial",  0.75,         "PLACEHOLDER — ACAP signatory; verify",
-  "PLL",    "Niue",                              "none",     0.0,          "PLACEHOLDER — Pacific flag state; verify",
-  "PLL",    "Other",                             "none",     0.0,          "mixed/unknown fleets",
-  "PLL",    "Panama",                            "none",     0.0,          "flag of convenience",
-  "PLL",    "Papua New Guinea",                  "none",     0.0,          "PLACEHOLDER — Pacific flag state; verify",
-  "PLL",    "Portugal",                          "partial",  0.70,         "PLACEHOLDER — EU requirements, 2/3; verify",
-  "PLL",    "Samoa",                             "none",     0.0,          "PLACEHOLDER — Pacific flag state; verify",
-  "PLL",    "Seychelles",                        "none",     0.0,          "PLACEHOLDER — limited adoption; verify",
-  "PLL",    "South Africa",                      "partial",  0.70,         "PLACEHOLDER — domestic requirements; verify",
-  "PLL",    "Spain",                             "partial",  0.70,         "PLACEHOLDER — EU requirements, 2/3; verify",
-  "PLL",    "St. Vincent and Grenadines",        "none",     0.0,          "flag of convenience",
-  "PLL",    "Taiwan",                            "partial",  0.60,         "PLACEHOLDER — 2/3 adopted but variable compliance; verify",
-  "PLL",    "Tonga",                             "none",     0.0,          "PLACEHOLDER — Pacific flag state; verify",
-  "PLL",    "USA",                               "partial",  0.80,         "PLACEHOLDER — NMFS requirements; verify",
-  "PLL",    "USSR",                              "none",     0.0,          "historical, no mitigation",
-  "PLL",    "Vanuatu",                           "none",     0.0,          "flag of convenience"
-)
-
-# Map status to efficacy
-fleet_mitigation <- fleet_mitigation %>%
-  mutate(
-    base_efficacy = case_when(
-      status == "full"    ~ eff_3of3,
-      status == "partial" ~ eff_2of3,
-      status == "none"    ~ 0
-    ),
-    # Effective reduction = base efficacy * compliance
-    effective_reduction = base_efficacy * compliance
-  )
-
-fleet_mitigation %>%
-  select(fishery, fleet, status, compliance, base_efficacy, effective_reduction) %>%
-  arrange(fishery, desc(effective_reduction)) %>%
-  print(n = 30)
-
-# Diagnostic: fleets in fleet_percap with no mitigation status — should be empty after table is complete
-fleet_percap %>%
-  distinct(fishery, fleet) %>%
-  anti_join(fleet_mitigation, by = c("fishery", "fleet")) %>%
-  print()
+# fleet_mitigation: skeleton used by efficacy_scenarios — fishery/fleet columns only
+# Per-fleet status/compliance lookup dropped; Bell et al. ACAP/ICCAT efficacy applied uniformly
+fleet_mitigation <- fleet_percap %>% distinct(fishery, fleet)
 ```
 
-**historical fleet mitigation — 1990-1994 baseline (placeholders)**
+**historical fleet mitigation — 1990-1994 baseline**
 ```{r hist-fleet-mitigation}
-# Historical mitigation status for 1990-1994 — pre-CCAMLR mitigation era
-# PLACEHOLDERS: essentially no mitigation; update from literature when available
-hist_fleet_mitigation <- tribble(
-  ~fishery, ~fleet,                           ~status,    ~compliance,  ~notes,
-  "DLL",    "CCAMLR",                         "none",     0.0,          "pre-mitigation era",
-  "DLL",    "Argentina",                      "none",     0.0,          "no mitigation",
-  "DLL",    "Chile",                          "none",     0.0,          "no mitigation",
-  "DLL",    "Falklands",                      "none",     0.0,          "no mitigation",
-  "DLL",    "South Africa",                   "none",     0.0,          "no mitigation",
-  "DLL",    "New Zealand",                    "none",     0.0,          "no mitigation",
-  "PLL",    "Japan",                          "none",     0.0,          "no mitigation",
-  "PLL",    "Taiwan",                         "none",     0.0,          "no mitigation",
-  "PLL",    "Korea",                          "none",     0.0,          "no mitigation",
-  "PLL",    "Spain",                          "none",     0.0,          "no mitigation",
-  "PLL",    "Portugal",                       "none",     0.0,          "no mitigation",
-  "PLL",    "Brazil",                         "none",     0.0,          "no mitigation",
-  "PLL",    "China",                          "none",     0.0,          "no mitigation",
-  "PLL",    "Other",                          "none",     0.0,          "no mitigation",
-  "PLL",    "Chile",                          "none",     0.0,          "no mitigation",
-  "PLL",    "South Africa",                   "none",     0.0,          "no mitigation",
-  "PLL",    "Cuba",                           "none",     0.0,          "no mitigation",
-  "PLL",    "Belize",                         "none",     0.0,          "no mitigation",
-  "PLL",    "France Reunion",                 "none",     0.0,          "no mitigation",
-  "PLL",    "Seychelles",                     "none",     0.0,          "no mitigation",
-  "PLL",    "Namibia",                        "none",     0.0,          "no mitigation",
-  "PLL",    "Vanuatu",                        "none",     0.0,          "no mitigation",
-  "PLL",    "USSR",                           "none",     0.0,          "no mitigation",
-  "PLL",    "USA",                            "none",     0.0,          "no mitigation",
-  "PLL",    "Panama",                         "none",     0.0,          "no mitigation",
-  "PLL",    "French Polynesia",               "none",     0.0,          "no mitigation",
-  "PLL",    "St. Vincent and Grenadines",     "none",     0.0,          "no mitigation"
-)
-
-hist_fleet_mitigation <- hist_fleet_mitigation %>%
-  mutate(
-    base_efficacy = case_when(
-      status == "full"    ~ eff_3of3,
-      status == "partial" ~ eff_2of3,
-      status == "none"    ~ 0
-    ),
-    effective_reduction = base_efficacy * compliance
-  )
+# 1990-1994: pre-CCAMLR mitigation era — all fleets at zero mitigation
+hist_fleet_mitigation <- fleet_percap %>%
+  distinct(fishery, fleet) %>%
+  mutate(effective_reduction = 0, base_efficacy = 0)
 ```
 
 **calculate fleet-level fishing mortality under different scenarios**
@@ -773,32 +667,31 @@ calc_lambda_from_scenario <- function(scenario_fm) {
 # --- Define efficacy scenarios (which measures each fleet adopts) ---
 # These only set base_efficacy; compliance is applied separately below
 
+# --- Bell et al. 2025 efficacy scenarios (WAAL SG, 20S domain) ---
+# Each scenario applies a uniform efficacy across all fleets
+# ACAP = ACAP 2023 spec; ICCAT = ICCAT 2011 spec; both tested at 50/75/100% compliance
 efficacy_scenarios <- list(
-  # Baseline / reference
-  "no_mitigation"        = fleet_mitigation %>% mutate(base_efficacy = 0),
-  "current"              = fleet_mitigation,                                  # kept for reference_pts calculation only
-  # Uniform blanket scenarios — both fisheries treated the same
-  "all_fleets_2of3"      = fleet_mitigation %>% mutate(base_efficacy = eff_2of3),
-  "all_fleets_3of3"      = fleet_mitigation %>% mutate(base_efficacy = eff_3of3),
-  # Fishery-isolated scenarios — one fishery mitigated, other zeroed out
-  "pll_2of3_dll_zero"    = fleet_mitigation %>%
-    mutate(base_efficacy = case_when(fishery == "PLL" ~ eff_2of3, TRUE ~ 0)),
-  "dll_2of3_pll_zero"    = fleet_mitigation %>%
-    mutate(base_efficacy = case_when(fishery == "DLL" ~ eff_2of3, TRUE ~ 0)),
-  # Mixed scenarios — one fishery upgraded to 3/3, other keeps current lookup status
-  "dll_current_pll_3of3" = fleet_mitigation %>%
-    mutate(base_efficacy = case_when(fishery == "PLL" ~ eff_3of3, TRUE ~ base_efficacy)),
-  "pll_current_dll_3of3" = fleet_mitigation %>%
-    mutate(base_efficacy = case_when(fishery == "DLL" ~ eff_3of3, TRUE ~ base_efficacy))
+  # Baseline
+  "no_mitigation"    = fleet_mitigation %>% mutate(base_efficacy = 0),
+  # ACAP 2023 spec
+  "BLW_NS"           = fleet_mitigation %>% mutate(base_efficacy = eff_blw_ns_acap),
+  "BLW_BSL"          = fleet_mitigation %>% mutate(base_efficacy = eff_blw_bsl_acap),
+  "NS_BSL"           = fleet_mitigation %>% mutate(base_efficacy = eff_ns_bsl_acap),
+  "BLW_NS_BSL"       = fleet_mitigation %>% mutate(base_efficacy = eff_3of3_acap),
+  "HSD"              = fleet_mitigation %>% mutate(base_efficacy = eff_hsd_acap),
+  # ICCAT 2011 spec (no HSD — no ICCAT data in Bell et al. 2025)
+  "BLW_NS_iccat"     = fleet_mitigation %>% mutate(base_efficacy = eff_blw_ns_iccat),
+  "BLW_BSL_iccat"    = fleet_mitigation %>% mutate(base_efficacy = eff_blw_bsl_iccat),
+  "NS_BSL_iccat"     = fleet_mitigation %>% mutate(base_efficacy = eff_ns_bsl_iccat),
+  "BLW_NS_BSL_iccat" = fleet_mitigation %>% mutate(base_efficacy = eff_3of3_iccat)
 )
 
-# --- Define compliance levels ---
-# "current" uses lookup table values; 50/75/100% span the policy adoption range
+# --- Compliance levels: 50/75/100% of ACAP efficacy ---
+# Per-fleet compliance lookup table dropped — blanket coverage scalars used instead
 compliance_levels <- list(
-  "compliance_current" = function(c) c,
-  "compliance_50"      = function(c) 0.50,
-  "compliance_75"      = function(c) 0.75,
-  "compliance_100"     = function(c) 1.0
+  "compliance_50"  = function(c) 0.50,
+  "compliance_75"  = function(c) 0.75,
+  "compliance_100" = function(c) 1.0
 )
 
 # --- Cross efficacy scenarios x compliance levels into full scenario list ---
@@ -810,7 +703,7 @@ for (eff_name in names(efficacy_scenarios)) {
 
     scen_df <- eff_df %>%
       mutate(
-        compliance = comp_fn(fleet_mitigation$compliance),
+        compliance = comp_fn(1),
         effective_reduction = base_efficacy * compliance
       )
 
@@ -868,23 +761,27 @@ scenario_results %>%
 ```{r}
 # Clean labels for plotting
 scenario_plot <- scenario_results %>%
-  filter(compliance_level != "compliance_current",
-         efficacy_scenario != "current") %>%
+  filter(efficacy_scenario != "full_elimination") %>%
   mutate(
-    efficacy_label = efficacy_scenario %>%
-      gsub("_", " ", .) %>%
-      tools::toTitleCase(),
+    efficacy_label = case_when(
+      efficacy_scenario == "no_mitigation" ~ "No mitigation",
+      efficacy_scenario == "BLW_NS"        ~ "BLW + NS",
+      efficacy_scenario == "BLW_BSL"       ~ "BLW + BSL",
+      efficacy_scenario == "NS_BSL"        ~ "NS + BSL",
+      efficacy_scenario == "BLW_NS_BSL"    ~ "BLW + NS + BSL",
+      efficacy_scenario == "HSD"           ~ "HSD",
+      TRUE ~ efficacy_scenario
+    ),
     compliance_label = case_when(
-      compliance_level == "full_compliance"    ~ "100%",
-   #   compliance_level == "compliance_current" ~ "Current",
-      compliance_level == "compliance_50"      ~ "50%",
-      compliance_level == "compliance_75"      ~ "75%",
-      compliance_level == "compliance_100"     ~ "100%",
+      compliance_level == "compliance_iccat" ~ "ICCAT 2011",
+      compliance_level == "compliance_50"    ~ "50%",
+      compliance_level == "compliance_75"    ~ "75%",
+      compliance_level == "compliance_100"   ~ "100%",
+      compliance_level == "full_compliance"  ~ "100%",
       TRUE ~ compliance_level
     ),
     compliance_label = factor(compliance_label,
-      levels = c(#"Current", 
-                 "50%", "75%", "100%"))
+      levels = c("ICCAT 2011", "50%", "75%", "100%"))
   )
 
 p_scenarios <- ggplot(scenario_plot,
@@ -896,10 +793,10 @@ p_scenarios <- ggplot(scenario_plot,
   geom_text(aes(label = round(lambda, 4)),
             position = position_dodge(width = 0.7),
             hjust = -0.1, size = 2.5) +
-  scale_fill_manual(values = c(#"Current" = "#d95f02",
-                                "50%"     = "#6baed6",
-                                "75%"     = "#2171b5",
-                                "100%"    = "#084594"),
+  scale_fill_manual(values = c("ICCAT 2011" = "#d95f02",
+                                "50%"       = "#6baed6",
+                                "75%"       = "#2171b5",
+                                "100%"      = "#084594"),
                     name = "Compliance level") +
   labs(x = "", y = "\u03BB",
        title = "Population growth rate under mitigation x compliance scenarios",
@@ -914,12 +811,12 @@ p_scenarios
 ```{r}
 # Show which fleets contribute most to bycatch and how much each scenario reduces them
 # Using target top 3 PLL (baseline compliance) as example
-example_scen <- scenarios[["dll_current_pll_3of3__compliance_current"]]
+example_scen <- scenarios[["BLW_NS_BSL__compliance_100"]]
 fm_target <- calc_fleet_fm(fleet_percap, example_scen)
 
 # Fleet-level detail
 fleet_detail <- fleet_percap %>%
-  left_join(example_scen %>% select(fishery, fleet, effective_reduction, status),
+  left_join(example_scen %>% select(fishery, fleet, effective_reduction),
             by = c("fishery", "fleet")) %>%
   mutate(
     effective_reduction = replace_na(effective_reduction, 0),
@@ -1010,13 +907,11 @@ p_fleet_stacked
 ```{r, fig.width=12, fig.height=6}
 # Show baseline vs mitigated side by side for the key scenarios
 # Show baseline compliance versions of key efficacy scenarios
-key_scenarios <- c("no_mitigation__compliance_current",
-                   "all_fleets_2of3__compliance_current",
-                   "all_fleets_3of3__compliance_current",
-                   "pll_2of3_dll_zero__compliance_current",
-                   "dll_2of3_pll_zero__compliance_current",
-                   "dll_current_pll_3of3__compliance_current",
-                   "pll_current_dll_3of3__compliance_current")
+key_scenarios <- c("no_mitigation__compliance_100",
+                   "NS_BSL__compliance_100",
+                   "BLW_NS_BSL__compliance_100",
+                   "NS_BSL_iccat__compliance_100",
+                   "BLW_NS_BSL_iccat__compliance_100")
 
 p_fleet_dodged <- fleet_byc_scenarios %>%
   filter(scenario %in% key_scenarios) %>%
@@ -1117,7 +1012,7 @@ p_cumul <- ggplot(cumul_results, aes(x = cumul_byc_pct, y = lambda,
        subtitle = "Fleets added in order of bycatch contribution (largest first); * = gap-filled BPUE") +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors)
 p_cumul
 ```
 
@@ -1152,8 +1047,8 @@ scenario_effective_coverage <- map_dfr(seq_along(scenarios), function(i) {
 p_fleet_on_blanket <- ggplot() +
   # Blanket coverage curves for key scenarios
   geom_line(data = blanket_results %>%
-              filter(scenario %in% c("2/3 (tori + night)",
-                                     "3/3 (tori + night + weight)",
+              filter(scenario %in% c("Mean 2/3 ACAP",
+                                     "3/3 ACAP",
                                      "Complete elimination")),
             aes(x = reduction, y = lambda, color = scenario),
             linewidth = 0.6, alpha = 0.6) +
@@ -1181,7 +1076,7 @@ p_fleet_on_blanket
 ```{r, fig.width=12, fig.height=6}
 # Using 3/3 efficacy: show how much lambda improves as each fleet is mitigated
 # (in order of bycatch contribution)
-mit_eff_3of3 <- mitigation_scenarios %>% filter(scenario == "3/3 (tori + night + weight)") %>% pull(efficacy)
+mit_eff_3of3 <- mitigation_scenarios %>% filter(scenario == "3/3 ACAP") %>% pull(efficacy)
 
 waterfall_data <- tibble(
   step = 0:nrow(fleet_byc_total),
@@ -1324,15 +1219,14 @@ scenario_heatmap_pts <- scenario_heatmap_pts %>%
         tools::toTitleCase()
     ),
     compliance_level = case_when(
-      scenario == "full_elimination"                ~ "100%",
-      str_detect(scenario, "__compliance_current$") ~ "Current",
-      str_detect(scenario, "__compliance_50$")      ~ "50%",
-      str_detect(scenario, "__compliance_75$")      ~ "75%",
-      str_detect(scenario, "__compliance_100$")     ~ "100%",
+      scenario == "full_elimination"               ~ "100%",
+      str_detect(scenario, "__compliance_50$")     ~ "50%",
+      str_detect(scenario, "__compliance_75$")     ~ "75%",
+      str_detect(scenario, "__compliance_100$")    ~ "100%",
       TRUE ~ "Unknown"
     ),
     compliance_level = factor(compliance_level,
-      levels = c("Current", "50%", "75%", "100%"))
+      levels = c("50%", "75%", "100%"))
   )
 
 # Save scenario heatmap points for cross-period comparison in script 07
@@ -1341,7 +1235,7 @@ write_csv(scenario_heatmap_pts %>% mutate(period = target_period_byc),
 
 # Reference points: no-mitigation, historical (period), current
 no_mit_lambda <- scenario_results %>%
-  filter(scenario == "no_mitigation__compliance_current") %>% pull(lambda)
+  filter(scenario == "no_mitigation__compliance_100") %>% pull(lambda)
 
 hist_fleet_cov <- fleet_percap %>%
   group_by(fishery, fleet) %>%
@@ -1362,38 +1256,45 @@ hist_weighted_efficacy <- if (nrow(has_mit_hist) > 0) {
 hist_fm   <- calc_fleet_fm(fleet_percap, hist_fleet_mitigation)
 hist_lambda <- calc_lambda_from_scenario(hist_fm)
 
-current_pt <- scenario_heatmap_pts %>% filter(scenario == "current__compliance_current")
-
 reference_pts <- tibble(
-  ref_label          = c("No mitigation", paste0("Historical (", target_period_byc, ")"), "Current"),
-  effective_coverage = c(0, hist_weighted_coverage, current_pt$effective_coverage),
-  effective_efficacy = c(0, hist_weighted_efficacy, current_pt$effective_efficacy),
-  lambda             = c(no_mit_lambda, hist_lambda, current_pt$lambda),
+  ref_label          = c("No mitigation", paste0("Historical (", target_period_byc, ")")),
+  effective_coverage = c(0, hist_weighted_coverage),
+  effective_efficacy = c(0, hist_weighted_efficacy),
+  lambda             = c(no_mit_lambda, hist_lambda),
   period             = target_period_byc
 )
 
 write_csv(reference_pts,
           here(paste0("output/heatmap_ref_pts_", target_period_byc, "_", out_sfx, ".csv")))
 
-# Nudged labels for overlapping scenarios — "current" efficacy shown as gold diamond reference, not label
+# Labels for heatmap scenario points at 100% compliance
 heatmap_labels <- scenario_heatmap_pts %>%
-  filter(compliance_level == "Current",
-         !efficacy_scenario %in% c("Current", "No Mitigation", "Full Elimination")) %>%
-  mutate(
-    nudge_y = case_when(
-      efficacy_scenario == "Dll Current Pll 3Of3" ~  0.02,
-      efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.02,
-      efficacy_scenario == "All Fleets 2Of3"      ~ -0.02,
-      TRUE ~ 0
-    )
-  )
+  filter(compliance_level == "100%",
+         !efficacy_scenario %in% c("No Mitigation", "Full Elimination")) %>%
+  mutate(nudge_y = 0)
 
-# Heatmap: lambda colored by diverging palette centered near lambda=1
-# Shape distinguishes compliance level; connected lines show compliance progression
-p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
-  geom_tile() +
-  # Contour at lambda = 1
-  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1) +
+# Qualitative palette for efficacy scenario lines/points on heatmaps
+# Uses colorRampPalette to handle any number of unique scenarios
+scen_names <- sort(unique(scenario_heatmap_pts$efficacy_scenario))
+scen_colors_heatmap <- setNames(
+  colorRampPalette(RColorBrewer::brewer.pal(8, "Dark2"))(length(scen_names)),
+  scen_names
+)
+
+# Color gradient: red (low lambda) → blue (high lambda), consistent across all heatmaps
+heat_grad <- c("#FF0000", "#CC0033", "#990066", "#660099", "#3300CC", "#0000FF")
+
+# Heatmap: lambda as filled contour bands using heat_grad palette
+# Breaks computed to give ~10 equal-width bins spanning the lambda range
+lambda_breaks <- c(seq(floor(min(heatmap_data$lambda) * 1000) / 1000,
+                       ceiling(max(heatmap_data$lambda) * 1000) / 1000,
+                       length.out = 12),
+                   Inf)
+
+p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
+  geom_contour_filled(breaks = lambda_breaks) +
+  # White contour at lambda = 1
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
   # Connect compliance levels within each efficacy scenario
   geom_line(data = scenario_heatmap_pts,
             aes(x = effective_coverage, y = effective_efficacy,
@@ -1430,22 +1331,20 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)
              size = 2.2, fill = "gold", alpha = 0.85,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
-  scale_fill_distiller(direction = 1, palette = "RdBu",
-                       limits = range(heatmap_data$lambda)) +
-  scale_x_continuous(breaks = seq(0, 1, 0.2),
-                     labels = paste0(seq(0, 100, 20), "%")) +
+  scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
+                    name = "Mean \u03BB") +
+  scale_x_continuous(breaks = seq(0, 1, 0.25),
+                     labels = paste0(seq(0, 100, 25), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.2),
                      labels = paste0(seq(0, 100, 20), "%")) +
-  labs(x = "% of total bycatch under active mitigation",
-       y = "Mitigation efficacy",
-       fill = "\u03BB",
-       title = "Population growth rate across mitigation efficacy and coverage",
-       subtitle = "White contour = \u03BB = 1; lines connect compliance levels; gold diamonds = reference points") +
+  labs(x = "% legal fisheries with bycatch mitigation",
+       y = "% mitigation efficacy",
+       title = "Mean \u03BB",
+       subtitle = "White contour = \u03BB = 1; points = fleet scenarios") +
   coord_cartesian(expand = FALSE) +
   theme_bw() +
   theme(panel.grid = element_blank())
@@ -1474,7 +1373,7 @@ p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill 
              inherit.aes = FALSE,
              size = 2, color = "black") +
   geom_label(data = scenario_heatmap_pts %>%
-               filter(compliance_level == "Current"),
+               filter(compliance_level == "100%"),
              aes(x = effective_coverage, y = effective_efficacy,
                  label = efficacy_scenario),
              inherit.aes = FALSE,
@@ -1492,10 +1391,9 @@ p_heatmap_recovery <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill 
              size = 2.2, fill = "gold", alpha = 0.85,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#b2182b"),
                     labels = c("TRUE" = "\u03BB \u2265 1 (recovery)", "FALSE" = "\u03BB < 1 (decline)"),
@@ -1545,11 +1443,10 @@ p_heatmap_recovery_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fi
   scale_fill_manual(values = c("TRUE" = "#2166ac", "FALSE" = "#b2182b"),
                     labels = c("TRUE" = "\u03BB \u2265 1 (recovery)", "FALSE" = "\u03BB < 1 (decline)"),
                     name = "") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
   scale_x_continuous(breaks = seq(0, 1, 0.2),
                      labels = paste0(seq(0, 100, 20), "%")) +
@@ -1581,11 +1478,9 @@ y_pad <- diff(y_range) * 0.3
 # Nudge labels so overlapping scenarios are readable
 # Offset target top 3 and all pll 3of3 labels in opposite directions
 zoom_labels <- zoom_pts %>%
-  filter(compliance_level == "Current") %>%
+  filter(compliance_level == "100%") %>%
   mutate(
     nudge_y = case_when(
-      efficacy_scenario == "Dll Current Pll 3Of3" ~  0.015,
-      efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.015,
       TRUE ~ 0
     )
   )
@@ -1618,10 +1513,9 @@ p_heatmap_zoom <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = la
              size = 2.8, fill = "white", alpha = 0.85,
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
   scale_fill_distiller(direction = 1, palette = "RdBu",
                        limits = range(heatmap_data$lambda)) +
@@ -1648,12 +1542,7 @@ p_heatmap_zoom
 # Color gradient from WFC_prep archive (red = low lambda, blue = high lambda)
 heat_grad <- c("#FF0000", "#CC0033", "#990066", "#660099", "#3300CC", "#0000FF")
 
-# Qualitative palette for efficacy scenario points/lines
-scen_colors <- setNames(
-  RColorBrewer::brewer.pal(n = max(3, length(unique(scenario_heatmap_pts$efficacy_scenario))),
-                           name = "Dark2")[seq_along(unique(scenario_heatmap_pts$efficacy_scenario))],
-  sort(unique(scenario_heatmap_pts$efficacy_scenario))
-)
+# scen_colors_heatmap defined earlier (after scenario_heatmap_pts is built)
 
 p_heatmap_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
@@ -1685,11 +1574,10 @@ p_heatmap_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill = lamb
   scale_fill_gradientn(colors = heat_grad,
                        limits = range(heatmap_data$lambda),
                        name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
   scale_x_continuous(breaks = seq(0, 1, 0.2),
                      labels = paste0(seq(0, 100, 20), "%")) +
@@ -1726,11 +1614,10 @@ p_heatmap_zoom_v2 <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, fill =
   scale_fill_gradientn(colors = heat_grad,
                        limits = range(heatmap_data$lambda),
                        name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance level") +
   scale_x_continuous(breaks = seq(0, 1, 0.1),
                      labels = paste0(seq(0, 100, 10), "%")) +
@@ -1910,7 +1797,7 @@ for (i in 1:nrow(iuu_scenario_output)) {
 # Select representative IUU proportions and mitigation scenarios for plotting
 iuu_plot_vals <- c(0.02, 0.10, 0.20, 0.30)
 # Focus on the most policy-relevant scenarios
-mit_plot_scenarios <- c("Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)")
+mit_plot_scenarios <- c("HSD", "BLW + NS", "BLW + BSL", "NS + BSL", "Mean 2/3 ACAP", "3/3 ACAP", "Complete elimination")
 
 p_iuu_lines <- iuu_scenario_output %>%
   filter(iuu_proportion %in% iuu_plot_vals,
@@ -2141,15 +2028,14 @@ iuu_fleet_pts <- iuu_fleet_pts %>%
         tools::toTitleCase()
     ),
     compliance_level = case_when(
-      scenario == "full_elimination"                ~ "100%",
-      str_detect(scenario, "__compliance_current$") ~ "Current",
-      str_detect(scenario, "__compliance_50$")      ~ "50%",
-      str_detect(scenario, "__compliance_75$")      ~ "75%",
-      str_detect(scenario, "__compliance_100$")     ~ "100%",
+      scenario == "full_elimination"               ~ "100%",
+      str_detect(scenario, "__compliance_50$")     ~ "50%",
+      str_detect(scenario, "__compliance_75$")     ~ "75%",
+      str_detect(scenario, "__compliance_100$")    ~ "100%",
       TRUE ~ "Unknown"
     ),
     compliance_level = factor(compliance_level,
-      levels = c("Current", "50%", "75%", "100%")),
+      levels = c("50%", "75%", "100%")),
     iuu_label = paste0("IUU = ", iuu_prop * 100, "%"),
     iuu_label = factor(iuu_label, levels = paste0("IUU = ", sort(iuu_props_plot) * 100, "%")),
     iuu_red_label = paste0(iuu_reduction * 100, "% IUU reduction"),
@@ -2176,10 +2062,8 @@ pts_opt1  <- iuu_fleet_pts %>% filter(iuu_reduction == 0)
 
 # Nudged labels
 labels_opt1 <- pts_opt1 %>%
-  filter(compliance_level == "Current") %>%
+  filter(compliance_level == "100%") %>%
   mutate(nudge_y = case_when(
-    efficacy_scenario == "Dll Current Pll 3Of3" ~  0.03,
-    efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.03,
     TRUE ~ 0
   ))
 
@@ -2204,10 +2088,9 @@ p_iuu_opt1 <- ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda)) 
              inherit.aes = FALSE, size = 1.8, fill = "white", alpha = 0.8,
              label.padding = unit(0.1, "lines"), hjust = -0.05, vjust = 0.5) +
   facet_wrap(~ iuu_label, nrow = 1) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_distiller(direction = 1, palette = "RdBu") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
@@ -2239,13 +2122,12 @@ p_iuu_opt1_v2 <- ggplot(grid_opt1, aes(x = coverage, y = efficacy, fill = lambda
                  color = efficacy_scenario, shape = compliance_level),
              inherit.aes = FALSE, size = 1.5) +
   facet_wrap(~ iuu_label, nrow = 1) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt1$lambda), name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   labs(x = "% of total bycatch under active mitigation", y = "Mitigation efficacy",
@@ -2267,11 +2149,9 @@ pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0.05, 0.10, 0.20))
 
 # Labels: only baseline compliance, only in top-left panel to reduce clutter
 labels_opt2 <- pts_opt2 %>%
-  filter(compliance_level == "Current",
+  filter(compliance_level == "100%",
          iuu_prop == 0.05, iuu_reduction == 0) %>%
   mutate(nudge_y = case_when(
-    efficacy_scenario == "Dll Current Pll 3Of3" ~  0.03,
-    efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.03,
     TRUE ~ 0
   ))
 
@@ -2296,10 +2176,9 @@ p_iuu_opt2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) 
              inherit.aes = FALSE, size = 1.6, fill = "white", alpha = 0.8,
              label.padding = unit(0.1, "lines"), hjust = -0.05, vjust = 0.5) +
   facet_grid(iuu_label ~ iuu_red_label) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_distiller(direction = 1, palette = "RdBu") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
@@ -2331,13 +2210,12 @@ p_iuu_opt2_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda
                  color = efficacy_scenario, shape = compliance_level),
              inherit.aes = FALSE, size = 1.5) +
   facet_grid(iuu_label ~ iuu_red_label) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt2$lambda), name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   labs(x = "% of total bycatch under active mitigation", y = "Mitigation efficacy",
@@ -2364,12 +2242,8 @@ y_pad_iuu <- diff(y_range_iuu) * 0.35
 
 # Nudged labels — one set per facet panel
 zoom_labels_iuu <- zoom_pts_iuu %>%
-  filter(compliance_level == "Current") %>%
-  mutate(nudge_y = case_when(
-    efficacy_scenario == "Dll Current Pll 3Of3" ~  0.015,
-    efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.015,
-    TRUE ~ 0
-  ))
+  filter(compliance_level == "100%") %>%
+  mutate(nudge_y = 0)
 
 p_iuu_opt2b <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda)) +
   geom_tile() +
@@ -2393,10 +2267,9 @@ p_iuu_opt2b <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambda))
              inherit.aes = FALSE, size = 2.2, fill = "white", alpha = 0.85,
              label.padding = unit(0.12, "lines"), hjust = -0.05, vjust = 0.5) +
   facet_grid(iuu_label ~ iuu_red_label) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_distiller(direction = 1, palette = "RdBu") +
   scale_x_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
@@ -2431,13 +2304,12 @@ p_iuu_opt2b_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambd
                  color = efficacy_scenario, shape = compliance_level),
              inherit.aes = FALSE, size = 2) +
   facet_grid(iuu_label ~ iuu_red_label) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt2$lambda), name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
   scale_x_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.1), labels = paste0(seq(0, 100, 10), "%")) +
   labs(x = "% of total bycatch under active mitigation", y = "Mitigation efficacy",
@@ -2463,7 +2335,7 @@ grid_opt3 <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction == 
 # Fleet points at IUU = 10%, baseline compliance only (to keep arrows readable)
 pts_opt3 <- iuu_fleet_pts %>%
   filter(iuu_prop == iuu_best,
-         compliance_level == "Current",
+         compliance_level == "100%",
          !efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
 
 # Arrow data: from iuu_reduction = 0 to iuu_reduction = 1
@@ -2481,8 +2353,6 @@ pts_end   <- pts_opt3 %>% filter(iuu_reduction == 1)
 # Labels
 labels_opt3 <- pts_start %>%
   mutate(nudge_y = case_when(
-    efficacy_scenario == "Dll Current Pll 3Of3" ~  0.02,
-    efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.02,
     TRUE ~ 0
   ))
 
@@ -2553,7 +2423,7 @@ p_iuu_opt3_v2 <- ggplot(grid_opt3, aes(x = coverage, y = efficacy, fill = lambda
             inherit.aes = FALSE, size = 2.0, color = "black",
             hjust = -0.05, vjust = 0.5, lineheight = 0.9) +
   scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt3$lambda), name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Scenario") +
+  scale_color_manual(values = scen_colors_heatmap, name = "Scenario") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   labs(x = "% of total bycatch under active mitigation", y = "Mitigation efficacy",
@@ -2573,10 +2443,8 @@ grid_opt4a <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction ==
 pts_opt4a  <- iuu_fleet_pts %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
 
 labels_opt4a <- pts_opt4a %>%
-  filter(compliance_level == "Current") %>%
+  filter(compliance_level == "100%") %>%
   mutate(nudge_y = case_when(
-    efficacy_scenario == "Dll Current Pll 3Of3" ~  0.02,
-    efficacy_scenario == "Pll Current Dll 3Of3" ~ -0.02,
     TRUE ~ 0
   ))
 
@@ -2600,10 +2468,9 @@ p_iuu_opt4a <- ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lambda)
                  label = efficacy_scenario),
              inherit.aes = FALSE, size = 2.2, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"), hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_distiller(direction = 1, palette = "RdBu") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
@@ -2634,13 +2501,12 @@ p_iuu_opt4a_v2 <- ggplot(grid_opt4a, aes(x = coverage, y = efficacy, fill = lamb
              aes(x = effective_coverage, y = effective_efficacy,
                  color = efficacy_scenario, shape = compliance_level),
              inherit.aes = FALSE, size = 2) +
-  scale_shape_manual(values = c("Current" = 18,
-                                "50%"     = 0,
-                                "75%"     = 17,
-                                "100%"    = 16),
+  scale_shape_manual(values = c("50%"  = 0,
+                                "75%"  = 17,
+                                "100%" = 16),
                      name = "Compliance") +
   scale_fill_gradientn(colors = heat_grad, limits = range(grid_opt4a$lambda), name = "\u03BB") +
-  scale_color_manual(values = scen_colors, name = "Mitigation scenario") +
+  scale_color_manual(values = scen_colors_heatmap, name = "Mitigation scenario") +
   scale_x_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   scale_y_continuous(breaks = seq(0, 1, 0.2), labels = paste0(seq(0, 100, 20), "%")) +
   labs(x = "% of total bycatch under active mitigation", y = "Mitigation efficacy",
@@ -2656,7 +2522,7 @@ p_iuu_opt4a_v2
 ```{r iuu_option4b, fig.width=10, fig.height=7}
 # Panel B: IUU proportion × IUU reduction heatmap at a fixed mitigation scenario
 # Use "all PLL 3/3 at baseline compliance" as the reference mitigation scenario
-ref_scenario <- "dll_current_pll_3of3__compliance_current"
+ref_scenario <- "BLW_NS_BSL__compliance_100"
 
 # Grid: IUU proportion × IUU reduction → lambda
 iuu_prop_grid_fine <- seq(0, 0.30, by = 0.005)
@@ -2741,6 +2607,45 @@ Incorporate uncertainty in vital rates, fishing mortality, and IUU proportion.
 Uses the 11-stage matrix and three-component mortality partition (natural + legal FM + IUU FM).
 
 **define beta distribution parameters for vital rates**
+ 3.92 inside calc_beta_params converts a 95% CI to an SE:                                                                                                       
+  SE = (upper - lower) / 3.92
+  This assumes upper and lower are already the 2.5th and 97.5th percentiles of the distribution — i.e., they bracket 95% of the probability mass, which spans    
+  ±1.96 SE, so the total width is 3.92 × SE.                                                                                                                     
+                                                                                                                                                                 
+  4 in range / 4 converts an observed range of data points to an estimated SD:                                                                                   
+  SD ≈ (max - min) / 4                                                                                                                                           
+  This assumes the min and max of ~30 observations fall roughly at ±2 SD from the mean, so the total span is 4 × SD.
+                                                                                                                                                                 
+  The distinction is:                                                                                                                                            
+  - 3.92 = exact multiplier for a 95% CI under normality (2 × 1.96)                                                                                              
+  - 4 = rough approximation for the range of a finite sample under normality (2 × 2)                                                                             
+                                                                                                                                                                 
+  They're both derived from the normal distribution but applied to different inputs. The 4 is slightly less precise because the range of a sample is not the same
+   as a formal CI — it's just a practical approximation when you only have the min and max, not the raw data.                                                    
+                                                                                                                                                                 
+  If you wanted to be fully consistent you could use 3.92 for both, treating the Pardo range as if it were exactly a 95% CI. The difference is tiny (0.075/4 =   
+  0.01875 vs 0.075/3.92 = 0.01913), and either is defensible.
+  
+  
+  Cross pop rates for comparison:SEE WG-EMM paper
+  Table 1: Vital rates for wandering albatrosses at Bird Island from Pardo et al. 2017 (highlighted in bold) used in the demographic model, compared with those from other populations. 
+	Bird Island	Crozet	Macquarie
+Vital rate parameters	Pardo et al. 2017
+(1990-2009)	Croxall et al. 1990
+(1961-1989)	Weimerskirch 2018
+(1960-2018)	Cleeland et al. 2021
+(1995-2014)
+chick survival			0.64	
+juvenile survival	0.85		0.8	
+immature survival	0.92		0.92	
+subadult survival			0.95	
+adult survival	0.92*	0.94	0.95	0.94
+breeding success	0.64*	0.64	0.75	0.62
+breeding probability	0.51*			0.75
+return probability	0.76*		0.5	
+*mean of values for experienced and inexperienced breeders. 
+
+                                                                
 ```{r}
 # Helper function to calculate beta distribution shape parameters from mean and 95% CI
 # Uses method of moments: SE = (upper - lower) / 3.92
@@ -2764,87 +2669,127 @@ calc_beta_params <- function(mean_val, lower_ci, upper_ci) {
 }
 
 # === SURVIVAL RATES (stage-specific, Pardo 1980-2012, shared directly) ===
-# PLACEHOLDER CIs — exact per-stage CIs not available; using proportional uncertainty
+# CV values derived from Pardo model estimates (Bird Island 1980–2012), not raw data.
+# Ranges: juvenile survival 0.65–0.95; immature/adult survival 0.88–0.98.
+# SD estimated as range / 4 (range ≈ ±2 SD for ~30 annual estimates).
+# CV = SD / midpoint of range. Applied proportionally to each stage-specific mean.
+# Same CV approach used for all VR types below (return, breeding, success):
+# one CV per rate type captures shared environmental process variance across stages.
+cv_juv   <- 0.094  # SD = (0.95 - 0.65) / 4 = 0.075; CV = 0.075 / 0.80
+cv_adult <- 0.027  # SD = (0.98 - 0.88) / 4 = 0.025; CV = 0.025 / 0.93
+
+surv_ci_from_cv <- function(mean_val, cv) {
+  se    <- mean_val * cv
+  lower <- max(mean_val - 1.96 * se, 0.01)
+  upper <- min(mean_val + 1.96 * se, 0.9999)
+  calc_beta_params(mean_val, lower, upper)
+}
+
 surv_params <- list(
-  s_Juv = calc_beta_params(0.846, 0.770, 0.910),  # juvenile — wider CI
-  s_EF  = calc_beta_params(0.913, 0.875, 0.945),  # experienced failed
-  s_ENB = calc_beta_params(0.943, 0.910, 0.968),  # experienced non-breeding
-  s_ES  = calc_beta_params(0.895, 0.855, 0.930),  # experienced successful
-  s_IF  = calc_beta_params(0.920, 0.882, 0.950),  # inexperienced failed
-  s_Imm = calc_beta_params(0.921, 0.883, 0.951),  # immature
-  s_IS  = calc_beta_params(0.892, 0.851, 0.928),  # inexperienced successful
-  s_PF  = calc_beta_params(0.935, 0.898, 0.963)   # sabbatical
+  s_Juv = surv_ci_from_cv(s_Juv, cv_juv),   # juvenile — CV from annual juvenile series
+  s_EF  = surv_ci_from_cv(s_EF,  cv_adult), # experienced failed
+  s_ENB = surv_ci_from_cv(s_ENB, cv_adult), # experienced non-breeding
+  s_ES  = surv_ci_from_cv(s_ES,  cv_adult), # experienced successful
+  s_IF  = surv_ci_from_cv(s_IF,  cv_adult), # inexperienced failed
+  s_Imm = surv_ci_from_cv(s_Imm, cv_adult), # immature
+  s_IS  = surv_ci_from_cv(s_IS,  cv_adult), # inexperienced successful
+  s_PF  = surv_ci_from_cv(s_PF,  cv_adult)  # sabbatical
 )
 
 # === BREEDING PROBABILITY ===
-# Stage-specific CIs unchanged from script 05
+# CV from Pardo model estimates, Bird Island (range 0.65–0.75)
+cv_breed <- 0.036  # SD = (0.75 - 0.65) / 4 = 0.025; CV = 0.025 / 0.70
 breed_params <- list(
-  b_EF  = calc_beta_params(0.746, 0.68, 0.81),
-  b_ENB = calc_beta_params(0.589, 0.52, 0.66),
-  b_ES  = calc_beta_params(0.016, 0.005, 0.04),
-  b_IF  = calc_beta_params(0.744, 0.68, 0.81),
-  b_Imm = calc_beta_params(0.101, 0.06, 0.15),
-  b_IS  = calc_beta_params(0.011, 0.003, 0.03),
-  b_PF  = calc_beta_params(0.941, 0.90, 0.97)
+  b_EF  = surv_ci_from_cv(b_EF,  cv_breed),
+  b_ENB = surv_ci_from_cv(b_ENB, cv_breed),
+  b_ES  = surv_ci_from_cv(b_ES,  cv_breed),
+  b_IF  = surv_ci_from_cv(b_IF,  cv_breed),
+  b_Imm = surv_ci_from_cv(b_Imm, cv_breed),
+  b_IS  = surv_ci_from_cv(b_IS,  cv_breed),
+  b_PF  = surv_ci_from_cv(b_PF,  cv_breed)
 )
 
 # === RETURN PROBABILITY ===
+# CV from Pardo model estimates, Bird Island (range 0.60–0.725)
+cv_return <- 0.047  # SD = (0.725 - 0.60) / 4 = 0.031; CV = 0.031 / 0.663
 return_params <- list(
-  r_EF  = calc_beta_params(0.973, 0.95, 0.99),
-  r_ENB = calc_beta_params(0.953, 0.93, 0.98),
-  r_ES  = calc_beta_params(0.292, 0.22, 0.37),
-  r_IF  = calc_beta_params(0.948, 0.92, 0.97),
-  r_Imm = calc_beta_params(0.692, 0.63, 0.76),
-  r_IS  = calc_beta_params(0.459, 0.38, 0.54),
-  r_PF  = calc_beta_params(0.972, 0.95, 0.99)
+  r_EF  = surv_ci_from_cv(r_EF,  cv_return),
+  r_ENB = surv_ci_from_cv(r_ENB, cv_return),
+  r_ES  = surv_ci_from_cv(r_ES,  cv_return),
+  r_IF  = surv_ci_from_cv(r_IF,  cv_return),
+  r_Imm = surv_ci_from_cv(r_Imm, cv_return),
+  r_IS  = surv_ci_from_cv(r_IS,  cv_return),
+  r_PF  = surv_ci_from_cv(r_PF,  cv_return)
 )
 
 # === BREEDING SUCCESS ===
+# CV from Pardo model estimates, Bird Island (range 0.625–0.80)
+cv_success <- 0.061  # SD = (0.80 - 0.625) / 4 = 0.044; CV = 0.044 / 0.713
 success_params <- list(
-  k_EF  = calc_beta_params(0.631, 0.54, 0.72),
-  k_ENB = calc_beta_params(0.675, 0.58, 0.77),
-  k_ES  = calc_beta_params(0.500, 0.40, 0.60),
-  k_IF  = calc_beta_params(0.627, 0.53, 0.72),
-  k_Imm = calc_beta_params(0.585, 0.49, 0.68),
-  k_IS  = calc_beta_params(0.627, 0.53, 0.72),
-  k_PF  = calc_beta_params(0.791, 0.71, 0.87)
+  k_EF  = surv_ci_from_cv(k_EF,  cv_success),
+  k_ENB = surv_ci_from_cv(k_ENB, cv_success),
+  k_ES  = surv_ci_from_cv(k_ES,  cv_success),
+  k_IF  = surv_ci_from_cv(k_IF,  cv_success),
+  k_Imm = surv_ci_from_cv(k_Imm, cv_success),
+  k_IS  = surv_ci_from_cv(k_IS,  cv_success),
+  k_PF  = surv_ci_from_cv(k_PF,  cv_success)
 )
 ```
 
 **define FM uncertainty — per-rate beta distributions**
 ```{r}
-# PLACEHOLDER CIs for per-capita fishing mortality
-# FM estimates cascade through multiple uncertain layers:
-#   BPUE uncertainty, spatial overlap, population proportions, gap-filling
-# Using ±100% of point estimate (0.33x to 2x) as rough 95% CI — update from data
+# FM uncertainty derived from BPUE literature review (script 03 output).
+# Two CV options — toggle fm_cv_conservative to choose:
+#   FALSE: cv_mean = SE of mean / mean = (sd / sqrt(n)) / mean
+#          Represents uncertainty in the estimated average BPUE used to compute FM.
+#          Tighter; appropriate if the mean BPUE is a good estimate for this period/region.
+#   TRUE:  cv_full = SD across studies / mean
+#          Represents full between-study dispersion including genuine spatial/temporal
+#          heterogeneity. Wider and more conservative; appropriate given that BPUE varies
+#          substantially across regions and it is uncertain which part of the distribution
+#          applies to any given period.
+fm_cv_conservative <- TRUE  # set FALSE for cv_mean (tighter), TRUE for cv_full (wider)
 
-calc_fm_beta_params <- function(mean_val) {
-  # For very small rates, use proportional uncertainty (±100%)
-  lower <- mean_val * 0.33
-  upper <- mean_val * 2.0
-  # Clamp upper to < 1
-  upper <- min(upper, 0.99)
+bpue_fm_cv <- read_csv(here("output/bpue_summary_by_fishery.csv"), show_col_types = FALSE) %>%
+  mutate(
+    cv_full = sd_bpue / mean_bpue,
+    cv_mean = (sd_bpue / sqrt(n_bpue)) / mean_bpue
+  )
+print(bpue_fm_cv %>% select(fishery_type, n_bpue, mean_bpue, sd_bpue, cv_full, cv_mean))
+
+cv_dll <- bpue_fm_cv %>% filter(fishery_type == "DLL") %>%
+  mutate(cv = if (fm_cv_conservative) cv_full else cv_mean) %>% pull(cv)
+cv_pll <- bpue_fm_cv %>% filter(fishery_type == "PLL") %>%
+  mutate(cv = if (fm_cv_conservative) cv_full else cv_mean) %>% pull(cv)
+
+message("FM uncertainty: using ", if (fm_cv_conservative) "cv_full (conservative)" else "cv_mean (tighter)",
+        " — DLL CV = ", round(cv_dll, 3), ", PLL CV = ", round(cv_pll, 3))
+
+calc_fm_beta_params <- function(mean_val, cv) {
+  se    <- mean_val * cv
+  lower <- max(mean_val - 1.96 * se, mean_val * 0.05)
+  upper <- min(mean_val + 1.96 * se, 0.99)
   calc_beta_params(mean_val, lower, upper)
 }
 
 # DLL per-capita rates
 fm_params_dll <- list(
-  j1  = calc_fm_beta_params(dem_fm_j1),
-  juv = calc_fm_beta_params(dem_fm_juv),
-  imm = calc_fm_beta_params(dem_fm_imm),
-  fb  = calc_fm_beta_params(dem_fm_fb),
-  sb  = calc_fm_beta_params(dem_fm_sb),
-  nb  = calc_fm_beta_params(dem_fm_nb)
+  j1  = calc_fm_beta_params(dem_fm_j1,  cv_dll),
+  juv = calc_fm_beta_params(dem_fm_juv, cv_dll),
+  imm = calc_fm_beta_params(dem_fm_imm, cv_dll),
+  fb  = calc_fm_beta_params(dem_fm_fb,  cv_dll),
+  sb  = calc_fm_beta_params(dem_fm_sb,  cv_dll),
+  nb  = calc_fm_beta_params(dem_fm_nb,  cv_dll)
 )
 
 # PLL per-capita rates
 fm_params_pll <- list(
-  j1  = calc_fm_beta_params(pel_fm_j1),
-  juv = calc_fm_beta_params(pel_fm_juv),
-  imm = calc_fm_beta_params(pel_fm_imm),
-  fb  = calc_fm_beta_params(pel_fm_fb),
-  sb  = calc_fm_beta_params(pel_fm_sb),
-  nb  = calc_fm_beta_params(pel_fm_nb)
+  j1  = calc_fm_beta_params(pel_fm_j1,  cv_pll),
+  juv = calc_fm_beta_params(pel_fm_juv, cv_pll),
+  imm = calc_fm_beta_params(pel_fm_imm, cv_pll),
+  fb  = calc_fm_beta_params(pel_fm_fb,  cv_pll),
+  sb  = calc_fm_beta_params(pel_fm_sb,  cv_pll),
+  nb  = calc_fm_beta_params(pel_fm_nb,  cv_pll)
 )
 ```
 
@@ -2882,6 +2827,7 @@ diag_juv_redraws <- 0     # times s_Juv was redrawn to satisfy s_Juv < min(adult
 diag_juv_capped  <- 0     # times s_Juv hit 100-redraw fallback cap
 
 set.seed(123)
+lambda_nm_only <- numeric(n_sims)
 
 for (k in seq_along(mitigation_scenarios$efficacy)) {
   mit_eff <- mitigation_scenarios$efficacy[k]
@@ -2994,6 +2940,26 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     sim_nm_isb <- (1 - sim_s_IS)  - (sim_dem_fm_sb  + sim_pel_fm_sb)  - sim_iuu_sb
     sim_nm_pf  <- (1 - sim_s_PF)  - (sim_dem_fm_nb  + sim_pel_fm_nb)  - sim_iuu_nb
 
+    # --- Natural-mortality-only lambda (lower bound filter) ---
+    nf_J1  <- 1 - sim_nm_j1;  nf_Juv <- 1 - sim_nm_juv;  nf_Imm <- 1 - sim_nm_imm
+    nf_EF  <- 1 - sim_nm_efb; nf_ES  <- 1 - sim_nm_esb;  nf_ENB <- 1 - sim_nm_enb
+    nf_IF  <- 1 - sim_nm_ifb; nf_IS  <- 1 - sim_nm_isb;  nf_PF  <- 1 - sim_nm_pf
+    nf_m <- matrix(data = c(
+      0,      0,      0,       0,       0,       0,                                                         0.5,                                 0,                                   0.5,                                 0,                                   0,                                     0,
+      nf_J1,  0,      0,       0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      nf_Juv, 0,       0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      nf_Juv,  0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      0,       nf_Imm,  0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      0,       0,       nf_Imm,  nf_Imm*sim_r_Imm*(1-sim_b_Imm)+nf_Imm*(1-sim_r_Imm),      0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      0,       0,       0,       nf_Imm*sim_r_Imm*sim_b_Imm*sim_k_Imm,                     0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      0,       0,       0,       nf_Imm*sim_r_Imm*sim_b_Imm*(1-sim_k_Imm),                 0,                                   0,                                   0,                                   0,                                   0,                                     0,
+      0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*sim_b_IS*sim_k_IS,    nf_IF*sim_r_IF*sim_b_IF*sim_k_IF,    nf_ES*sim_r_ES*sim_b_ES*sim_k_ES,    nf_EF*sim_r_EF*sim_b_EF*sim_k_EF,    nf_ENB*sim_r_ENB*sim_b_ENB*sim_k_ENB,  nf_PF*sim_r_PF*sim_b_PF*sim_k_PF,
+      0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*sim_b_IS*(1-sim_k_IS),nf_IF*sim_r_IF*sim_b_IF*(1-sim_k_IF),nf_ES*sim_r_ES*sim_b_ES*(1-sim_k_ES),nf_EF*sim_r_EF*sim_b_EF*(1-sim_k_EF),nf_ENB*sim_r_ENB*sim_b_ENB*(1-sim_k_ENB),nf_PF*sim_r_PF*sim_b_PF*(1-sim_k_PF),
+      0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*(1-sim_b_IS),         nf_IF*sim_r_IF*(1-sim_b_IF),         nf_ES*sim_r_ES*(1-sim_b_ES),         nf_EF*sim_r_EF*(1-sim_b_EF),         nf_ENB*sim_r_ENB*(1-sim_b_ENB),        nf_PF*sim_r_PF*(1-sim_b_PF),
+      0,      0,      0,       0,       0,       0,                                                         nf_IS*(1-sim_r_IS),                  nf_IF*(1-sim_r_IF),                  nf_ES*(1-sim_r_ES),                  nf_EF*(1-sim_r_EF),                  nf_ENB*(1-sim_r_ENB),                  nf_PF*(1-sim_r_PF)
+    ), nrow = 12, byrow = TRUE)
+    lambda_nm_only[j] <- as.numeric(eigen(nf_m)$values[1])
+
     # --- Loop over mitigation coverage levels ---
     for (i in seq_along(coverage_seq)) {
       red <- coverage_seq[i]
@@ -3048,6 +3014,11 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     }
   }
 
+  # Biological bound filter: remove sims where baseline (coverage = 0) lambda >= 1 (upper bound),
+  # or where no-fishing lambda < 1 (lower bound — VR combination inconsistent with observed population)
+  invalid_sims <- which(output_mat[1, ] >= 1 | lambda_nm_only < 1)
+  if (length(invalid_sims) > 0) output_mat[, invalid_sims] <- NA
+
   # Store results with metadata
   output_df <- as.data.frame(output_mat)
   output_df$mitigation_efficacy <- mit_eff
@@ -3059,7 +3030,8 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
 # Redraw diagnostics (counts are cumulative across all scenarios × sims)
 # Simplified: only s_Juv < s_Adult hierarchy enforced
 total_draws <- nrow(mitigation_scenarios) * n_sims
-# Note: baseline lambda filtering removed — post-hoc centering used instead
+# Biological bound filters applied per k: baseline lambda (coverage=0) >= 1 removed (upper);
+# no-fishing lambda < 1 removed (lower). Invalid columns set to NA, dropped at format step.
 tibble(
   metric = c(
     paste0("Total sim draws (", nrow(mitigation_scenarios), " scenarios x ", n_sims, " sims)"),
@@ -3085,22 +3057,6 @@ uncert_long <- map_dfr(full_output_uncert, function(df) {
 # Order scenarios by efficacy
 uncert_long <- uncert_long %>%
   mutate(scenario = factor(scenario, levels = mitigation_scenarios$scenario))
-
-# --- Post-hoc centering: shift sim lambdas so mean matches deterministic ---
-# This preserves the variance/shape from the uncertainty sims but anchors the
-# central tendency to the deterministic lambda (which uses point-estimate VRs).
-# Needed because biological hierarchy constraints + FM clamping shift the
-# raw simulation mean away from the deterministic value (Jensen's inequality).
-det_lookup <- blanket_results %>%
-  select(scenario, coverage = reduction, det_lambda = lambda)
-
-uncert_long <- uncert_long %>%
-  left_join(det_lookup, by = c("scenario", "coverage")) %>%
-  group_by(scenario, coverage) %>%
-  mutate(shift = det_lambda - mean(lambda),
-         lambda = lambda + shift) %>%
-  ungroup() %>%
-  select(-det_lambda, -shift)
 
 # Calculate summary statistics per coverage × scenario
 uncert_summary <- uncert_long %>%
@@ -3171,7 +3127,7 @@ p_uncert_zoom <- ggplot(uncert_summary) +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors)
 p_uncert_zoom
 ```
 
@@ -3198,7 +3154,7 @@ p_prob_recovery <- ggplot(prob_recovery) +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(expand = FALSE) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors)
 p_prob_recovery
 ```
 
@@ -3229,6 +3185,7 @@ list_idx <- 0
 
 for (iuu_idx in seq_along(fixed_iuu_vals)) {
   fixed_iuu_p <- fixed_iuu_vals[iuu_idx]
+  lambda_nm_only_fixed <- numeric(n_sims_fixed)
 
   for (iuu_red_idx in seq_along(fixed_iuu_red_vals)) {
     fixed_iuu_red <- fixed_iuu_red_vals[iuu_red_idx]
@@ -3339,6 +3296,26 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         sim_nm_isb <- (1 - sim_s_IS)  - (sim_dem_fm_sb  + sim_pel_fm_sb)  - sim_iuu_sb
         sim_nm_pf  <- (1 - sim_s_PF)  - (sim_dem_fm_nb  + sim_pel_fm_nb)  - sim_iuu_nb
 
+        # --- Natural-mortality-only lambda (lower bound filter) ---
+        nf_J1  <- 1 - sim_nm_j1;  nf_Juv <- 1 - sim_nm_juv;  nf_Imm <- 1 - sim_nm_imm
+        nf_EF  <- 1 - sim_nm_efb; nf_ES  <- 1 - sim_nm_esb;  nf_ENB <- 1 - sim_nm_enb
+        nf_IF  <- 1 - sim_nm_ifb; nf_IS  <- 1 - sim_nm_isb;  nf_PF  <- 1 - sim_nm_pf
+        nf_m <- matrix(data = c(
+          0,      0,      0,       0,       0,       0,                                                         0.5,                                 0,                                   0.5,                                 0,                                   0,                                     0,
+          nf_J1,  0,      0,       0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      nf_Juv, 0,       0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      nf_Juv,  0,       0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      0,       nf_Imm,  0,       0,                                                         0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      0,       0,       nf_Imm,  nf_Imm*sim_r_Imm*(1-sim_b_Imm)+nf_Imm*(1-sim_r_Imm),      0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      0,       0,       0,       nf_Imm*sim_r_Imm*sim_b_Imm*sim_k_Imm,                     0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      0,       0,       0,       nf_Imm*sim_r_Imm*sim_b_Imm*(1-sim_k_Imm),                 0,                                   0,                                   0,                                   0,                                   0,                                     0,
+          0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*sim_b_IS*sim_k_IS,    nf_IF*sim_r_IF*sim_b_IF*sim_k_IF,    nf_ES*sim_r_ES*sim_b_ES*sim_k_ES,    nf_EF*sim_r_EF*sim_b_EF*sim_k_EF,    nf_ENB*sim_r_ENB*sim_b_ENB*sim_k_ENB,  nf_PF*sim_r_PF*sim_b_PF*sim_k_PF,
+          0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*sim_b_IS*(1-sim_k_IS),nf_IF*sim_r_IF*sim_b_IF*(1-sim_k_IF),nf_ES*sim_r_ES*sim_b_ES*(1-sim_k_ES),nf_EF*sim_r_EF*sim_b_EF*(1-sim_k_EF),nf_ENB*sim_r_ENB*sim_b_ENB*(1-sim_k_ENB),nf_PF*sim_r_PF*sim_b_PF*(1-sim_k_PF),
+          0,      0,      0,       0,       0,       0,                                                         nf_IS*sim_r_IS*(1-sim_b_IS),         nf_IF*sim_r_IF*(1-sim_b_IF),         nf_ES*sim_r_ES*(1-sim_b_ES),         nf_EF*sim_r_EF*(1-sim_b_EF),         nf_ENB*sim_r_ENB*(1-sim_b_ENB),        nf_PF*sim_r_PF*(1-sim_b_PF),
+          0,      0,      0,       0,       0,       0,                                                         nf_IS*(1-sim_r_IS),                  nf_IF*(1-sim_r_IF),                  nf_ES*(1-sim_r_ES),                  nf_EF*(1-sim_r_EF),                  nf_ENB*(1-sim_r_ENB),                  nf_PF*(1-sim_r_PF)
+        ), nrow = 12, byrow = TRUE)
+        lambda_nm_only_fixed[j] <- as.numeric(eigen(nf_m)$values[1])
+
         # --- Loop over coverage levels ---
         for (i in seq_along(coverage_seq_fixed)) {
           red <- coverage_seq_fixed[i]
@@ -3393,6 +3370,11 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         }
       }
 
+      # Biological bound filter: remove sims where baseline (coverage = 0) lambda >= 1 (upper bound),
+      # or where no-fishing lambda < 1 (lower bound)
+      invalid_sims_fixed <- which(output_mat[1, ] >= 1 | lambda_nm_only_fixed < 1)
+      if (length(invalid_sims_fixed) > 0) output_mat[, invalid_sims_fixed] <- NA
+
       output_df <- as.data.frame(output_mat)
       output_df$mitigation_efficacy <- mit_eff
       output_df$scenario <- mitigation_scenarios$scenario[k]
@@ -3405,7 +3387,7 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
 }
 
 # Redraw diagnostics for fixed-IUU simulation
-# Note: baseline lambda filtering removed — post-hoc centering used instead
+# Biological bound filters: baseline lambda (coverage=0) >= 1 removed (upper); no-fishing lambda < 1 removed (lower)
 total_draws2 <- length(fixed_iuu_vals) * length(fixed_iuu_red_vals) * nrow(mitigation_scenarios) * n_sims_fixed
 tibble(
   metric = c("Total sim draws", "s_Juv redraws (s_Juv >= s_Adult)", "s_Juv fallback caps"),
@@ -3433,20 +3415,6 @@ uncert_fixed_iuu_long <- uncert_fixed_iuu_long %>%
                            levels = paste0(sort(fixed_iuu_red_vals) * 100, "% IUU reduction"))
   )
 
-# --- Post-hoc centering for fixed-IUU sim ---
-# Match deterministic lambda from iuu_scenario_output (which has all combos)
-det_iuu_lookup <- iuu_scenario_output %>%
-  select(scenario, iuu_proportion, coverage, iuu_reduction, det_lambda = lambda)
-
-uncert_fixed_iuu_long <- uncert_fixed_iuu_long %>%
-  left_join(det_iuu_lookup,
-            by = c("scenario", "iuu_proportion", "coverage", "iuu_reduction")) %>%
-  group_by(scenario, iuu_proportion, iuu_reduction, coverage) %>%
-  mutate(shift = det_lambda - mean(lambda),
-         lambda = lambda + shift) %>%
-  ungroup() %>%
-  select(-det_lambda, -shift)
-
 uncert_fixed_iuu_summary <- uncert_fixed_iuu_long %>%
   group_by(scenario, iuu_proportion, iuu_label, iuu_reduction, iuu_red_label, coverage) %>%
   summarise(
@@ -3469,7 +3437,8 @@ uncert_fixed_iuu_long %>%
 
 **plot fixed-IUU uncertainty — ribbon (scenario rows × IUU columns), colored by enforcement**
 ```{r, fig.width=14, fig.height=10}
-mit_plot_scenarios_fixed <- c("Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)")
+#mit_plot_scenarios_fixed <- c("Tori lines only", "2/3 (tori + night)", "3/3 (tori + night + weight)")
+mit_plot_scenarios_fixed <- unique(uncert_fixed_iuu_summary$scenario) 
 
 p_fixed_iuu_ribbon <- uncert_fixed_iuu_summary %>%
   filter(scenario %in% mit_plot_scenarios_fixed) %>%
@@ -3510,8 +3479,8 @@ p_fixed_iuu_all <- uncert_fixed_iuu_summary %>%
   themeo +
   guides(colour = guide_legend(nrow = 2), fill = guide_legend(nrow = 2)) +
   coord_cartesian(expand = FALSE) +
-  scale_color_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58")) +
-  scale_fill_manual(values = c("#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#253494", "#081d58"))
+  scale_color_manual(values = scenario_colors) +
+  scale_fill_manual(values = scenario_colors)
 p_fixed_iuu_all
 ```
 
@@ -3560,6 +3529,95 @@ p_fixed_iuu_prob <- ggplot(prob_recovery_fixed) +
   coord_cartesian(expand = FALSE) +
   scale_color_manual(values = c("#d73027", "#fee090", "#4575b4"))
 p_fixed_iuu_prob
+```
+
+**Heatmap pair: mean λ (deterministic) + probability λ ≥ 1 (from uncertainty sim)**
+```{r p_heatmap_combined, fig.width=14, fig.height=6}
+# Probability surface: P(lambda >= 1) at each scenario × coverage, mapped to efficacy on y-axis
+prob_heatmap_data <- uncert_long %>%
+  group_by(scenario, coverage) %>%
+  summarise(prob_recover = mean(lambda >= 1), .groups = "drop") %>%
+  left_join(mitigation_scenarios %>% select(scenario, efficacy), by = "scenario")
+
+# Deterministic mean lambda heatmap — reuse heatmap_data computed above (full efficacy × coverage grid)
+p_hm_mean <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
+  geom_contour_filled(breaks = lambda_breaks) +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "black") +
+  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+                     name = "Compliance level") +
+  scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
+                    drop = FALSE, name = "Mean \u03BB") +
+  scale_x_continuous(breaks = seq(0, 1, 0.25), labels = paste0(seq(0, 100, 25), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),  labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% legal fisheries with bycatch mitigation",
+       y = "% mitigation efficacy",
+       title = "Mean \u03BB") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+# Interpolate P(lambda >= 1) to a full efficacy × coverage grid so the heatmap
+# is not blank below the lowest Bell scenario efficacy.
+# Anchor: at efficacy = 0, P(lambda >= 1) = 0 for every coverage level.
+eff_seq      <- seq(0, 1, by = 0.01)
+coverage_vals <- sort(unique(prob_heatmap_data$coverage))
+
+anchor_pts <- tibble(coverage = coverage_vals, prob_recover = 0, efficacy = 0)
+
+prob_heatmap_full <- bind_rows(
+    prob_heatmap_data %>% select(coverage, prob_recover, efficacy),
+    anchor_pts
+  ) %>%
+  arrange(coverage, efficacy) %>%
+  group_by(coverage) %>%
+  group_modify(~ tibble(
+    efficacy     = eff_seq,
+    prob_recover = approx(x = .x$efficacy, y = .x$prob_recover,
+                          xout = eff_seq, rule = 2)$y
+  )) %>%
+  ungroup()
+
+prob_breaks <- c(seq(0, 1, by = 0.1), Inf)
+
+p_hm_prob <- ggplot(prob_heatmap_full,
+                    aes(x = coverage, y = efficacy, z = prob_recover)) +
+  geom_contour_filled(breaks = prob_breaks) +
+  geom_contour(aes(z = prob_recover), breaks = 0.5,
+               color = "white", linewidth = 1.2) +
+  geom_line(data = scenario_heatmap_pts,
+            aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = scenario_heatmap_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "black") +
+  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+                     name = "Compliance level") +
+  scale_fill_manual(values = colorRampPalette(heat_grad)(length(prob_breaks) - 1),
+                    drop = FALSE, na.value = "grey80", name = "P(\u03BB \u2265 1)") +
+  scale_x_continuous(breaks = seq(0, 1, 0.25), labels = paste0(seq(0, 100, 25), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),  labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% legal fisheries with bycatch mitigation",
+       y = "% mitigation efficacy",
+       title = "Probability \u03BB \u2265 1") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+p_hm_mean + p_hm_prob +
+  plot_annotation(title = "Full model output",
+                  theme = theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold")))
 ```
 
 ---

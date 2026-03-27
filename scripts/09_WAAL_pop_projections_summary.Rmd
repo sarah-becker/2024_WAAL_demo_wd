@@ -9,7 +9,7 @@ library(tidyverse)
 library(RColorBrewer)
 
 
-input_sfx     <- "2026-02-25"                    # date 06a was last run — must match saved CSV
+input_sfx     <- "2026-03-27"                    # date 06a was last run — must match saved CSV
 output_sfx    <- format(Sys.Date(), "%Y-%m-%d")  # today's date, used when saving figures
 target_period <- "1990-1994" #baseline reference period
 
@@ -41,7 +41,8 @@ Three projection scenarios across 100-year and 500-years:
 **vital rates**
 ```{r vital-rates}
 # Stage-specific survival rates (Pardo et al., 1980-2012)
-s_Juv <- 0.846
+s_Juv  <- 0.846  # juvenile (J2/J3 stage transitions)
+s_Juv1 <- s_Juv  # J1 survival (same baseline as s_Juv; modified separately by J1 FM in scenarios)
 s_EF  <- 0.913
 s_ENB <- 0.943
 s_ES  <- 0.895
@@ -60,12 +61,26 @@ k_IF  <- 0.627;  k_Imm <- 0.585;  k_IS  <- 0.627;  k_PF  <- 0.791
 r_EF  <- 0.973;  r_ENB <- 0.953;  r_ES  <- 0.292
 r_IF  <- 0.948;  r_Imm <- 0.692;  r_IS  <- 0.459;  r_PF  <- 0.972
 
-# Mitigation efficacy: 3/3 combined (tori lines + night setting + line weighting)
-# numbers pulled from the literature and will need citations and confirmation
-eff_tori_lines  <- 0.75
-eff_night_set   <- 0.60
-eff_line_weight <- 0.65
-eff_3of3 <- 1 - (1 - eff_tori_lines) * (1 - eff_night_set) * (1 - eff_line_weight)
+# Mitigation efficacy from Bell et al. 2025 (Fig. 5, Wandering alb. SG panel, ACAP 20S domain)
+# F values digitized from log-scale figure; BLW = Branch Line Weighting, NS = Night Setting, BSL = Bird-Scaring Lines
+F_none_20S <- 0.034
+
+bell_F <- tribble(
+  ~scenario,    ~acap_20S,
+  "BLW_NS",     0.001,
+  "BLW_BSL",    0.005,
+  "NS_BSL",     0.003,
+  "BLW_NS_BSL", 0.0009,
+  "HSD",        0.005
+) %>%
+  mutate(eff_acap_20S = 1 - (acap_20S / F_none_20S))
+
+eff_blw_ns_acap  <- bell_F$eff_acap_20S[bell_F$scenario == "BLW_NS"]
+eff_blw_bsl_acap <- bell_F$eff_acap_20S[bell_F$scenario == "BLW_BSL"]
+eff_ns_bsl_acap  <- bell_F$eff_acap_20S[bell_F$scenario == "NS_BSL"]
+eff_3of3_acap    <- bell_F$eff_acap_20S[bell_F$scenario == "BLW_NS_BSL"]
+eff_hsd_acap     <- bell_F$eff_acap_20S[bell_F$scenario == "HSD"]
+bell_2of3_acap   <- mean(bell_F$eff_acap_20S[bell_F$scenario %in% c("BLW_NS", "BLW_BSL", "NS_BSL")])
 ```
 
 **load per-capita fishing mortality and natural mortality from 06a output**
@@ -78,26 +93,29 @@ mort_part <- read_csv(
 mort_part
 
 # Extract per-capita DLL and PLL fishing mortality by stage group
-dem_fm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(fm_dll)
-pel_fm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(fm_pll)
-dem_fm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(fm_dll)
-pel_fm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(fm_pll)
-dem_fm_fb  <- mort_part %>% filter(stage == "EF")  %>% pull(fm_dll)  # same for IF
-pel_fm_fb  <- mort_part %>% filter(stage == "EF")  %>% pull(fm_pll)
-dem_fm_sb  <- mort_part %>% filter(stage == "ES")  %>% pull(fm_dll)  # same for IS
-pel_fm_sb  <- mort_part %>% filter(stage == "ES")  %>% pull(fm_pll)
-dem_fm_nb  <- mort_part %>% filter(stage == "ENB") %>% pull(fm_dll)  # same for PF
-pel_fm_nb  <- mort_part %>% filter(stage == "ENB") %>% pull(fm_pll)
+dem_fm_j1  <- mort_part %>% filter(stage == "J1")   %>% pull(fm_dll)
+pel_fm_j1  <- mort_part %>% filter(stage == "J1")   %>% pull(fm_pll)
+dem_fm_juv <- mort_part %>% filter(stage == "J2J3") %>% pull(fm_dll)
+pel_fm_juv <- mort_part %>% filter(stage == "J2J3") %>% pull(fm_pll)
+dem_fm_imm <- mort_part %>% filter(stage == "Imm")  %>% pull(fm_dll)
+pel_fm_imm <- mort_part %>% filter(stage == "Imm")  %>% pull(fm_pll)
+dem_fm_fb  <- mort_part %>% filter(stage == "EF")   %>% pull(fm_dll)  # same for IF
+pel_fm_fb  <- mort_part %>% filter(stage == "EF")   %>% pull(fm_pll)
+dem_fm_sb  <- mort_part %>% filter(stage == "ES")   %>% pull(fm_dll)  # same for IS
+pel_fm_sb  <- mort_part %>% filter(stage == "ES")   %>% pull(fm_pll)
+dem_fm_nb  <- mort_part %>% filter(stage == "ENB")  %>% pull(fm_dll)  # same for PF
+pel_fm_nb  <- mort_part %>% filter(stage == "ENB")  %>% pull(fm_pll)
 
 # Natural mortality by stage (total mortality minus fishing mortality)
-nm_juv <- mort_part %>% filter(stage == "Juv") %>% pull(nm)
-nm_imm <- mort_part %>% filter(stage == "Imm") %>% pull(nm)
-nm_efb <- mort_part %>% filter(stage == "EF")  %>% pull(nm)
-nm_esb <- mort_part %>% filter(stage == "ES")  %>% pull(nm)
-nm_enb <- mort_part %>% filter(stage == "ENB") %>% pull(nm)
-nm_ifb <- mort_part %>% filter(stage == "IF")  %>% pull(nm)
-nm_isb <- mort_part %>% filter(stage == "IS")  %>% pull(nm)
-nm_pf  <- mort_part %>% filter(stage == "PF")  %>% pull(nm)
+nm_j1  <- mort_part %>% filter(stage == "J1")   %>% pull(nm)
+nm_juv <- mort_part %>% filter(stage == "J2J3") %>% pull(nm)
+nm_imm <- mort_part %>% filter(stage == "Imm")  %>% pull(nm)
+nm_efb <- mort_part %>% filter(stage == "EF")   %>% pull(nm)
+nm_esb <- mort_part %>% filter(stage == "ES")   %>% pull(nm)
+nm_enb <- mort_part %>% filter(stage == "ENB")  %>% pull(nm)
+nm_ifb <- mort_part %>% filter(stage == "IF")   %>% pull(nm)
+nm_isb <- mort_part %>% filter(stage == "IS")   %>% pull(nm)
+nm_pf  <- mort_part %>% filter(stage == "PF")   %>% pull(nm)
 
 # Starting population: total Bird Island birds in the target period
 dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
@@ -118,7 +136,7 @@ N0 <- sum(pop_period$Pop)
 # as it existed in the baseline period (1990-1994)
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_base <- matrix(data = c(
-  0,     0,      0,      0,      0,                                          0.5*s_Juv,              0,                       0.5*s_Juv,              0,                       0,                         0,
+  0,     0,      0,      0,      0,                                          0.5*s_Juv1,             0,                       0.5*s_Juv1,             0,                       0,                         0,
   s_Juv, 0,      0,      0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
   0,     s_Juv,  0,      0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
   0,     0,      s_Imm,  0,      0,                                          0,                       0,                       0,                       0,                       0,                         0,
@@ -141,19 +159,21 @@ SSD
 n0_vec
 
 
-# --- Full 3/3 mitigation matrix ---
-# ns_* = 1 - (FM_total * (1 - eff_3of3) + natural_mortality)
-ns_Juv <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_3of3) + nm_juv)
-ns_Imm <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_3of3) + nm_imm)
-ns_EF  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3) + nm_efb)
-ns_ES  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3) + nm_esb)
-ns_ENB <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3) + nm_enb)
-ns_IF  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3) + nm_ifb)
-ns_IS  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3) + nm_isb)
-ns_PF  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3) + nm_pf)
+# --- Full 3/3 mitigation matrix (Bell et al. 2025 ACAP efficacy: BLW + NS + BSL) ---
+# ns_* = 1 - (FM_total * (1 - eff_3of3_acap) + natural_mortality)
+# J1 and J2J3 have separate FM, so ns_Juv1 (fecundity term) and ns_Juv (transitions) differ
+ns_Juv1 <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff_3of3_acap) + nm_j1)
+ns_Juv  <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_3of3_acap) + nm_juv)
+ns_Imm  <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_3of3_acap) + nm_imm)
+ns_EF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3_acap) + nm_efb)
+ns_ES   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3_acap) + nm_esb)
+ns_ENB  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3_acap) + nm_enb)
+ns_IF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3_acap) + nm_ifb)
+ns_IS   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3_acap) + nm_isb)
+ns_PF   <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3_acap) + nm_pf)
 
 m_3of3 <- matrix(data = c(
-  0,      0,       0,       0,       0,                                           0.5*ns_Juv,               0,                        0.5*ns_Juv,               0,                        0,                          0,
+  0,      0,       0,       0,       0,                                           0.5*ns_Juv1,              0,                        0.5*ns_Juv1,              0,                        0,                          0,
   ns_Juv, 0,       0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
   0,      ns_Juv,  0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
   0,      0,       ns_Imm,  0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
@@ -171,7 +191,7 @@ lambda_3of3 <- as.numeric(eigen(m_3of3)$values[1])
 m_3of3
 lambda_3of3
 
-tibble(scenario  = c("No mitigation (baseline)", "Full 3/3 mitigation"),
+tibble(scenario  = c("No mitigation (baseline)", "3/3 ACAP (BLW + NS + BSL, Bell et al. 2025)"),
        lambda    = c(lambda_base, lambda_3of3))
 ```
 
@@ -179,19 +199,17 @@ tibble(scenario  = c("No mitigation (baseline)", "Full 3/3 mitigation"),
 
 **observed population data**
 ```{r obs-data}
-# 5-year period totals from Clay 2019 demographic data (excludes J1)
+# 5-year period totals from Clay 2019 demographic data (includes J1)
 dem_obs <- dem_props %>%
-  filter(Dem_class != "J1",
-         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  filter(Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
   group_by(Period) %>%
   summarise(N_obs = sum(Pop), .groups = "drop") %>%
   mutate(year = c(0, 5, 10, 15))
 
 # Split into adults (SB + FB + NB) and immatures (IMM + J2+3) for stage comparison plots
 dem_obs_split <- dem_props %>%
-  filter(Dem_class != "J1",
-         Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
-  mutate(group = ifelse(Dem_class %in% c("IMM", "J2+3"), "Immatures", "Adults"),
+  filter(Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  mutate(group = ifelse(Dem_class %in% c("J1", "IMM", "J2J3"), "Immatures", "Adults"),
          year  = case_when(
            Period == "1990-1994" ~ 0,
            Period == "1995-1999" ~ 5,
@@ -711,40 +729,41 @@ when m_3of3 is used for the remainder. Improvement per step = (ns_* - s_*) / 5.
 
 **5-year phase-in survival rates**
 ```{r part3-survival-rates}
-s_Juv_p1 <- s_Juv + (1/5) * (ns_Juv - s_Juv);  s_Imm_p1 <- s_Imm + (1/5) * (ns_Imm - s_Imm)
-s_EF_p1  <- s_EF  + (1/5) * (ns_EF  - s_EF);   s_ES_p1  <- s_ES  + (1/5) * (ns_ES  - s_ES)
-s_ENB_p1 <- s_ENB + (1/5) * (ns_ENB - s_ENB);  s_IF_p1  <- s_IF  + (1/5) * (ns_IF  - s_IF)
-s_IS_p1  <- s_IS  + (1/5) * (ns_IS  - s_IS);   s_PF_p1  <- s_PF  + (1/5) * (ns_PF  - s_PF)
+# J1 fecundity-term survival phases separately from J2/J3 transition survival
+s_Juv1_p1 <- s_Juv1 + (1/5) * (ns_Juv1 - s_Juv1);  s_Juv_p1 <- s_Juv + (1/5) * (ns_Juv - s_Juv);  s_Imm_p1 <- s_Imm + (1/5) * (ns_Imm - s_Imm)
+s_EF_p1   <- s_EF   + (1/5) * (ns_EF   - s_EF);     s_ES_p1  <- s_ES  + (1/5) * (ns_ES  - s_ES)
+s_ENB_p1  <- s_ENB  + (1/5) * (ns_ENB  - s_ENB);    s_IF_p1  <- s_IF  + (1/5) * (ns_IF  - s_IF)
+s_IS_p1   <- s_IS   + (1/5) * (ns_IS   - s_IS);     s_PF_p1  <- s_PF  + (1/5) * (ns_PF  - s_PF)
 
-s_Juv_p2 <- s_Juv + (2/5) * (ns_Juv - s_Juv);  s_Imm_p2 <- s_Imm + (2/5) * (ns_Imm - s_Imm)
-s_EF_p2  <- s_EF  + (2/5) * (ns_EF  - s_EF);   s_ES_p2  <- s_ES  + (2/5) * (ns_ES  - s_ES)
-s_ENB_p2 <- s_ENB + (2/5) * (ns_ENB - s_ENB);  s_IF_p2  <- s_IF  + (2/5) * (ns_IF  - s_IF)
-s_IS_p2  <- s_IS  + (2/5) * (ns_IS  - s_IS);   s_PF_p2  <- s_PF  + (2/5) * (ns_PF  - s_PF)
+s_Juv1_p2 <- s_Juv1 + (2/5) * (ns_Juv1 - s_Juv1);  s_Juv_p2 <- s_Juv + (2/5) * (ns_Juv - s_Juv);  s_Imm_p2 <- s_Imm + (2/5) * (ns_Imm - s_Imm)
+s_EF_p2   <- s_EF   + (2/5) * (ns_EF   - s_EF);     s_ES_p2  <- s_ES  + (2/5) * (ns_ES  - s_ES)
+s_ENB_p2  <- s_ENB  + (2/5) * (ns_ENB  - s_ENB);    s_IF_p2  <- s_IF  + (2/5) * (ns_IF  - s_IF)
+s_IS_p2   <- s_IS   + (2/5) * (ns_IS   - s_IS);     s_PF_p2  <- s_PF  + (2/5) * (ns_PF  - s_PF)
 
-s_Juv_p3 <- s_Juv + (3/5) * (ns_Juv - s_Juv);  s_Imm_p3 <- s_Imm + (3/5) * (ns_Imm - s_Imm)
-s_EF_p3  <- s_EF  + (3/5) * (ns_EF  - s_EF);   s_ES_p3  <- s_ES  + (3/5) * (ns_ES  - s_ES)
-s_ENB_p3 <- s_ENB + (3/5) * (ns_ENB - s_ENB);  s_IF_p3  <- s_IF  + (3/5) * (ns_IF  - s_IF)
-s_IS_p3  <- s_IS  + (3/5) * (ns_IS  - s_IS);   s_PF_p3  <- s_PF  + (3/5) * (ns_PF  - s_PF)
+s_Juv1_p3 <- s_Juv1 + (3/5) * (ns_Juv1 - s_Juv1);  s_Juv_p3 <- s_Juv + (3/5) * (ns_Juv - s_Juv);  s_Imm_p3 <- s_Imm + (3/5) * (ns_Imm - s_Imm)
+s_EF_p3   <- s_EF   + (3/5) * (ns_EF   - s_EF);     s_ES_p3  <- s_ES  + (3/5) * (ns_ES  - s_ES)
+s_ENB_p3  <- s_ENB  + (3/5) * (ns_ENB  - s_ENB);    s_IF_p3  <- s_IF  + (3/5) * (ns_IF  - s_IF)
+s_IS_p3   <- s_IS   + (3/5) * (ns_IS   - s_IS);     s_PF_p3  <- s_PF  + (3/5) * (ns_PF  - s_PF)
 
-s_Juv_p4 <- s_Juv + (4/5) * (ns_Juv - s_Juv);  s_Imm_p4 <- s_Imm + (4/5) * (ns_Imm - s_Imm)
-s_EF_p4  <- s_EF  + (4/5) * (ns_EF  - s_EF);   s_ES_p4  <- s_ES  + (4/5) * (ns_ES  - s_ES)
-s_ENB_p4 <- s_ENB + (4/5) * (ns_ENB - s_ENB);  s_IF_p4  <- s_IF  + (4/5) * (ns_IF  - s_IF)
-s_IS_p4  <- s_IS  + (4/5) * (ns_IS  - s_IS);   s_PF_p4  <- s_PF  + (4/5) * (ns_PF  - s_PF)
+s_Juv1_p4 <- s_Juv1 + (4/5) * (ns_Juv1 - s_Juv1);  s_Juv_p4 <- s_Juv + (4/5) * (ns_Juv - s_Juv);  s_Imm_p4 <- s_Imm + (4/5) * (ns_Imm - s_Imm)
+s_EF_p4   <- s_EF   + (4/5) * (ns_EF   - s_EF);     s_ES_p4  <- s_ES  + (4/5) * (ns_ES  - s_ES)
+s_ENB_p4  <- s_ENB  + (4/5) * (ns_ENB  - s_ENB);    s_IF_p4  <- s_IF  + (4/5) * (ns_IF  - s_IF)
+s_IS_p4   <- s_IS   + (4/5) * (ns_IS   - s_IS);     s_PF_p4  <- s_PF  + (4/5) * (ns_PF  - s_PF)
 
 # Step 5: 100% — equals ns_* (same as m_3of3)
-s_Juv_p5 <- s_Juv + (5/5) * (ns_Juv - s_Juv);  s_Imm_p5 <- s_Imm + (5/5) * (ns_Imm - s_Imm)
-s_EF_p5  <- s_EF  + (5/5) * (ns_EF  - s_EF);   s_ES_p5  <- s_ES  + (5/5) * (ns_ES  - s_ES)
-s_ENB_p5 <- s_ENB + (5/5) * (ns_ENB - s_ENB);  s_IF_p5  <- s_IF  + (5/5) * (ns_IF  - s_IF)
-s_IS_p5  <- s_IS  + (5/5) * (ns_IS  - s_IS);   s_PF_p5  <- s_PF  + (5/5) * (ns_PF  - s_PF)
+s_Juv1_p5 <- s_Juv1 + (5/5) * (ns_Juv1 - s_Juv1);  s_Juv_p5 <- s_Juv + (5/5) * (ns_Juv - s_Juv);  s_Imm_p5 <- s_Imm + (5/5) * (ns_Imm - s_Imm)
+s_EF_p5   <- s_EF   + (5/5) * (ns_EF   - s_EF);     s_ES_p5  <- s_ES  + (5/5) * (ns_ES  - s_ES)
+s_ENB_p5  <- s_ENB  + (5/5) * (ns_ENB  - s_ENB);    s_IF_p5  <- s_IF  + (5/5) * (ns_IF  - s_IF)
+s_IS_p5   <- s_IS   + (5/5) * (ns_IS   - s_IS);     s_PF_p5  <- s_PF  + (5/5) * (ns_PF  - s_PF)
 
 tibble(
-  stage     = c("Juv", "Imm", "EF", "ES", "ENB", "IF", "IS", "PF"),
-  baseline  = c(s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
-  phase1    = c(s_Juv_p1, s_Imm_p1, s_EF_p1, s_ES_p1, s_ENB_p1, s_IF_p1, s_IS_p1, s_PF_p1),
-  phase2    = c(s_Juv_p2, s_Imm_p2, s_EF_p2, s_ES_p2, s_ENB_p2, s_IF_p2, s_IS_p2, s_PF_p2),
-  phase3    = c(s_Juv_p3, s_Imm_p3, s_EF_p3, s_ES_p3, s_ENB_p3, s_IF_p3, s_IS_p3, s_PF_p3),
-  phase4    = c(s_Juv_p4, s_Imm_p4, s_EF_p4, s_ES_p4, s_ENB_p4, s_IF_p4, s_IS_p4, s_PF_p4),
-  full_3of3 = c(s_Juv_p5, s_Imm_p5, s_EF_p5, s_ES_p5, s_ENB_p5, s_IF_p5, s_IS_p5, s_PF_p5)
+  stage     = c("Juv1 (fec)", "Juv (J2J3)", "Imm", "EF", "ES", "ENB", "IF", "IS", "PF"),
+  baseline  = c(s_Juv1, s_Juv, s_Imm, s_EF, s_ES, s_ENB, s_IF, s_IS, s_PF),
+  phase1    = c(s_Juv1_p1, s_Juv_p1, s_Imm_p1, s_EF_p1, s_ES_p1, s_ENB_p1, s_IF_p1, s_IS_p1, s_PF_p1),
+  phase2    = c(s_Juv1_p2, s_Juv_p2, s_Imm_p2, s_EF_p2, s_ES_p2, s_ENB_p2, s_IF_p2, s_IS_p2, s_PF_p2),
+  phase3    = c(s_Juv1_p3, s_Juv_p3, s_Imm_p3, s_EF_p3, s_ES_p3, s_ENB_p3, s_IF_p3, s_IS_p3, s_PF_p3),
+  phase4    = c(s_Juv1_p4, s_Juv_p4, s_Imm_p4, s_EF_p4, s_ES_p4, s_ENB_p4, s_IF_p4, s_IS_p4, s_PF_p4),
+  full_3of3 = c(s_Juv1_p5, s_Juv_p5, s_Imm_p5, s_EF_p5, s_ES_p5, s_ENB_p5, s_IF_p5, s_IS_p5, s_PF_p5)
 ) %>% print()
 ```
 
@@ -752,7 +771,7 @@ tibble(
 ```{r part3-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_phase1 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p1,               0,                           0.5*s_Juv_p1,               0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                0.5*s_Juv1_p1,              0,                           0.5*s_Juv1_p1,              0,                           0,                               0,
   s_Juv_p1, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        s_Juv_p1, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        0,        s_Imm_p1, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
@@ -766,7 +785,7 @@ m_phase1 <- matrix(data = c(
 ), nrow = 11, byrow = TRUE)
 
 m_phase2 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p2,               0,                           0.5*s_Juv_p2,               0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                0.5*s_Juv1_p2,              0,                           0.5*s_Juv1_p2,              0,                           0,                               0,
   s_Juv_p2, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        s_Juv_p2, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        0,        s_Imm_p2, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
@@ -780,7 +799,7 @@ m_phase2 <- matrix(data = c(
 ), nrow = 11, byrow = TRUE)
 
 m_phase3 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p3,               0,                           0.5*s_Juv_p3,               0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                0.5*s_Juv1_p3,              0,                           0.5*s_Juv1_p3,              0,                           0,                               0,
   s_Juv_p3, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        s_Juv_p3, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        0,        s_Imm_p3, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
@@ -794,7 +813,7 @@ m_phase3 <- matrix(data = c(
 ), nrow = 11, byrow = TRUE)
 
 m_phase4 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p4,               0,                           0.5*s_Juv_p4,               0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                0.5*s_Juv1_p4,              0,                           0.5*s_Juv1_p4,              0,                           0,                               0,
   s_Juv_p4, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        s_Juv_p4, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        0,        s_Imm_p4, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
@@ -809,7 +828,7 @@ m_phase4 <- matrix(data = c(
 
 # m_phase5: 100% improvement — identical to m_3of3
 m_phase5 <- matrix(data = c(
-  0,        0,        0,        0,        0,                                                0.5*s_Juv_p5,               0,                           0.5*s_Juv_p5,               0,                           0,                               0,
+  0,        0,        0,        0,        0,                                                0.5*s_Juv1_p5,              0,                           0.5*s_Juv1_p5,              0,                           0,                               0,
   s_Juv_p5, 0,        0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        s_Juv_p5, 0,        0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
   0,        0,        s_Imm_p5, 0,        0,                                                0,                          0,                           0,                          0,                           0,                               0,
@@ -833,63 +852,63 @@ Each step adds 1/10 of total survival improvement. k=1-10 use phase matrices; k>
 
 **10-year phase-in survival rates**
 ```{r part4-survival-rates}
-s_Juv_10y1  <- s_Juv + (1/10)  * (ns_Juv - s_Juv);  s_Imm_10y1  <- s_Imm + (1/10)  * (ns_Imm - s_Imm)
-s_EF_10y1   <- s_EF  + (1/10)  * (ns_EF  - s_EF);   s_ES_10y1   <- s_ES  + (1/10)  * (ns_ES  - s_ES)
-s_ENB_10y1  <- s_ENB + (1/10)  * (ns_ENB - s_ENB);  s_IF_10y1   <- s_IF  + (1/10)  * (ns_IF  - s_IF)
-s_IS_10y1   <- s_IS  + (1/10)  * (ns_IS  - s_IS);   s_PF_10y1   <- s_PF  + (1/10)  * (ns_PF  - s_PF)
+s_Juv1_10y1 <- s_Juv1 + (1/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y1  <- s_Juv + (1/10)  * (ns_Juv - s_Juv);  s_Imm_10y1  <- s_Imm + (1/10)  * (ns_Imm - s_Imm)
+s_EF_10y1   <- s_EF  + (1/10)  * (ns_EF  - s_EF);      s_ES_10y1   <- s_ES  + (1/10)  * (ns_ES  - s_ES)
+s_ENB_10y1  <- s_ENB + (1/10)  * (ns_ENB - s_ENB);     s_IF_10y1   <- s_IF  + (1/10)  * (ns_IF  - s_IF)
+s_IS_10y1   <- s_IS  + (1/10)  * (ns_IS  - s_IS);      s_PF_10y1   <- s_PF  + (1/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y2  <- s_Juv + (2/10)  * (ns_Juv - s_Juv);  s_Imm_10y2  <- s_Imm + (2/10)  * (ns_Imm - s_Imm)
-s_EF_10y2   <- s_EF  + (2/10)  * (ns_EF  - s_EF);   s_ES_10y2   <- s_ES  + (2/10)  * (ns_ES  - s_ES)
-s_ENB_10y2  <- s_ENB + (2/10)  * (ns_ENB - s_ENB);  s_IF_10y2   <- s_IF  + (2/10)  * (ns_IF  - s_IF)
-s_IS_10y2   <- s_IS  + (2/10)  * (ns_IS  - s_IS);   s_PF_10y2   <- s_PF  + (2/10)  * (ns_PF  - s_PF)
+s_Juv1_10y2 <- s_Juv1 + (2/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y2  <- s_Juv + (2/10)  * (ns_Juv - s_Juv);  s_Imm_10y2  <- s_Imm + (2/10)  * (ns_Imm - s_Imm)
+s_EF_10y2   <- s_EF  + (2/10)  * (ns_EF  - s_EF);      s_ES_10y2   <- s_ES  + (2/10)  * (ns_ES  - s_ES)
+s_ENB_10y2  <- s_ENB + (2/10)  * (ns_ENB - s_ENB);     s_IF_10y2   <- s_IF  + (2/10)  * (ns_IF  - s_IF)
+s_IS_10y2   <- s_IS  + (2/10)  * (ns_IS  - s_IS);      s_PF_10y2   <- s_PF  + (2/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y3  <- s_Juv + (3/10)  * (ns_Juv - s_Juv);  s_Imm_10y3  <- s_Imm + (3/10)  * (ns_Imm - s_Imm)
-s_EF_10y3   <- s_EF  + (3/10)  * (ns_EF  - s_EF);   s_ES_10y3   <- s_ES  + (3/10)  * (ns_ES  - s_ES)
-s_ENB_10y3  <- s_ENB + (3/10)  * (ns_ENB - s_ENB);  s_IF_10y3   <- s_IF  + (3/10)  * (ns_IF  - s_IF)
-s_IS_10y3   <- s_IS  + (3/10)  * (ns_IS  - s_IS);   s_PF_10y3   <- s_PF  + (3/10)  * (ns_PF  - s_PF)
+s_Juv1_10y3 <- s_Juv1 + (3/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y3  <- s_Juv + (3/10)  * (ns_Juv - s_Juv);  s_Imm_10y3  <- s_Imm + (3/10)  * (ns_Imm - s_Imm)
+s_EF_10y3   <- s_EF  + (3/10)  * (ns_EF  - s_EF);      s_ES_10y3   <- s_ES  + (3/10)  * (ns_ES  - s_ES)
+s_ENB_10y3  <- s_ENB + (3/10)  * (ns_ENB - s_ENB);     s_IF_10y3   <- s_IF  + (3/10)  * (ns_IF  - s_IF)
+s_IS_10y3   <- s_IS  + (3/10)  * (ns_IS  - s_IS);      s_PF_10y3   <- s_PF  + (3/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y4  <- s_Juv + (4/10)  * (ns_Juv - s_Juv);  s_Imm_10y4  <- s_Imm + (4/10)  * (ns_Imm - s_Imm)
-s_EF_10y4   <- s_EF  + (4/10)  * (ns_EF  - s_EF);   s_ES_10y4   <- s_ES  + (4/10)  * (ns_ES  - s_ES)
-s_ENB_10y4  <- s_ENB + (4/10)  * (ns_ENB - s_ENB);  s_IF_10y4   <- s_IF  + (4/10)  * (ns_IF  - s_IF)
-s_IS_10y4   <- s_IS  + (4/10)  * (ns_IS  - s_IS);   s_PF_10y4   <- s_PF  + (4/10)  * (ns_PF  - s_PF)
+s_Juv1_10y4 <- s_Juv1 + (4/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y4  <- s_Juv + (4/10)  * (ns_Juv - s_Juv);  s_Imm_10y4  <- s_Imm + (4/10)  * (ns_Imm - s_Imm)
+s_EF_10y4   <- s_EF  + (4/10)  * (ns_EF  - s_EF);      s_ES_10y4   <- s_ES  + (4/10)  * (ns_ES  - s_ES)
+s_ENB_10y4  <- s_ENB + (4/10)  * (ns_ENB - s_ENB);     s_IF_10y4   <- s_IF  + (4/10)  * (ns_IF  - s_IF)
+s_IS_10y4   <- s_IS  + (4/10)  * (ns_IS  - s_IS);      s_PF_10y4   <- s_PF  + (4/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y5  <- s_Juv + (5/10)  * (ns_Juv - s_Juv);  s_Imm_10y5  <- s_Imm + (5/10)  * (ns_Imm - s_Imm)
-s_EF_10y5   <- s_EF  + (5/10)  * (ns_EF  - s_EF);   s_ES_10y5   <- s_ES  + (5/10)  * (ns_ES  - s_ES)
-s_ENB_10y5  <- s_ENB + (5/10)  * (ns_ENB - s_ENB);  s_IF_10y5   <- s_IF  + (5/10)  * (ns_IF  - s_IF)
-s_IS_10y5   <- s_IS  + (5/10)  * (ns_IS  - s_IS);   s_PF_10y5   <- s_PF  + (5/10)  * (ns_PF  - s_PF)
+s_Juv1_10y5 <- s_Juv1 + (5/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y5  <- s_Juv + (5/10)  * (ns_Juv - s_Juv);  s_Imm_10y5  <- s_Imm + (5/10)  * (ns_Imm - s_Imm)
+s_EF_10y5   <- s_EF  + (5/10)  * (ns_EF  - s_EF);      s_ES_10y5   <- s_ES  + (5/10)  * (ns_ES  - s_ES)
+s_ENB_10y5  <- s_ENB + (5/10)  * (ns_ENB - s_ENB);     s_IF_10y5   <- s_IF  + (5/10)  * (ns_IF  - s_IF)
+s_IS_10y5   <- s_IS  + (5/10)  * (ns_IS  - s_IS);      s_PF_10y5   <- s_PF  + (5/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y6  <- s_Juv + (6/10)  * (ns_Juv - s_Juv);  s_Imm_10y6  <- s_Imm + (6/10)  * (ns_Imm - s_Imm)
-s_EF_10y6   <- s_EF  + (6/10)  * (ns_EF  - s_EF);   s_ES_10y6   <- s_ES  + (6/10)  * (ns_ES  - s_ES)
-s_ENB_10y6  <- s_ENB + (6/10)  * (ns_ENB - s_ENB);  s_IF_10y6   <- s_IF  + (6/10)  * (ns_IF  - s_IF)
-s_IS_10y6   <- s_IS  + (6/10)  * (ns_IS  - s_IS);   s_PF_10y6   <- s_PF  + (6/10)  * (ns_PF  - s_PF)
+s_Juv1_10y6 <- s_Juv1 + (6/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y6  <- s_Juv + (6/10)  * (ns_Juv - s_Juv);  s_Imm_10y6  <- s_Imm + (6/10)  * (ns_Imm - s_Imm)
+s_EF_10y6   <- s_EF  + (6/10)  * (ns_EF  - s_EF);      s_ES_10y6   <- s_ES  + (6/10)  * (ns_ES  - s_ES)
+s_ENB_10y6  <- s_ENB + (6/10)  * (ns_ENB - s_ENB);     s_IF_10y6   <- s_IF  + (6/10)  * (ns_IF  - s_IF)
+s_IS_10y6   <- s_IS  + (6/10)  * (ns_IS  - s_IS);      s_PF_10y6   <- s_PF  + (6/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y7  <- s_Juv + (7/10)  * (ns_Juv - s_Juv);  s_Imm_10y7  <- s_Imm + (7/10)  * (ns_Imm - s_Imm)
-s_EF_10y7   <- s_EF  + (7/10)  * (ns_EF  - s_EF);   s_ES_10y7   <- s_ES  + (7/10)  * (ns_ES  - s_ES)
-s_ENB_10y7  <- s_ENB + (7/10)  * (ns_ENB - s_ENB);  s_IF_10y7   <- s_IF  + (7/10)  * (ns_IF  - s_IF)
-s_IS_10y7   <- s_IS  + (7/10)  * (ns_IS  - s_IS);   s_PF_10y7   <- s_PF  + (7/10)  * (ns_PF  - s_PF)
+s_Juv1_10y7 <- s_Juv1 + (7/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y7  <- s_Juv + (7/10)  * (ns_Juv - s_Juv);  s_Imm_10y7  <- s_Imm + (7/10)  * (ns_Imm - s_Imm)
+s_EF_10y7   <- s_EF  + (7/10)  * (ns_EF  - s_EF);      s_ES_10y7   <- s_ES  + (7/10)  * (ns_ES  - s_ES)
+s_ENB_10y7  <- s_ENB + (7/10)  * (ns_ENB - s_ENB);     s_IF_10y7   <- s_IF  + (7/10)  * (ns_IF  - s_IF)
+s_IS_10y7   <- s_IS  + (7/10)  * (ns_IS  - s_IS);      s_PF_10y7   <- s_PF  + (7/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y8  <- s_Juv + (8/10)  * (ns_Juv - s_Juv);  s_Imm_10y8  <- s_Imm + (8/10)  * (ns_Imm - s_Imm)
-s_EF_10y8   <- s_EF  + (8/10)  * (ns_EF  - s_EF);   s_ES_10y8   <- s_ES  + (8/10)  * (ns_ES  - s_ES)
-s_ENB_10y8  <- s_ENB + (8/10)  * (ns_ENB - s_ENB);  s_IF_10y8   <- s_IF  + (8/10)  * (ns_IF  - s_IF)
-s_IS_10y8   <- s_IS  + (8/10)  * (ns_IS  - s_IS);   s_PF_10y8   <- s_PF  + (8/10)  * (ns_PF  - s_PF)
+s_Juv1_10y8 <- s_Juv1 + (8/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y8  <- s_Juv + (8/10)  * (ns_Juv - s_Juv);  s_Imm_10y8  <- s_Imm + (8/10)  * (ns_Imm - s_Imm)
+s_EF_10y8   <- s_EF  + (8/10)  * (ns_EF  - s_EF);      s_ES_10y8   <- s_ES  + (8/10)  * (ns_ES  - s_ES)
+s_ENB_10y8  <- s_ENB + (8/10)  * (ns_ENB - s_ENB);     s_IF_10y8   <- s_IF  + (8/10)  * (ns_IF  - s_IF)
+s_IS_10y8   <- s_IS  + (8/10)  * (ns_IS  - s_IS);      s_PF_10y8   <- s_PF  + (8/10)  * (ns_PF  - s_PF)
 
-s_Juv_10y9  <- s_Juv + (9/10)  * (ns_Juv - s_Juv);  s_Imm_10y9  <- s_Imm + (9/10)  * (ns_Imm - s_Imm)
-s_EF_10y9   <- s_EF  + (9/10)  * (ns_EF  - s_EF);   s_ES_10y9   <- s_ES  + (9/10)  * (ns_ES  - s_ES)
-s_ENB_10y9  <- s_ENB + (9/10)  * (ns_ENB - s_ENB);  s_IF_10y9   <- s_IF  + (9/10)  * (ns_IF  - s_IF)
-s_IS_10y9   <- s_IS  + (9/10)  * (ns_IS  - s_IS);   s_PF_10y9   <- s_PF  + (9/10)  * (ns_PF  - s_PF)
+s_Juv1_10y9 <- s_Juv1 + (9/10)  * (ns_Juv1 - s_Juv1);  s_Juv_10y9  <- s_Juv + (9/10)  * (ns_Juv - s_Juv);  s_Imm_10y9  <- s_Imm + (9/10)  * (ns_Imm - s_Imm)
+s_EF_10y9   <- s_EF  + (9/10)  * (ns_EF  - s_EF);      s_ES_10y9   <- s_ES  + (9/10)  * (ns_ES  - s_ES)
+s_ENB_10y9  <- s_ENB + (9/10)  * (ns_ENB - s_ENB);     s_IF_10y9   <- s_IF  + (9/10)  * (ns_IF  - s_IF)
+s_IS_10y9   <- s_IS  + (9/10)  * (ns_IS  - s_IS);      s_PF_10y9   <- s_PF  + (9/10)  * (ns_PF  - s_PF)
 
 # Step 10: 100% — equals ns_* (same as m_3of3)
-s_Juv_10y10 <- s_Juv + (10/10) * (ns_Juv - s_Juv);  s_Imm_10y10 <- s_Imm + (10/10) * (ns_Imm - s_Imm)
-s_EF_10y10  <- s_EF  + (10/10) * (ns_EF  - s_EF);   s_ES_10y10  <- s_ES  + (10/10) * (ns_ES  - s_ES)
-s_ENB_10y10 <- s_ENB + (10/10) * (ns_ENB - s_ENB);  s_IF_10y10  <- s_IF  + (10/10) * (ns_IF  - s_IF)
-s_IS_10y10  <- s_IS  + (10/10) * (ns_IS  - s_IS);   s_PF_10y10  <- s_PF  + (10/10) * (ns_PF  - s_PF)
+s_Juv1_10y10 <- s_Juv1 + (10/10) * (ns_Juv1 - s_Juv1);  s_Juv_10y10 <- s_Juv + (10/10) * (ns_Juv - s_Juv);  s_Imm_10y10 <- s_Imm + (10/10) * (ns_Imm - s_Imm)
+s_EF_10y10   <- s_EF  + (10/10) * (ns_EF  - s_EF);       s_ES_10y10  <- s_ES  + (10/10) * (ns_ES  - s_ES)
+s_ENB_10y10  <- s_ENB + (10/10) * (ns_ENB - s_ENB);      s_IF_10y10  <- s_IF  + (10/10) * (ns_IF  - s_IF)
+s_IS_10y10   <- s_IS  + (10/10) * (ns_IS  - s_IS);       s_PF_10y10  <- s_PF  + (10/10) * (ns_PF  - s_PF)
 ```
 
 **10-year phase-in matrices**
 ```{r part4-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_10y1 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y1,0,0.5*s_Juv_10y1,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y1,0,0.5*s_Juv1_10y1,0,0,0,
   s_Juv_10y1,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y1,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y1,0,0, 0,0,0,0,0,0,
@@ -903,7 +922,7 @@ m_10y1 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y2 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y2,0,0.5*s_Juv_10y2,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y2,0,0.5*s_Juv1_10y2,0,0,0,
   s_Juv_10y2,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y2,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y2,0,0, 0,0,0,0,0,0,
@@ -917,7 +936,7 @@ m_10y2 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y3 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y3,0,0.5*s_Juv_10y3,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y3,0,0.5*s_Juv1_10y3,0,0,0,
   s_Juv_10y3,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y3,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y3,0,0, 0,0,0,0,0,0,
@@ -931,7 +950,7 @@ m_10y3 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y4 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y4,0,0.5*s_Juv_10y4,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y4,0,0.5*s_Juv1_10y4,0,0,0,
   s_Juv_10y4,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y4,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y4,0,0, 0,0,0,0,0,0,
@@ -945,7 +964,7 @@ m_10y4 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y5 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y5,0,0.5*s_Juv_10y5,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y5,0,0.5*s_Juv1_10y5,0,0,0,
   s_Juv_10y5,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y5,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y5,0,0, 0,0,0,0,0,0,
@@ -959,7 +978,7 @@ m_10y5 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y6 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y6,0,0.5*s_Juv_10y6,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y6,0,0.5*s_Juv1_10y6,0,0,0,
   s_Juv_10y6,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y6,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y6,0,0, 0,0,0,0,0,0,
@@ -973,7 +992,7 @@ m_10y6 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y7 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y7,0,0.5*s_Juv_10y7,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y7,0,0.5*s_Juv1_10y7,0,0,0,
   s_Juv_10y7,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y7,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y7,0,0, 0,0,0,0,0,0,
@@ -987,7 +1006,7 @@ m_10y7 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y8 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y8,0,0.5*s_Juv_10y8,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y8,0,0.5*s_Juv1_10y8,0,0,0,
   s_Juv_10y8,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y8,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y8,0,0, 0,0,0,0,0,0,
@@ -1001,7 +1020,7 @@ m_10y8 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_10y9 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y9,0,0.5*s_Juv_10y9,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y9,0,0.5*s_Juv1_10y9,0,0,0,
   s_Juv_10y9,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y9,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y9,0,0, 0,0,0,0,0,0,
@@ -1016,7 +1035,7 @@ m_10y9 <- matrix(data = c(
 
 # m_10y10: 100% improvement — should equal m_3of3
 m_10y10 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_10y10,0,0.5*s_Juv_10y10,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_10y10,0,0.5*s_Juv1_10y10,0,0,0,
   s_Juv_10y10,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_10y10,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_10y10,0,0, 0,0,0,0,0,0,
@@ -1041,113 +1060,113 @@ Each step adds 1/20 of total survival improvement. k=1-20 use phase matrices; k>
 
 **20-year phase-in survival rates**
 ```{r part5-survival-rates}
-s_Juv_20y1  <- s_Juv + (1/20)  * (ns_Juv - s_Juv);  s_Imm_20y1  <- s_Imm + (1/20)  * (ns_Imm - s_Imm)
-s_EF_20y1   <- s_EF  + (1/20)  * (ns_EF  - s_EF);   s_ES_20y1   <- s_ES  + (1/20)  * (ns_ES  - s_ES)
-s_ENB_20y1  <- s_ENB + (1/20)  * (ns_ENB - s_ENB);  s_IF_20y1   <- s_IF  + (1/20)  * (ns_IF  - s_IF)
-s_IS_20y1   <- s_IS  + (1/20)  * (ns_IS  - s_IS);   s_PF_20y1   <- s_PF  + (1/20)  * (ns_PF  - s_PF)
+s_Juv1_20y1  <- s_Juv1 + (1/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y1  <- s_Juv + (1/20)  * (ns_Juv - s_Juv);  s_Imm_20y1  <- s_Imm + (1/20)  * (ns_Imm - s_Imm)
+s_EF_20y1    <- s_EF  + (1/20)  * (ns_EF  - s_EF);      s_ES_20y1   <- s_ES  + (1/20)  * (ns_ES  - s_ES)
+s_ENB_20y1   <- s_ENB + (1/20)  * (ns_ENB - s_ENB);     s_IF_20y1   <- s_IF  + (1/20)  * (ns_IF  - s_IF)
+s_IS_20y1    <- s_IS  + (1/20)  * (ns_IS  - s_IS);      s_PF_20y1   <- s_PF  + (1/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y2  <- s_Juv + (2/20)  * (ns_Juv - s_Juv);  s_Imm_20y2  <- s_Imm + (2/20)  * (ns_Imm - s_Imm)
-s_EF_20y2   <- s_EF  + (2/20)  * (ns_EF  - s_EF);   s_ES_20y2   <- s_ES  + (2/20)  * (ns_ES  - s_ES)
-s_ENB_20y2  <- s_ENB + (2/20)  * (ns_ENB - s_ENB);  s_IF_20y2   <- s_IF  + (2/20)  * (ns_IF  - s_IF)
-s_IS_20y2   <- s_IS  + (2/20)  * (ns_IS  - s_IS);   s_PF_20y2   <- s_PF  + (2/20)  * (ns_PF  - s_PF)
+s_Juv1_20y2  <- s_Juv1 + (2/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y2  <- s_Juv + (2/20)  * (ns_Juv - s_Juv);  s_Imm_20y2  <- s_Imm + (2/20)  * (ns_Imm - s_Imm)
+s_EF_20y2    <- s_EF  + (2/20)  * (ns_EF  - s_EF);      s_ES_20y2   <- s_ES  + (2/20)  * (ns_ES  - s_ES)
+s_ENB_20y2   <- s_ENB + (2/20)  * (ns_ENB - s_ENB);     s_IF_20y2   <- s_IF  + (2/20)  * (ns_IF  - s_IF)
+s_IS_20y2    <- s_IS  + (2/20)  * (ns_IS  - s_IS);      s_PF_20y2   <- s_PF  + (2/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y3  <- s_Juv + (3/20)  * (ns_Juv - s_Juv);  s_Imm_20y3  <- s_Imm + (3/20)  * (ns_Imm - s_Imm)
-s_EF_20y3   <- s_EF  + (3/20)  * (ns_EF  - s_EF);   s_ES_20y3   <- s_ES  + (3/20)  * (ns_ES  - s_ES)
-s_ENB_20y3  <- s_ENB + (3/20)  * (ns_ENB - s_ENB);  s_IF_20y3   <- s_IF  + (3/20)  * (ns_IF  - s_IF)
-s_IS_20y3   <- s_IS  + (3/20)  * (ns_IS  - s_IS);   s_PF_20y3   <- s_PF  + (3/20)  * (ns_PF  - s_PF)
+s_Juv1_20y3  <- s_Juv1 + (3/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y3  <- s_Juv + (3/20)  * (ns_Juv - s_Juv);  s_Imm_20y3  <- s_Imm + (3/20)  * (ns_Imm - s_Imm)
+s_EF_20y3    <- s_EF  + (3/20)  * (ns_EF  - s_EF);      s_ES_20y3   <- s_ES  + (3/20)  * (ns_ES  - s_ES)
+s_ENB_20y3   <- s_ENB + (3/20)  * (ns_ENB - s_ENB);     s_IF_20y3   <- s_IF  + (3/20)  * (ns_IF  - s_IF)
+s_IS_20y3    <- s_IS  + (3/20)  * (ns_IS  - s_IS);      s_PF_20y3   <- s_PF  + (3/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y4  <- s_Juv + (4/20)  * (ns_Juv - s_Juv);  s_Imm_20y4  <- s_Imm + (4/20)  * (ns_Imm - s_Imm)
-s_EF_20y4   <- s_EF  + (4/20)  * (ns_EF  - s_EF);   s_ES_20y4   <- s_ES  + (4/20)  * (ns_ES  - s_ES)
-s_ENB_20y4  <- s_ENB + (4/20)  * (ns_ENB - s_ENB);  s_IF_20y4   <- s_IF  + (4/20)  * (ns_IF  - s_IF)
-s_IS_20y4   <- s_IS  + (4/20)  * (ns_IS  - s_IS);   s_PF_20y4   <- s_PF  + (4/20)  * (ns_PF  - s_PF)
+s_Juv1_20y4  <- s_Juv1 + (4/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y4  <- s_Juv + (4/20)  * (ns_Juv - s_Juv);  s_Imm_20y4  <- s_Imm + (4/20)  * (ns_Imm - s_Imm)
+s_EF_20y4    <- s_EF  + (4/20)  * (ns_EF  - s_EF);      s_ES_20y4   <- s_ES  + (4/20)  * (ns_ES  - s_ES)
+s_ENB_20y4   <- s_ENB + (4/20)  * (ns_ENB - s_ENB);     s_IF_20y4   <- s_IF  + (4/20)  * (ns_IF  - s_IF)
+s_IS_20y4    <- s_IS  + (4/20)  * (ns_IS  - s_IS);      s_PF_20y4   <- s_PF  + (4/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y5  <- s_Juv + (5/20)  * (ns_Juv - s_Juv);  s_Imm_20y5  <- s_Imm + (5/20)  * (ns_Imm - s_Imm)
-s_EF_20y5   <- s_EF  + (5/20)  * (ns_EF  - s_EF);   s_ES_20y5   <- s_ES  + (5/20)  * (ns_ES  - s_ES)
-s_ENB_20y5  <- s_ENB + (5/20)  * (ns_ENB - s_ENB);  s_IF_20y5   <- s_IF  + (5/20)  * (ns_IF  - s_IF)
-s_IS_20y5   <- s_IS  + (5/20)  * (ns_IS  - s_IS);   s_PF_20y5   <- s_PF  + (5/20)  * (ns_PF  - s_PF)
+s_Juv1_20y5  <- s_Juv1 + (5/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y5  <- s_Juv + (5/20)  * (ns_Juv - s_Juv);  s_Imm_20y5  <- s_Imm + (5/20)  * (ns_Imm - s_Imm)
+s_EF_20y5    <- s_EF  + (5/20)  * (ns_EF  - s_EF);      s_ES_20y5   <- s_ES  + (5/20)  * (ns_ES  - s_ES)
+s_ENB_20y5   <- s_ENB + (5/20)  * (ns_ENB - s_ENB);     s_IF_20y5   <- s_IF  + (5/20)  * (ns_IF  - s_IF)
+s_IS_20y5    <- s_IS  + (5/20)  * (ns_IS  - s_IS);      s_PF_20y5   <- s_PF  + (5/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y6  <- s_Juv + (6/20)  * (ns_Juv - s_Juv);  s_Imm_20y6  <- s_Imm + (6/20)  * (ns_Imm - s_Imm)
-s_EF_20y6   <- s_EF  + (6/20)  * (ns_EF  - s_EF);   s_ES_20y6   <- s_ES  + (6/20)  * (ns_ES  - s_ES)
-s_ENB_20y6  <- s_ENB + (6/20)  * (ns_ENB - s_ENB);  s_IF_20y6   <- s_IF  + (6/20)  * (ns_IF  - s_IF)
-s_IS_20y6   <- s_IS  + (6/20)  * (ns_IS  - s_IS);   s_PF_20y6   <- s_PF  + (6/20)  * (ns_PF  - s_PF)
+s_Juv1_20y6  <- s_Juv1 + (6/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y6  <- s_Juv + (6/20)  * (ns_Juv - s_Juv);  s_Imm_20y6  <- s_Imm + (6/20)  * (ns_Imm - s_Imm)
+s_EF_20y6    <- s_EF  + (6/20)  * (ns_EF  - s_EF);      s_ES_20y6   <- s_ES  + (6/20)  * (ns_ES  - s_ES)
+s_ENB_20y6   <- s_ENB + (6/20)  * (ns_ENB - s_ENB);     s_IF_20y6   <- s_IF  + (6/20)  * (ns_IF  - s_IF)
+s_IS_20y6    <- s_IS  + (6/20)  * (ns_IS  - s_IS);      s_PF_20y6   <- s_PF  + (6/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y7  <- s_Juv + (7/20)  * (ns_Juv - s_Juv);  s_Imm_20y7  <- s_Imm + (7/20)  * (ns_Imm - s_Imm)
-s_EF_20y7   <- s_EF  + (7/20)  * (ns_EF  - s_EF);   s_ES_20y7   <- s_ES  + (7/20)  * (ns_ES  - s_ES)
-s_ENB_20y7  <- s_ENB + (7/20)  * (ns_ENB - s_ENB);  s_IF_20y7   <- s_IF  + (7/20)  * (ns_IF  - s_IF)
-s_IS_20y7   <- s_IS  + (7/20)  * (ns_IS  - s_IS);   s_PF_20y7   <- s_PF  + (7/20)  * (ns_PF  - s_PF)
+s_Juv1_20y7  <- s_Juv1 + (7/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y7  <- s_Juv + (7/20)  * (ns_Juv - s_Juv);  s_Imm_20y7  <- s_Imm + (7/20)  * (ns_Imm - s_Imm)
+s_EF_20y7    <- s_EF  + (7/20)  * (ns_EF  - s_EF);      s_ES_20y7   <- s_ES  + (7/20)  * (ns_ES  - s_ES)
+s_ENB_20y7   <- s_ENB + (7/20)  * (ns_ENB - s_ENB);     s_IF_20y7   <- s_IF  + (7/20)  * (ns_IF  - s_IF)
+s_IS_20y7    <- s_IS  + (7/20)  * (ns_IS  - s_IS);      s_PF_20y7   <- s_PF  + (7/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y8  <- s_Juv + (8/20)  * (ns_Juv - s_Juv);  s_Imm_20y8  <- s_Imm + (8/20)  * (ns_Imm - s_Imm)
-s_EF_20y8   <- s_EF  + (8/20)  * (ns_EF  - s_EF);   s_ES_20y8   <- s_ES  + (8/20)  * (ns_ES  - s_ES)
-s_ENB_20y8  <- s_ENB + (8/20)  * (ns_ENB - s_ENB);  s_IF_20y8   <- s_IF  + (8/20)  * (ns_IF  - s_IF)
-s_IS_20y8   <- s_IS  + (8/20)  * (ns_IS  - s_IS);   s_PF_20y8   <- s_PF  + (8/20)  * (ns_PF  - s_PF)
+s_Juv1_20y8  <- s_Juv1 + (8/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y8  <- s_Juv + (8/20)  * (ns_Juv - s_Juv);  s_Imm_20y8  <- s_Imm + (8/20)  * (ns_Imm - s_Imm)
+s_EF_20y8    <- s_EF  + (8/20)  * (ns_EF  - s_EF);      s_ES_20y8   <- s_ES  + (8/20)  * (ns_ES  - s_ES)
+s_ENB_20y8   <- s_ENB + (8/20)  * (ns_ENB - s_ENB);     s_IF_20y8   <- s_IF  + (8/20)  * (ns_IF  - s_IF)
+s_IS_20y8    <- s_IS  + (8/20)  * (ns_IS  - s_IS);      s_PF_20y8   <- s_PF  + (8/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y9  <- s_Juv + (9/20)  * (ns_Juv - s_Juv);  s_Imm_20y9  <- s_Imm + (9/20)  * (ns_Imm - s_Imm)
-s_EF_20y9   <- s_EF  + (9/20)  * (ns_EF  - s_EF);   s_ES_20y9   <- s_ES  + (9/20)  * (ns_ES  - s_ES)
-s_ENB_20y9  <- s_ENB + (9/20)  * (ns_ENB - s_ENB);  s_IF_20y9   <- s_IF  + (9/20)  * (ns_IF  - s_IF)
-s_IS_20y9   <- s_IS  + (9/20)  * (ns_IS  - s_IS);   s_PF_20y9   <- s_PF  + (9/20)  * (ns_PF  - s_PF)
+s_Juv1_20y9  <- s_Juv1 + (9/20)  * (ns_Juv1 - s_Juv1);  s_Juv_20y9  <- s_Juv + (9/20)  * (ns_Juv - s_Juv);  s_Imm_20y9  <- s_Imm + (9/20)  * (ns_Imm - s_Imm)
+s_EF_20y9    <- s_EF  + (9/20)  * (ns_EF  - s_EF);      s_ES_20y9   <- s_ES  + (9/20)  * (ns_ES  - s_ES)
+s_ENB_20y9   <- s_ENB + (9/20)  * (ns_ENB - s_ENB);     s_IF_20y9   <- s_IF  + (9/20)  * (ns_IF  - s_IF)
+s_IS_20y9    <- s_IS  + (9/20)  * (ns_IS  - s_IS);      s_PF_20y9   <- s_PF  + (9/20)  * (ns_PF  - s_PF)
 
-s_Juv_20y10 <- s_Juv + (10/20) * (ns_Juv - s_Juv);  s_Imm_20y10 <- s_Imm + (10/20) * (ns_Imm - s_Imm)
-s_EF_20y10  <- s_EF  + (10/20) * (ns_EF  - s_EF);   s_ES_20y10  <- s_ES  + (10/20) * (ns_ES  - s_ES)
-s_ENB_20y10 <- s_ENB + (10/20) * (ns_ENB - s_ENB);  s_IF_20y10  <- s_IF  + (10/20) * (ns_IF  - s_IF)
-s_IS_20y10  <- s_IS  + (10/20) * (ns_IS  - s_IS);   s_PF_20y10  <- s_PF  + (10/20) * (ns_PF  - s_PF)
+s_Juv1_20y10 <- s_Juv1 + (10/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y10 <- s_Juv + (10/20) * (ns_Juv - s_Juv);  s_Imm_20y10 <- s_Imm + (10/20) * (ns_Imm - s_Imm)
+s_EF_20y10   <- s_EF  + (10/20) * (ns_EF  - s_EF);      s_ES_20y10  <- s_ES  + (10/20) * (ns_ES  - s_ES)
+s_ENB_20y10  <- s_ENB + (10/20) * (ns_ENB - s_ENB);     s_IF_20y10  <- s_IF  + (10/20) * (ns_IF  - s_IF)
+s_IS_20y10   <- s_IS  + (10/20) * (ns_IS  - s_IS);      s_PF_20y10  <- s_PF  + (10/20) * (ns_PF  - s_PF)
 
-s_Juv_20y11 <- s_Juv + (11/20) * (ns_Juv - s_Juv);  s_Imm_20y11 <- s_Imm + (11/20) * (ns_Imm - s_Imm)
-s_EF_20y11  <- s_EF  + (11/20) * (ns_EF  - s_EF);   s_ES_20y11  <- s_ES  + (11/20) * (ns_ES  - s_ES)
-s_ENB_20y11 <- s_ENB + (11/20) * (ns_ENB - s_ENB);  s_IF_20y11  <- s_IF  + (11/20) * (ns_IF  - s_IF)
-s_IS_20y11  <- s_IS  + (11/20) * (ns_IS  - s_IS);   s_PF_20y11  <- s_PF  + (11/20) * (ns_PF  - s_PF)
+s_Juv1_20y11 <- s_Juv1 + (11/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y11 <- s_Juv + (11/20) * (ns_Juv - s_Juv);  s_Imm_20y11 <- s_Imm + (11/20) * (ns_Imm - s_Imm)
+s_EF_20y11   <- s_EF  + (11/20) * (ns_EF  - s_EF);      s_ES_20y11  <- s_ES  + (11/20) * (ns_ES  - s_ES)
+s_ENB_20y11  <- s_ENB + (11/20) * (ns_ENB - s_ENB);     s_IF_20y11  <- s_IF  + (11/20) * (ns_IF  - s_IF)
+s_IS_20y11   <- s_IS  + (11/20) * (ns_IS  - s_IS);      s_PF_20y11  <- s_PF  + (11/20) * (ns_PF  - s_PF)
 
-s_Juv_20y12 <- s_Juv + (12/20) * (ns_Juv - s_Juv);  s_Imm_20y12 <- s_Imm + (12/20) * (ns_Imm - s_Imm)
-s_EF_20y12  <- s_EF  + (12/20) * (ns_EF  - s_EF);   s_ES_20y12  <- s_ES  + (12/20) * (ns_ES  - s_ES)
-s_ENB_20y12 <- s_ENB + (12/20) * (ns_ENB - s_ENB);  s_IF_20y12  <- s_IF  + (12/20) * (ns_IF  - s_IF)
-s_IS_20y12  <- s_IS  + (12/20) * (ns_IS  - s_IS);   s_PF_20y12  <- s_PF  + (12/20) * (ns_PF  - s_PF)
+s_Juv1_20y12 <- s_Juv1 + (12/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y12 <- s_Juv + (12/20) * (ns_Juv - s_Juv);  s_Imm_20y12 <- s_Imm + (12/20) * (ns_Imm - s_Imm)
+s_EF_20y12   <- s_EF  + (12/20) * (ns_EF  - s_EF);      s_ES_20y12  <- s_ES  + (12/20) * (ns_ES  - s_ES)
+s_ENB_20y12  <- s_ENB + (12/20) * (ns_ENB - s_ENB);     s_IF_20y12  <- s_IF  + (12/20) * (ns_IF  - s_IF)
+s_IS_20y12   <- s_IS  + (12/20) * (ns_IS  - s_IS);      s_PF_20y12  <- s_PF  + (12/20) * (ns_PF  - s_PF)
 
-s_Juv_20y13 <- s_Juv + (13/20) * (ns_Juv - s_Juv);  s_Imm_20y13 <- s_Imm + (13/20) * (ns_Imm - s_Imm)
-s_EF_20y13  <- s_EF  + (13/20) * (ns_EF  - s_EF);   s_ES_20y13  <- s_ES  + (13/20) * (ns_ES  - s_ES)
-s_ENB_20y13 <- s_ENB + (13/20) * (ns_ENB - s_ENB);  s_IF_20y13  <- s_IF  + (13/20) * (ns_IF  - s_IF)
-s_IS_20y13  <- s_IS  + (13/20) * (ns_IS  - s_IS);   s_PF_20y13  <- s_PF  + (13/20) * (ns_PF  - s_PF)
+s_Juv1_20y13 <- s_Juv1 + (13/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y13 <- s_Juv + (13/20) * (ns_Juv - s_Juv);  s_Imm_20y13 <- s_Imm + (13/20) * (ns_Imm - s_Imm)
+s_EF_20y13   <- s_EF  + (13/20) * (ns_EF  - s_EF);      s_ES_20y13  <- s_ES  + (13/20) * (ns_ES  - s_ES)
+s_ENB_20y13  <- s_ENB + (13/20) * (ns_ENB - s_ENB);     s_IF_20y13  <- s_IF  + (13/20) * (ns_IF  - s_IF)
+s_IS_20y13   <- s_IS  + (13/20) * (ns_IS  - s_IS);      s_PF_20y13  <- s_PF  + (13/20) * (ns_PF  - s_PF)
 
-s_Juv_20y14 <- s_Juv + (14/20) * (ns_Juv - s_Juv);  s_Imm_20y14 <- s_Imm + (14/20) * (ns_Imm - s_Imm)
-s_EF_20y14  <- s_EF  + (14/20) * (ns_EF  - s_EF);   s_ES_20y14  <- s_ES  + (14/20) * (ns_ES  - s_ES)
-s_ENB_20y14 <- s_ENB + (14/20) * (ns_ENB - s_ENB);  s_IF_20y14  <- s_IF  + (14/20) * (ns_IF  - s_IF)
-s_IS_20y14  <- s_IS  + (14/20) * (ns_IS  - s_IS);   s_PF_20y14  <- s_PF  + (14/20) * (ns_PF  - s_PF)
+s_Juv1_20y14 <- s_Juv1 + (14/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y14 <- s_Juv + (14/20) * (ns_Juv - s_Juv);  s_Imm_20y14 <- s_Imm + (14/20) * (ns_Imm - s_Imm)
+s_EF_20y14   <- s_EF  + (14/20) * (ns_EF  - s_EF);      s_ES_20y14  <- s_ES  + (14/20) * (ns_ES  - s_ES)
+s_ENB_20y14  <- s_ENB + (14/20) * (ns_ENB - s_ENB);     s_IF_20y14  <- s_IF  + (14/20) * (ns_IF  - s_IF)
+s_IS_20y14   <- s_IS  + (14/20) * (ns_IS  - s_IS);      s_PF_20y14  <- s_PF  + (14/20) * (ns_PF  - s_PF)
 
-s_Juv_20y15 <- s_Juv + (15/20) * (ns_Juv - s_Juv);  s_Imm_20y15 <- s_Imm + (15/20) * (ns_Imm - s_Imm)
-s_EF_20y15  <- s_EF  + (15/20) * (ns_EF  - s_EF);   s_ES_20y15  <- s_ES  + (15/20) * (ns_ES  - s_ES)
-s_ENB_20y15 <- s_ENB + (15/20) * (ns_ENB - s_ENB);  s_IF_20y15  <- s_IF  + (15/20) * (ns_IF  - s_IF)
-s_IS_20y15  <- s_IS  + (15/20) * (ns_IS  - s_IS);   s_PF_20y15  <- s_PF  + (15/20) * (ns_PF  - s_PF)
+s_Juv1_20y15 <- s_Juv1 + (15/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y15 <- s_Juv + (15/20) * (ns_Juv - s_Juv);  s_Imm_20y15 <- s_Imm + (15/20) * (ns_Imm - s_Imm)
+s_EF_20y15   <- s_EF  + (15/20) * (ns_EF  - s_EF);      s_ES_20y15  <- s_ES  + (15/20) * (ns_ES  - s_ES)
+s_ENB_20y15  <- s_ENB + (15/20) * (ns_ENB - s_ENB);     s_IF_20y15  <- s_IF  + (15/20) * (ns_IF  - s_IF)
+s_IS_20y15   <- s_IS  + (15/20) * (ns_IS  - s_IS);      s_PF_20y15  <- s_PF  + (15/20) * (ns_PF  - s_PF)
 
-s_Juv_20y16 <- s_Juv + (16/20) * (ns_Juv - s_Juv);  s_Imm_20y16 <- s_Imm + (16/20) * (ns_Imm - s_Imm)
-s_EF_20y16  <- s_EF  + (16/20) * (ns_EF  - s_EF);   s_ES_20y16  <- s_ES  + (16/20) * (ns_ES  - s_ES)
-s_ENB_20y16 <- s_ENB + (16/20) * (ns_ENB - s_ENB);  s_IF_20y16  <- s_IF  + (16/20) * (ns_IF  - s_IF)
-s_IS_20y16  <- s_IS  + (16/20) * (ns_IS  - s_IS);   s_PF_20y16  <- s_PF  + (16/20) * (ns_PF  - s_PF)
+s_Juv1_20y16 <- s_Juv1 + (16/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y16 <- s_Juv + (16/20) * (ns_Juv - s_Juv);  s_Imm_20y16 <- s_Imm + (16/20) * (ns_Imm - s_Imm)
+s_EF_20y16   <- s_EF  + (16/20) * (ns_EF  - s_EF);      s_ES_20y16  <- s_ES  + (16/20) * (ns_ES  - s_ES)
+s_ENB_20y16  <- s_ENB + (16/20) * (ns_ENB - s_ENB);     s_IF_20y16  <- s_IF  + (16/20) * (ns_IF  - s_IF)
+s_IS_20y16   <- s_IS  + (16/20) * (ns_IS  - s_IS);      s_PF_20y16  <- s_PF  + (16/20) * (ns_PF  - s_PF)
 
-s_Juv_20y17 <- s_Juv + (17/20) * (ns_Juv - s_Juv);  s_Imm_20y17 <- s_Imm + (17/20) * (ns_Imm - s_Imm)
-s_EF_20y17  <- s_EF  + (17/20) * (ns_EF  - s_EF);   s_ES_20y17  <- s_ES  + (17/20) * (ns_ES  - s_ES)
-s_ENB_20y17 <- s_ENB + (17/20) * (ns_ENB - s_ENB);  s_IF_20y17  <- s_IF  + (17/20) * (ns_IF  - s_IF)
-s_IS_20y17  <- s_IS  + (17/20) * (ns_IS  - s_IS);   s_PF_20y17  <- s_PF  + (17/20) * (ns_PF  - s_PF)
+s_Juv1_20y17 <- s_Juv1 + (17/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y17 <- s_Juv + (17/20) * (ns_Juv - s_Juv);  s_Imm_20y17 <- s_Imm + (17/20) * (ns_Imm - s_Imm)
+s_EF_20y17   <- s_EF  + (17/20) * (ns_EF  - s_EF);      s_ES_20y17  <- s_ES  + (17/20) * (ns_ES  - s_ES)
+s_ENB_20y17  <- s_ENB + (17/20) * (ns_ENB - s_ENB);     s_IF_20y17  <- s_IF  + (17/20) * (ns_IF  - s_IF)
+s_IS_20y17   <- s_IS  + (17/20) * (ns_IS  - s_IS);      s_PF_20y17  <- s_PF  + (17/20) * (ns_PF  - s_PF)
 
-s_Juv_20y18 <- s_Juv + (18/20) * (ns_Juv - s_Juv);  s_Imm_20y18 <- s_Imm + (18/20) * (ns_Imm - s_Imm)
-s_EF_20y18  <- s_EF  + (18/20) * (ns_EF  - s_EF);   s_ES_20y18  <- s_ES  + (18/20) * (ns_ES  - s_ES)
-s_ENB_20y18 <- s_ENB + (18/20) * (ns_ENB - s_ENB);  s_IF_20y18  <- s_IF  + (18/20) * (ns_IF  - s_IF)
-s_IS_20y18  <- s_IS  + (18/20) * (ns_IS  - s_IS);   s_PF_20y18  <- s_PF  + (18/20) * (ns_PF  - s_PF)
+s_Juv1_20y18 <- s_Juv1 + (18/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y18 <- s_Juv + (18/20) * (ns_Juv - s_Juv);  s_Imm_20y18 <- s_Imm + (18/20) * (ns_Imm - s_Imm)
+s_EF_20y18   <- s_EF  + (18/20) * (ns_EF  - s_EF);      s_ES_20y18  <- s_ES  + (18/20) * (ns_ES  - s_ES)
+s_ENB_20y18  <- s_ENB + (18/20) * (ns_ENB - s_ENB);     s_IF_20y18  <- s_IF  + (18/20) * (ns_IF  - s_IF)
+s_IS_20y18   <- s_IS  + (18/20) * (ns_IS  - s_IS);      s_PF_20y18  <- s_PF  + (18/20) * (ns_PF  - s_PF)
 
-s_Juv_20y19 <- s_Juv + (19/20) * (ns_Juv - s_Juv);  s_Imm_20y19 <- s_Imm + (19/20) * (ns_Imm - s_Imm)
-s_EF_20y19  <- s_EF  + (19/20) * (ns_EF  - s_EF);   s_ES_20y19  <- s_ES  + (19/20) * (ns_ES  - s_ES)
-s_ENB_20y19 <- s_ENB + (19/20) * (ns_ENB - s_ENB);  s_IF_20y19  <- s_IF  + (19/20) * (ns_IF  - s_IF)
-s_IS_20y19  <- s_IS  + (19/20) * (ns_IS  - s_IS);   s_PF_20y19  <- s_PF  + (19/20) * (ns_PF  - s_PF)
+s_Juv1_20y19 <- s_Juv1 + (19/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y19 <- s_Juv + (19/20) * (ns_Juv - s_Juv);  s_Imm_20y19 <- s_Imm + (19/20) * (ns_Imm - s_Imm)
+s_EF_20y19   <- s_EF  + (19/20) * (ns_EF  - s_EF);      s_ES_20y19  <- s_ES  + (19/20) * (ns_ES  - s_ES)
+s_ENB_20y19  <- s_ENB + (19/20) * (ns_ENB - s_ENB);     s_IF_20y19  <- s_IF  + (19/20) * (ns_IF  - s_IF)
+s_IS_20y19   <- s_IS  + (19/20) * (ns_IS  - s_IS);      s_PF_20y19  <- s_PF  + (19/20) * (ns_PF  - s_PF)
 
 # Step 20: 100% — equals ns_* (same as m_3of3)
-s_Juv_20y20 <- s_Juv + (20/20) * (ns_Juv - s_Juv);  s_Imm_20y20 <- s_Imm + (20/20) * (ns_Imm - s_Imm)
-s_EF_20y20  <- s_EF  + (20/20) * (ns_EF  - s_EF);   s_ES_20y20  <- s_ES  + (20/20) * (ns_ES  - s_ES)
-s_ENB_20y20 <- s_ENB + (20/20) * (ns_ENB - s_ENB);  s_IF_20y20  <- s_IF  + (20/20) * (ns_IF  - s_IF)
-s_IS_20y20  <- s_IS  + (20/20) * (ns_IS  - s_IS);   s_PF_20y20  <- s_PF  + (20/20) * (ns_PF  - s_PF)
+s_Juv1_20y20 <- s_Juv1 + (20/20) * (ns_Juv1 - s_Juv1);  s_Juv_20y20 <- s_Juv + (20/20) * (ns_Juv - s_Juv);  s_Imm_20y20 <- s_Imm + (20/20) * (ns_Imm - s_Imm)
+s_EF_20y20   <- s_EF  + (20/20) * (ns_EF  - s_EF);      s_ES_20y20  <- s_ES  + (20/20) * (ns_ES  - s_ES)
+s_ENB_20y20  <- s_ENB + (20/20) * (ns_ENB - s_ENB);     s_IF_20y20  <- s_IF  + (20/20) * (ns_IF  - s_IF)
+s_IS_20y20   <- s_IS  + (20/20) * (ns_IS  - s_IS);      s_PF_20y20  <- s_PF  + (20/20) * (ns_PF  - s_PF)
 ```
 
 **20-year phase-in matrices**
 ```{r part5-matrices}
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_20y1 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y1,0,0.5*s_Juv_20y1,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y1,0,0.5*s_Juv1_20y1,0,0,0,
   s_Juv_20y1,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y1,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y1,0,0, 0,0,0,0,0,0,
@@ -1161,7 +1180,7 @@ m_20y1 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y2 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y2,0,0.5*s_Juv_20y2,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y2,0,0.5*s_Juv1_20y2,0,0,0,
   s_Juv_20y2,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y2,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y2,0,0, 0,0,0,0,0,0,
@@ -1175,7 +1194,7 @@ m_20y2 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y3 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y3,0,0.5*s_Juv_20y3,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y3,0,0.5*s_Juv1_20y3,0,0,0,
   s_Juv_20y3,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y3,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y3,0,0, 0,0,0,0,0,0,
@@ -1189,7 +1208,7 @@ m_20y3 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y4 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y4,0,0.5*s_Juv_20y4,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y4,0,0.5*s_Juv1_20y4,0,0,0,
   s_Juv_20y4,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y4,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y4,0,0, 0,0,0,0,0,0,
@@ -1203,7 +1222,7 @@ m_20y4 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y5 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y5,0,0.5*s_Juv_20y5,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y5,0,0.5*s_Juv1_20y5,0,0,0,
   s_Juv_20y5,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y5,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y5,0,0, 0,0,0,0,0,0,
@@ -1217,7 +1236,7 @@ m_20y5 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y6 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y6,0,0.5*s_Juv_20y6,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y6,0,0.5*s_Juv1_20y6,0,0,0,
   s_Juv_20y6,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y6,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y6,0,0, 0,0,0,0,0,0,
@@ -1231,7 +1250,7 @@ m_20y6 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y7 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y7,0,0.5*s_Juv_20y7,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y7,0,0.5*s_Juv1_20y7,0,0,0,
   s_Juv_20y7,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y7,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y7,0,0, 0,0,0,0,0,0,
@@ -1245,7 +1264,7 @@ m_20y7 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y8 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y8,0,0.5*s_Juv_20y8,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y8,0,0.5*s_Juv1_20y8,0,0,0,
   s_Juv_20y8,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y8,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y8,0,0, 0,0,0,0,0,0,
@@ -1259,7 +1278,7 @@ m_20y8 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y9 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y9,0,0.5*s_Juv_20y9,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y9,0,0.5*s_Juv1_20y9,0,0,0,
   s_Juv_20y9,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y9,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y9,0,0, 0,0,0,0,0,0,
@@ -1273,7 +1292,7 @@ m_20y9 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y10 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y10,0,0.5*s_Juv_20y10,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y10,0,0.5*s_Juv1_20y10,0,0,0,
   s_Juv_20y10,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y10,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y10,0,0, 0,0,0,0,0,0,
@@ -1287,7 +1306,7 @@ m_20y10 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y11 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y11,0,0.5*s_Juv_20y11,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y11,0,0.5*s_Juv1_20y11,0,0,0,
   s_Juv_20y11,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y11,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y11,0,0, 0,0,0,0,0,0,
@@ -1301,7 +1320,7 @@ m_20y11 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y12 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y12,0,0.5*s_Juv_20y12,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y12,0,0.5*s_Juv1_20y12,0,0,0,
   s_Juv_20y12,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y12,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y12,0,0, 0,0,0,0,0,0,
@@ -1315,7 +1334,7 @@ m_20y12 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y13 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y13,0,0.5*s_Juv_20y13,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y13,0,0.5*s_Juv1_20y13,0,0,0,
   s_Juv_20y13,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y13,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y13,0,0, 0,0,0,0,0,0,
@@ -1329,7 +1348,7 @@ m_20y13 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y14 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y14,0,0.5*s_Juv_20y14,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y14,0,0.5*s_Juv1_20y14,0,0,0,
   s_Juv_20y14,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y14,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y14,0,0, 0,0,0,0,0,0,
@@ -1343,7 +1362,7 @@ m_20y14 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y15 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y15,0,0.5*s_Juv_20y15,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y15,0,0.5*s_Juv1_20y15,0,0,0,
   s_Juv_20y15,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y15,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y15,0,0, 0,0,0,0,0,0,
@@ -1357,7 +1376,7 @@ m_20y15 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y16 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y16,0,0.5*s_Juv_20y16,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y16,0,0.5*s_Juv1_20y16,0,0,0,
   s_Juv_20y16,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y16,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y16,0,0, 0,0,0,0,0,0,
@@ -1371,7 +1390,7 @@ m_20y16 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y17 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y17,0,0.5*s_Juv_20y17,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y17,0,0.5*s_Juv1_20y17,0,0,0,
   s_Juv_20y17,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y17,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y17,0,0, 0,0,0,0,0,0,
@@ -1385,7 +1404,7 @@ m_20y17 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y18 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y18,0,0.5*s_Juv_20y18,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y18,0,0.5*s_Juv1_20y18,0,0,0,
   s_Juv_20y18,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y18,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y18,0,0, 0,0,0,0,0,0,
@@ -1399,7 +1418,7 @@ m_20y18 <- matrix(data = c(
 ), nrow=11, byrow=TRUE)
 
 m_20y19 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y19,0,0.5*s_Juv_20y19,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y19,0,0.5*s_Juv1_20y19,0,0,0,
   s_Juv_20y19,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y19,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y19,0,0, 0,0,0,0,0,0,
@@ -1414,7 +1433,7 @@ m_20y19 <- matrix(data = c(
 
 # m_20y20: 100% improvement — should equal m_3of3
 m_20y20 <- matrix(data = c(
-  0,0,0,0,0, 0.5*s_Juv_20y20,0,0.5*s_Juv_20y20,0,0,0,
+  0,0,0,0,0, 0.5*s_Juv1_20y20,0,0.5*s_Juv1_20y20,0,0,0,
   s_Juv_20y20,0,0,0,0, 0,0,0,0,0,0,
   0,s_Juv_20y20,0,0,0, 0,0,0,0,0,0,
   0,0,s_Imm_20y20,0,0, 0,0,0,0,0,0,
@@ -2020,6 +2039,423 @@ p_6g
 
 ```
 
+---
+
+*PART 7 — IMMEDIATE IMPLEMENTATION: ALL BELL et al. 2025 SCENARIOS*
+
+For each Bell et al. 2025 ACAP scenario, compute ns_* survival rates, build a matrix,
+extract lambda, and project N over 100 years assuming immediate full implementation with
+no delay or phase-in.
+
+**build and project all Bell scenarios**
+```{r part7-bell-scenarios}
+bell_scenarios <- tibble(
+  scenario = c("No mitigation",
+               "HSD",
+               "BLW + NS",
+               "BLW + BSL",
+               "NS + BSL",
+               "Mean 2/3 ACAP",
+               "3/3 ACAP",
+               "Complete elimination"),
+  efficacy = c(0,
+               eff_hsd_acap,
+               eff_blw_ns_acap,
+               eff_blw_bsl_acap,
+               eff_ns_bsl_acap,
+               bell_2of3_acap,
+               eff_3of3_acap,
+               1.0)
+)
+
+bell_colors <- c(
+  "No mitigation"        = "#d73027",
+  "HSD"                  = "#d95f02",
+  "BLW + NS"             = "#a1d99b",
+  "BLW + BSL"            = "#74c476",
+  "NS + BSL"             = "#41ab5d",
+  "Mean 2/3 ACAP"        = "#238b45",
+  "3/3 ACAP"             = "#005a32",
+  "Complete elimination"  = "#030d1f"
+)
+
+# Loop through each scenario: compute ns_*, build matrix, extract lambda, project N
+bell_proj <- map_dfr(1:nrow(bell_scenarios), function(i) {
+  eff  <- bell_scenarios$efficacy[i]
+  scen <- bell_scenarios$scenario[i]
+
+  # Survival rates under this efficacy (lowercase to avoid overwriting outer ns_* variables)
+  ns_j1  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
+  ns_juv <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
+  ns_imm <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
+  ns_ef  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
+  ns_es  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
+  ns_enb <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
+  ns_if  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
+  ns_is  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
+  ns_pf  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+
+  m_bell <- matrix(data = c(
+    0,       0,       0,       0,       0,                                          0.5*ns_j1,                0,                         0.5*ns_j1,                0,                         0,                           0,
+    ns_juv,  0,       0,       0,       0,                                          0,                        0,                         0,                        0,                         0,                           0,
+    0,       ns_juv,  0,       0,       0,                                          0,                        0,                         0,                        0,                         0,                           0,
+    0,       0,       ns_imm,  0,       0,                                          0,                        0,                         0,                        0,                         0,                           0,
+    0,       0,       0,       ns_imm,  ns_imm*r_Imm*(1-b_Imm)+ns_imm*(1-r_Imm),   0,                        0,                         0,                        0,                         0,                           0,
+    0,       0,       0,       0,       ns_imm*r_Imm*b_Imm*k_Imm,                   0,                        0,                         0,                        0,                         0,                           0,
+    0,       0,       0,       0,       ns_imm*r_Imm*b_Imm*(1-k_Imm),               0,                        0,                         0,                        0,                         0,                           0,
+    0,       0,       0,       0,       0,                                          ns_is*r_IS*b_IS*k_IS,     ns_if*r_IF*b_IF*k_IF,      ns_es*r_ES*b_ES*k_ES,     ns_ef*r_EF*b_EF*k_EF,      ns_enb*r_ENB*b_ENB*k_ENB,    ns_pf*r_PF*b_PF*k_PF,
+    0,       0,       0,       0,       0,                                          ns_is*r_IS*b_IS*(1-k_IS), ns_if*r_IF*b_IF*(1-k_IF),  ns_es*r_ES*b_ES*(1-k_ES), ns_ef*r_EF*b_EF*(1-k_EF),  ns_enb*r_ENB*b_ENB*(1-k_ENB),ns_pf*r_PF*b_PF*(1-k_PF),
+    0,       0,       0,       0,       0,                                          ns_is*r_IS*(1-b_IS),      ns_if*r_IF*(1-b_IF),       ns_es*r_ES*(1-b_ES),      ns_ef*r_EF*(1-b_EF),       ns_enb*r_ENB*(1-b_ENB),      ns_pf*r_PF*(1-b_PF),
+    0,       0,       0,       0,       0,                                          ns_is*(1-r_IS),           ns_if*(1-r_IF),            ns_es*(1-r_ES),           ns_ef*(1-r_EF),            ns_enb*(1-r_ENB),            ns_pf*(1-r_PF)
+  ), nrow = 11, byrow = TRUE)
+
+  lam <- as.numeric(eigen(m_bell)$values[1])
+
+  N_t    <- numeric(years + 1)
+  N_t[1] <- N0
+  for (k in 1:years) N_t[k + 1] <- lam * N_t[k]
+
+  tibble(year = 0:years, N = N_t, scenario = scen, lambda = lam)
+})
+
+bell_proj <- bell_proj %>%
+  mutate(scenario = factor(scenario, levels = bell_scenarios$scenario))
+
+# Lambda summary
+bell_proj %>%
+  distinct(scenario, lambda) %>%
+  mutate(efficacy_pct = round(bell_scenarios$efficacy * 100, 1),
+         lambda       = round(lambda, 5)) %>%
+  print()
+```
+
+**plot 7a — immediate implementation, all Bell et al. 2025 scenarios**
+```{r plot-7a, fig.width = 9, fig.height = 5}
+p_7a <- ggplot(bell_proj, aes(x = year, y = N, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = bell_colors) +
+  scale_linetype_manual(values = c(
+    "No mitigation"        = "dashed",
+    "HSD"                  = "solid",
+    "BLW + NS"             = "solid",
+    "BLW + BSL"            = "solid",
+    "NS + BSL"             = "solid",
+    "Mean 2/3 ACAP"        = "solid",
+    "3/3 ACAP"             = "solid",
+    "Complete elimination"  = "solid")) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma,
+                     breaks = scales::pretty_breaks(n = 6),
+                     sec.axis = sec_axis(~ . / pairs_scale,
+                                         name = "Breeding pairs (Bird Island)",
+                                         labels = scales::comma)) +
+  labs(x = "Years since 1990 baseline",
+       y = "Population (N individuals)",
+       color = NULL, linetype = NULL,
+       title = paste0("Immediate implementation — Bell et al. 2025 ACAP scenarios — ", target_period, " baseline"),
+       subtitle = "Orange dots = observed breeding pairs; dashed grey = N\u2080") +
+  themeo + theme(legend.position = "right")
+p_7a
+```
+
+---
+
+*PART 8 — BELL ET AL. 2025 SCENARIOS × PHASE-IN TIMING*
+
+For each Bell et al. 2025 mitigation scenario, project population under all four phase-in
+speeds (immediate, 5-year, 10-year, 20-year). Stage-structured matrix projection so
+survival is interpolated correctly during the ramp-up period. Color = scenario; linetype = phase-in speed.
+
+**project all Bell scenarios × phase-in options**
+```{r part8-bell-phasein}
+# Phase-in timing options
+phase_df <- tibble(
+  phase_in = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"),
+  n_steps  = c(0L, 5L, 10L, 20L, 30L, 40L)
+)
+
+# Mitigation scenarios only (No mitigation efficacy = 0; phase-in has no effect, shown as baseline)
+bell_scen_mitig <- bell_scenarios %>% filter(scenario != "No mitigation")
+
+bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
+  eff  <- bell_scen_mitig$efficacy[i]
+  scen <- bell_scen_mitig$scenario[i]
+
+  # Fully-mitigated survival rates for this scenario
+  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
+  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
+  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
+  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
+  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
+  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
+  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
+  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
+  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+
+  map_dfr(1:nrow(phase_df), function(j) {
+    n_steps <- phase_df$n_steps[j]
+    ph_lbl  <- phase_df$phase_in[j]
+
+    N_vec  <- n0_vec
+    N_t    <- numeric(years + 1)
+    N_t[1] <- sum(N_vec)
+
+    for (k in 1:years) {
+      frac <- if (n_steps == 0L) 1 else min(k / n_steps, 1)
+
+      # Interpolate survival from baseline toward fully-mitigated at this fraction
+      nj1  <- s_Juv1 + frac * (ns_j1_f  - s_Juv1)
+      njuv <- s_Juv  + frac * (ns_juv_f - s_Juv)
+      nimm <- s_Imm  + frac * (ns_imm_f - s_Imm)
+      nef  <- s_EF   + frac * (ns_ef_f  - s_EF)
+      nes  <- s_ES   + frac * (ns_es_f  - s_ES)
+      nenb <- s_ENB  + frac * (ns_enb_f - s_ENB)
+      nif  <- s_IF   + frac * (ns_if_f  - s_IF)
+      nis  <- s_IS   + frac * (ns_is_f  - s_IS)
+      npf  <- s_PF   + frac * (ns_pf_f  - s_PF)
+
+      A <- matrix(c(
+        0,    0,    0,    0,    0,                                     0.5*nj1,                   0,                       0.5*nj1,                   0,                       0,                           0,
+        njuv, 0,    0,    0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    njuv, 0,    0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    nimm, 0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    nimm, nimm*r_Imm*(1-b_Imm)+nimm*(1-r_Imm),  0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    nimm*r_Imm*b_Imm*k_Imm,               0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    nimm*r_Imm*b_Imm*(1-k_Imm),           0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    0,                                     nis*r_IS*b_IS*k_IS,        nif*r_IF*b_IF*k_IF,      nes*r_ES*b_ES*k_ES,        nef*r_EF*b_EF*k_EF,      nenb*r_ENB*b_ENB*k_ENB,      npf*r_PF*b_PF*k_PF,
+        0,    0,    0,    0,    0,                                     nis*r_IS*b_IS*(1-k_IS),    nif*r_IF*b_IF*(1-k_IF),  nes*r_ES*b_ES*(1-k_ES),    nef*r_EF*b_EF*(1-k_EF),  nenb*r_ENB*b_ENB*(1-k_ENB),  npf*r_PF*b_PF*(1-k_PF),
+        0,    0,    0,    0,    0,                                     nis*r_IS*(1-b_IS),         nif*r_IF*(1-b_IF),       nes*r_ES*(1-b_ES),         nef*r_EF*(1-b_EF),       nenb*r_ENB*(1-b_ENB),        npf*r_PF*(1-b_PF),
+        0,    0,    0,    0,    0,                                     nis*(1-r_IS),              nif*(1-r_IF),            nes*(1-r_ES),              nef*(1-r_EF),            nenb*(1-r_ENB),              npf*(1-r_PF)
+      ), nrow = 11, byrow = TRUE)
+
+      N_vec      <- A %*% N_vec
+      N_t[k + 1] <- sum(N_vec)
+    }
+
+    tibble(year = 0:years, N = N_t, scenario = scen, phase_in = ph_lbl)
+  })
+})
+
+# No-mitigation baseline: stage-structured projection with m_base (consistent with above)
+N_vec_base <- n0_vec
+N_base     <- numeric(years + 1)
+N_base[1]  <- sum(N_vec_base)
+for (k in 1:years) {
+  N_vec_base    <- m_base %*% N_vec_base
+  N_base[k + 1] <- sum(N_vec_base)
+}
+
+bell_phase_proj <- bind_rows(
+  bell_phase_proj,
+  tibble(year = 0:years, N = N_base, scenario = "No mitigation", phase_in = "Immediate")
+) %>%
+  mutate(
+    scenario = factor(scenario, levels = bell_scenarios$scenario),
+    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"))
+  )
+
+# Lambda check: print final N ratios (year 100 vs year 99) for each scenario × phase-in
+bell_phase_proj %>%
+  group_by(scenario, phase_in) %>%
+  arrange(year) %>%
+  summarise(lambda_final = last(N) / nth(N, n() - 1), .groups = "drop") %>%
+  mutate(lambda_final = round(lambda_final, 5)) %>%
+  print(n = 36)
+```
+
+**plot 8a — Bell et al. 2025 scenarios × phase-in timing**
+```{r plot-8a, fig.width = 11, fig.height = 6}
+phase_linetypes <- c(
+  "Immediate" = "solid",
+  "5-year"    = "dashed",
+  "10-year"   = "dotdash",
+  "20-year"   = "longdash",
+  "30-year"   = "twodash",
+  "40-year"   = "dotted"
+)
+
+p_8a <- ggplot(
+  bell_phase_proj %>% filter(scenario != "No mitigation"),
+  aes(x = year, y = N, color = scenario, linetype = phase_in)
+) +
+  geom_line(linewidth = 0.8) +
+  # No-mitigation baseline shown as a single reference line (phase-in has no effect at eff = 0)
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation"),
+            aes(x = year, y = N),
+            inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data        = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data        = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(
+    values = bell_colors[names(bell_colors) != "No mitigation"],
+    name   = "Scenario"
+  ) +
+  scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(
+    labels    = scales::comma,
+    breaks    = scales::pretty_breaks(n = 6),
+    sec.axis  = sec_axis(~ . / pairs_scale,
+                         name   = "Breeding pairs (Bird Island)",
+                         labels = scales::comma)
+  ) +
+  labs(
+    x        = "Years since 1990 baseline",
+    y        = "Population (N individuals)",
+    title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation. Orange dots = observed breeding pairs"
+  ) +
+  themeo + theme(legend.position = "right")
+p_8a
+```
+
+**project — 500-year horizon**
+```{r part8-bell-phasein-500yr}
+bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
+  eff  <- bell_scen_mitig$efficacy[i]
+  scen <- bell_scen_mitig$scenario[i]
+
+  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
+  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
+  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
+  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
+  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
+  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
+  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
+  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
+  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+
+  map_dfr(1:nrow(phase_df), function(j) {
+    n_steps <- phase_df$n_steps[j]
+    ph_lbl  <- phase_df$phase_in[j]
+
+    N_vec  <- n0_vec
+    N_t    <- numeric(yearslong + 1)
+    N_t[1] <- sum(N_vec)
+
+    for (k in 1:yearslong) {
+      frac <- if (n_steps == 0L) 1 else min(k / n_steps, 1)
+
+      nj1  <- s_Juv1 + frac * (ns_j1_f  - s_Juv1)
+      njuv <- s_Juv  + frac * (ns_juv_f - s_Juv)
+      nimm <- s_Imm  + frac * (ns_imm_f - s_Imm)
+      nef  <- s_EF   + frac * (ns_ef_f  - s_EF)
+      nes  <- s_ES   + frac * (ns_es_f  - s_ES)
+      nenb <- s_ENB  + frac * (ns_enb_f - s_ENB)
+      nif  <- s_IF   + frac * (ns_if_f  - s_IF)
+      nis  <- s_IS   + frac * (ns_is_f  - s_IS)
+      npf  <- s_PF   + frac * (ns_pf_f  - s_PF)
+
+      A <- matrix(c(
+        0,    0,    0,    0,    0,                                     0.5*nj1,                   0,                       0.5*nj1,                   0,                       0,                           0,
+        njuv, 0,    0,    0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    njuv, 0,    0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    nimm, 0,    0,                                     0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    nimm, nimm*r_Imm*(1-b_Imm)+nimm*(1-r_Imm),  0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    nimm*r_Imm*b_Imm*k_Imm,               0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    nimm*r_Imm*b_Imm*(1-k_Imm),           0,                         0,                       0,                         0,                       0,                           0,
+        0,    0,    0,    0,    0,                                     nis*r_IS*b_IS*k_IS,        nif*r_IF*b_IF*k_IF,      nes*r_ES*b_ES*k_ES,        nef*r_EF*b_EF*k_EF,      nenb*r_ENB*b_ENB*k_ENB,      npf*r_PF*b_PF*k_PF,
+        0,    0,    0,    0,    0,                                     nis*r_IS*b_IS*(1-k_IS),    nif*r_IF*b_IF*(1-k_IF),  nes*r_ES*b_ES*(1-k_ES),    nef*r_EF*b_EF*(1-k_EF),  nenb*r_ENB*b_ENB*(1-k_ENB),  npf*r_PF*b_PF*(1-k_PF),
+        0,    0,    0,    0,    0,                                     nis*r_IS*(1-b_IS),         nif*r_IF*(1-b_IF),       nes*r_ES*(1-b_ES),         nef*r_EF*(1-b_EF),       nenb*r_ENB*(1-b_ENB),        npf*r_PF*(1-b_PF),
+        0,    0,    0,    0,    0,                                     nis*(1-r_IS),              nif*(1-r_IF),            nes*(1-r_ES),              nef*(1-r_EF),            nenb*(1-r_ENB),              npf*(1-r_PF)
+      ), nrow = 11, byrow = TRUE)
+
+      N_vec      <- A %*% N_vec
+      N_t[k + 1] <- sum(N_vec)
+    }
+
+    tibble(year = 0:yearslong, N = N_t, scenario = scen, phase_in = ph_lbl)
+  })
+})
+
+# No-mitigation baseline (500-year)
+N_vec_base_long <- n0_vec
+N_base_long     <- numeric(yearslong + 1)
+N_base_long[1]  <- sum(N_vec_base_long)
+for (k in 1:yearslong) {
+  N_vec_base_long    <- m_base %*% N_vec_base_long
+  N_base_long[k + 1] <- sum(N_vec_base_long)
+}
+
+bell_phase_proj_long <- bind_rows(
+  bell_phase_proj_long,
+  tibble(year = 0:yearslong, N = N_base_long, scenario = "No mitigation", phase_in = "Immediate")
+) %>%
+  mutate(
+    scenario = factor(scenario, levels = bell_scenarios$scenario),
+    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"))
+  )
+```
+
+**plot 8b — 500-year horizon, Bell et al. 2025 scenarios × phase-in timing**
+```{r plot-8b, fig.width = 11, fig.height = 6}
+p_8b <- ggplot(
+  bell_phase_proj_long %>% filter(scenario != "No mitigation"),
+  aes(x = year, y = N, color = scenario, linetype = phase_in)
+) +
+  geom_line(linewidth = 0.8) +
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation"),
+            aes(x = year, y = N),
+            inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+   geom_point(data        = bird_obs,
+             aes(x = year, y = N_scaled),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data        = bird_obs,
+            aes(x = year, y = N_scaled, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(
+    values = bell_colors[names(bell_colors) != "No mitigation"],
+    name   = "Scenario"
+  ) +
+  scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_continuous(
+    labels    = scales::comma,
+    breaks    = scales::pretty_breaks(n = 6),
+    sec.axis  = sec_axis(~ . / pairs_scale,
+                         name   = "Breeding pairs (Bird Island)",
+                         labels = scales::comma)
+  ) +
+  labs(
+    x        = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+    y        = "Population (N individuals)",
+    title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+  ) +
+  themeo + theme(legend.position = "right")
+p_8b
+```
+
+**plot 8c — 500-year horizon, zoomed to N ≤ 50,000 to show recovery timing**
+```{r plot-8c, fig.width = 11, fig.height = 6}
+p_8c <- p_8b +
+  coord_cartesian(ylim = c(0, 20000), xlim = c(0, 400)) +
+  scale_y_continuous(
+    labels    = scales::comma,
+    breaks    = seq(0, 50000, 10000),
+    sec.axis  = sec_axis(~ . / pairs_scale,
+                         name   = "Breeding pairs (Bird Island)",
+                         labels = scales::comma)
+  ) +
+  geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  labs(
+    subtitle = "Y-axis cropped at 50,000 to show recovery to baseline (N\u2080). Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+  )
+p_8c
+```
+
 ## Save figures
 
 ```{r save-figures}
@@ -2049,5 +2485,9 @@ ggsave(fig_path("09_6d_all_scenarios"),            p_6d,  width = 11, height = 6
 ggsave(fig_path("09_6e_lambda_delay_immediate"),   p_6e,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6f_lambda_delay_phasein"),     p_6f,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6g_lambda_all_delays"),        p_6g,  width = 11, height = 5, dpi = 200)
-message("9 figures saved to output/figures/ with suffix ", output_sfx)
+ggsave(fig_path("09_7a_bell_scenarios_immediate"), p_7a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_8a_bell_scenarios_phasein"),      p_8a,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_8b_bell_scenarios_phasein_500yr"),      p_8b,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_8c_bell_scenarios_phasein_500yr_zoom"), p_8c,  width = 11, height = 6, dpi = 200)
+message("13 figures saved to output/figures/ with suffix ", output_sfx)
 ```

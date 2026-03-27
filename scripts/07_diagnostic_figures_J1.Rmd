@@ -1,4 +1,5 @@
 ---
+---
 title: "Diagnostic Figures — Effort, Catchability, and Survival by Period"
 output: html_document
 ---
@@ -886,7 +887,7 @@ and scenario points (hypothetical future) saved by each period script (06a–06d
 Display as a 2×2 faceted heatmap for cross-period comparison.
 
 ```{r p7-combined-heatmap, fig.width=14, fig.height=10}
-date_sfx_06 <- "2026-02-25"
+date_sfx_06 <- "2026-03-26"
 periods_06  <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
 
 # Load heatmap lambda grids (efficacy × coverage → lambda) from each period script
@@ -922,16 +923,16 @@ p7 <- ggplot(heatmap_all, aes(x = coverage, y = efficacy, fill = lambda)) +
             aes(x = effective_coverage, y = effective_efficacy,
                 group = interaction(period, efficacy_scenario)),
             inherit.aes = FALSE, color = "white", linewidth = 0.4, alpha = 0.5) +
-  geom_point(data = scen_all %>% filter(compliance_level == "Baseline Compliance"),
+  geom_point(data = scen_all %>% filter(compliance_level == "50%"),
              aes(x = effective_coverage, y = effective_efficacy),
              inherit.aes = FALSE,
              size = 2, shape = 16, color = "white", alpha = 0.8) +
-  # Reference points: gold diamonds (no-mitigation, historical, current)
-  geom_point(data = ref_all,
+  # Reference point: gold diamond at no-mitigation baseline per period
+  geom_point(data = ref_all %>% filter(str_starts(ref_label, "No mitigation")),
              aes(x = effective_coverage, y = effective_efficacy),
              inherit.aes = FALSE,
              size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.7) +
-  geom_label(data = ref_all,
+  geom_label(data = ref_all %>% filter(str_starts(ref_label, "No mitigation")),
              aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
              inherit.aes = FALSE,
              size = 2.0, fill = "gold", alpha = 0.85,
@@ -950,8 +951,8 @@ p7 <- ggplot(heatmap_all, aes(x = coverage, y = efficacy, fill = lambda)) +
     y        = "Mitigation efficacy",
     title    = "Population growth rate across mitigation space \u2014 all periods",
     subtitle = paste0(
-      "White contour = \u03bb = 1; gold diamonds = reference points (no mitigation, historical period, current).\n",
-      "White points/lines = hypothetical future scenarios at baseline compliance."
+      "White contour = \u03bb = 1; gold diamonds = no-mitigation baseline per period.\n",
+      "White points/lines = Bell et al. mitigation scenarios at 50% compliance."
     )
   ) +
   coord_cartesian(expand = FALSE) +
@@ -966,163 +967,6 @@ p7
 
 ggsave(here("output/figures/07_p7_combined_heatmap_all_periods.png"),
        p7, width = 14, height = 10, dpi = 300)
-```
-
----
-
-## Figure P8 — All Periods on Single 1990–1994 Baseline Heatmap
-
-A single-panel version of P7 that places all four periods' reference points and scenario
-lines on a shared 1990–1994 FM surface, using the same lambda color scale as P7.
-Plotting later periods on the 1990–1994 surface answers: *if mitigation from period X were
-applied to 1990–1994 effort levels, what lambda would result?* This isolates the mitigation
-signal from the effort-reduction signal visible in P6.
-
-```{r p8-single-panel-all-periods, fig.width=11, fig.height=7.5}
-# Lambda surface: 1990-1994 FM, same formula as P5 and P7 top-left panel
-heatmap_p8 <- expand.grid(
-  coverage = seq(0, 1, by = 0.02),
-  efficacy = seq(0, 1, by = 0.02)
-) %>%
-  mutate(lambda = NA_real_)
-
-for (i in seq_len(nrow(heatmap_p8))) {
-  cov <- heatmap_p8$coverage[i]
-  eff <- heatmap_p8$efficacy[i]
-  heatmap_p8$lambda[i] <- calc_lambda_from_survival(
-    ns_Juv = 1 - ((fm_base_03f$j2j3 * (1 - eff * cov)) + nm_base_03f$nm_juv),
-    ns_Imm = 1 - ((fm_base_03f$imm  * (1 - eff * cov)) + nm_base_03f$nm_imm),
-    ns_EF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_efb),
-    ns_ES  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_esb),
-    ns_ENB = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_enb),
-    ns_IF  = 1 - ((fm_base_03f$fb   * (1 - eff * cov)) + nm_base_03f$nm_ifb),
-    ns_IS  = 1 - ((fm_base_03f$sb   * (1 - eff * cov)) + nm_base_03f$nm_isb),
-    ns_PF  = 1 - ((fm_base_03f$nb   * (1 - eff * cov)) + nm_base_03f$nm_pf)
-  )
-}
-
-# Rename "Current" to clarify: same regulations but applied to each period's fleet/effort
-# distribution, so effective coverage shifts as fishery composition changes over time
-ref_named_p8 <- ref_all %>%
-  filter(!str_starts(ref_label, "No mitigation")) %>%
-  mutate(
-    period    = factor(period, levels = model_periods),
-    ref_label = case_when(
-      str_starts(ref_label, "Current")    ~ paste0("Current regs\n(", period, " effort)"),
-      str_starts(ref_label, "Historical") & period == "1990-1994" ~ "Historical (1990\u20131994)\n(no mitigation)",
-      TRUE ~ ref_label
-    )
-  )
-
-# Future scenario lines: 1990-1994 period only — later periods are harder to interpret
-# on the 1990-1994 surface because their fleet structure differs
-scen_p8 <- scen_all %>%
-  filter(
-    str_detect(scenario, "^(all_pll_2of3|all_pll_3of3|all_fleets_3of3)__"),
-    period == "1990-1994"
-  ) %>%
-  mutate(
-    period     = factor(period, levels = model_periods),
-    scen_short = case_when(
-      str_starts(scenario, "all_pll_2of3")    ~ "2/3 PLL",
-      str_starts(scenario, "all_pll_3of3")    ~ "3/3 PLL",
-      str_starts(scenario, "all_fleets_3of3") ~ "3/3 all fleets"
-    )
-  )
-
-# Full elimination: 1990-1994 only (all periods stack at same coords anyway)
-full_elim_p8 <- scen_all %>%
-  filter(scenario == "full_elimination", period == "1990-1994") %>%
-  mutate(period = factor(period, levels = model_periods))
-
-# Label anchor: Full Compliance endpoint for 1990-1994 (representative period)
-scen_labels_p8 <- scen_p8 %>%
-  filter(compliance_level == "Full Compliance", period == "1990-1994") %>%
-  select(effective_coverage, effective_efficacy, scen_short)
-
-# Full elimination label anchor (1990-1994; all periods stack at same coords)
-full_elim_label_p8 <- full_elim_p8 %>%
-  filter(period == "1990-1994") %>%
-  mutate(label = "Full elimination")
-
-p8 <- ggplot(heatmap_p8, aes(x = coverage, y = efficacy)) +
-  geom_tile(aes(fill = lambda)) +
-  # Lambda = 1 threshold contour
-  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
-  # Future scenario compliance-sweep lines, colored by period
-  geom_line(data = scen_p8,
-            aes(x = effective_coverage, y = effective_efficacy,
-                group = scen_short),
-            inherit.aes = FALSE, color = "grey85", linewidth = 0.8) +
-  # Scenario baseline-compliance solid points
-  geom_point(data = scen_p8 %>% filter(compliance_level == "Baseline Compliance"),
-             aes(x = effective_coverage, y = effective_efficacy),
-             inherit.aes = FALSE, size = 2, shape = 16, color = "grey85") +
-  # Full elimination star
-  geom_point(data = full_elim_p8,
-             aes(x = effective_coverage, y = effective_efficacy),
-             inherit.aes = FALSE, size = 3.5, shape = 8, color = "grey85", stroke = 1.0) +
-  # Scenario name labels at Full Compliance endpoint (1990-1994 anchor, right of point)
-  geom_label(data = scen_labels_p8,
-             aes(x = effective_coverage, y = effective_efficacy, label = scen_short),
-             inherit.aes = FALSE,
-             size = 2.4, fill = "white", color = "grey20", alpha = 0.88,
-             label.padding = unit(0.15, "lines"),
-             hjust = -0.08, vjust = 0.5) +
-  # Full elimination label below the star cluster
-  geom_label(data = full_elim_label_p8,
-             aes(x = effective_coverage, y = effective_efficacy, label = label),
-             inherit.aes = FALSE,
-             size = 2.4, fill = "white", color = "grey20", alpha = 0.88,
-             label.padding = unit(0.15, "lines"),
-             hjust = 0.5, vjust = 1.4) +
-  # Historical and Current reference circles: small, period-colored, label to right
-  geom_point(data = ref_named_p8,
-             aes(x = effective_coverage, y = effective_efficacy, color = period),
-             inherit.aes = FALSE,
-             size = 2.5, shape = 19) +
-  geom_label(data = ref_named_p8,
-             aes(x = effective_coverage, y = effective_efficacy,
-                 label = ref_label, color = period),
-             inherit.aes = FALSE,
-             size = 2.2, fill = "white", alpha = 0.88,
-             label.padding = unit(0.15, "lines"),
-             hjust = -0.08, vjust = 0.5, show.legend = FALSE) +
-  # Same lambda color scale as P7; oob=squish prevents minimum-lambda cells (bottom/left
-  # edges where eff*cov=0) from rendering as grey when heatmap_p8 min is just outside
-  # lambda_range computed from pre-saved 06a file
-  scale_fill_distiller(direction = 1, palette = "RdBu",
-                       limits = lambda_range,
-                       oob = scales::squish,
-                       name = expression(lambda)) +
-  scale_color_manual(values = period_colors, name = "Period") +
-  scale_x_continuous(breaks = seq(0, 1, 0.25),
-                     labels = paste0(seq(0, 100, 25), "%")) +
-  scale_y_continuous(breaks = seq(0, 1, 0.25),
-                     labels = paste0(seq(0, 100, 25), "%")) +
-  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
-  labs(
-    x        = "% bycatch-weighted coverage (fisheries with mitigation)",
-    y        = "Mitigation efficacy",
-    title    = "All periods on 1990\u20131994 baseline \u2014 mitigation efficacy vs coverage",
-    subtitle = paste0(
-      "Surface = 1990\u20131994 FM and vital rates; same \u03bb scale as P7.\n",
-      "White contour = \u03bb = 1; grey lines = future mitigation scenarios (1990\u20131994 fleet structure).\n",
-      "Colored circles = reference points per period; position reflects that period\u2019s fleet structure;\n",
-      "\u03bb read from 1990\u20131994 surface (isolates mitigation signal from effort reduction)."
-    )
-  ) +
-  theme_bw(base_size = 12) +
-  theme(
-    panel.grid    = element_blank(),
-    legend.position = "right",
-    plot.margin   = margin(t = 5, r = 60, b = 5, l = 5, unit = "pt")
-  )
-
-p8
-
-ggsave(here("output/figures/07_p8_single_panel_all_periods.png"),
-       p8, width = 11, height = 7.5, dpi = 300)
 ```
 
 ---

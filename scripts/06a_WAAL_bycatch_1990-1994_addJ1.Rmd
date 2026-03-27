@@ -2651,8 +2651,8 @@ calc_beta_params <- function(mean_val, lower_ci, upper_ci) {
     # Fall back to a reasonable variance (tight distribution)
     var <- max_var * 0.01
   }
-  alpha <- mean_val * ((1 - mean_val) / var - 1 / mean_val)
-  beta <- (1 - mean_val) * ((1 - mean_val) / var - 1 / (1 - mean_val))
+  alpha <- mean_val * (mean_val * (1 - mean_val) / var - 1)
+  beta  <- (1 - mean_val) * (mean_val * (1 - mean_val) / var - 1)
   # Ensure both shape parameters are positive
   if (alpha <= 0 || beta <= 0) {
     alpha <- mean_val * 100
@@ -2784,20 +2784,28 @@ fm_params_pll <- list(
 )
 ```
 
-**helper: clamp FM to mortality budget**
+**helper: draw FM within mortality budget (redraw if infeasible, cap as fallback)**
 ```{r}
-# If total FM (legal + IUU) exceeds mortality budget, scale FM down proportionally
-# This preserves the ratio of DLL:PLL while ensuring natural mortality stays positive
-# Only triggers on rare extreme draws — doesn't distort the distribution means
-clamp_fm <- function(dll_fm, pll_fm, mortality_budget, iuu_p) {
-  total_legal_fm <- dll_fm + pll_fm
-  max_legal_fm <- mortality_budget / (1 + iuu_p) * 0.95  # leave 5% for natural mortality
-  if (total_legal_fm > max_legal_fm && total_legal_fm > 0) {
-    scale_factor <- max_legal_fm / total_legal_fm
+# Draw dll and pll FM for a stage; redraw if (dll + pll) * (1 + iuu_p) > budget * 0.95
+# Biologically infeasible draws are excluded via rejection sampling rather than rescaled
+# After max_redraws attempts, falls back to proportional cap and increments diagnostic counter
+draw_fm_feasible <- function(dll_params, pll_params, mortality_budget, iuu_p, max_redraws = 100) {
+  max_legal_fm <- mortality_budget * 0.95 / (1 + iuu_p)
+  dll_fm <- rbeta(1, dll_params$alpha, dll_params$beta)
+  pll_fm <- rbeta(1, pll_params$alpha, pll_params$beta)
+  redraw_count <- 0
+  while ((dll_fm + pll_fm) > max_legal_fm && redraw_count < max_redraws) {
+    dll_fm <- rbeta(1, dll_params$alpha, dll_params$beta)
+    pll_fm <- rbeta(1, pll_params$alpha, pll_params$beta)
+    redraw_count <- redraw_count + 1
+  }
+  capped <- (dll_fm + pll_fm) > max_legal_fm
+  if (capped) {
+    scale_factor <- max_legal_fm / (dll_fm + pll_fm)
     dll_fm <- dll_fm * scale_factor
     pll_fm <- pll_fm * scale_factor
   }
-  list(dll = dll_fm, pll = pll_fm)
+  list(dll = dll_fm, pll = pll_fm, redraws = redraw_count, capped = as.integer(capped))
 }
 ```
 
@@ -2816,6 +2824,8 @@ full_output_uncert <- vector("list", nrow(mitigation_scenarios))
 # Diagnostic counters — s_Juv < min(adult stages) hierarchy enforced
 diag_juv_redraws <- 0     # times s_Juv was redrawn to satisfy s_Juv < min(adult stages)
 diag_juv_capped  <- 0     # times s_Juv hit 100-redraw fallback cap
+diag_fm_redraws  <- 0     # total FM redraws across all stages and sims (feasibility)
+diag_fm_caps     <- 0     # times FM hit 100-redraw fallback cap after max redraws
 
 set.seed(123)
 lambda_nm_only <- numeric(n_sims)
@@ -2832,8 +2842,7 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
 
     set.seed(j * 1000 + 1)
 
-    # --- Draw vital rates: stage-specific survival, stage-specific behavioral rates ---
-    # Draw each adult stage independently from its own beta distribution
+    # --- Draw vital rates: stage-specific survival, behavioral rates ---
     sim_s_EF  <- rbeta(1, surv_params$s_EF$alpha,  surv_params$s_EF$beta)
     sim_s_ENB <- rbeta(1, surv_params$s_ENB$alpha, surv_params$s_ENB$beta)
     sim_s_ES  <- rbeta(1, surv_params$s_ES$alpha,  surv_params$s_ES$beta)
@@ -2853,7 +2862,6 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     diag_juv_redraws <- diag_juv_redraws + redraw_count
     if (sim_s_Juv >= sim_min_adult) { sim_s_Juv <- sim_min_adult - 0.001; diag_juv_capped <- diag_juv_capped + 1 }
 
-    # Stage-specific behavioral rates — drawn from stage-specific distributions (unchanged)
     sim_b_EF  <- rbeta(1, breed_params$b_EF$alpha,  breed_params$b_EF$beta)
     sim_b_ENB <- rbeta(1, breed_params$b_ENB$alpha, breed_params$b_ENB$beta)
     sim_b_ES  <- rbeta(1, breed_params$b_ES$alpha,  breed_params$b_ES$beta)
@@ -2879,31 +2887,16 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     sim_k_PF  <- rbeta(1, success_params$k_PF$alpha,  success_params$k_PF$beta)
 
     # --- Draw IUU proportion from uniform ---
-    sim_iuu_p <- runif(1, min = 0.02, max = 0.30)
+    sim_iuu_p <- runif(1, min = 0, max = 0.15)
 
-    # --- Draw FM freely, then clamp if needed ---
-    sim_dem_fm_j1  <- rbeta(1, fm_params_dll$j1$alpha,  fm_params_dll$j1$beta)
-    sim_dem_fm_juv <- rbeta(1, fm_params_dll$juv$alpha, fm_params_dll$juv$beta)
-    sim_dem_fm_imm <- rbeta(1, fm_params_dll$imm$alpha, fm_params_dll$imm$beta)
-    sim_dem_fm_fb  <- rbeta(1, fm_params_dll$fb$alpha,  fm_params_dll$fb$beta)
-    sim_dem_fm_sb  <- rbeta(1, fm_params_dll$sb$alpha,  fm_params_dll$sb$beta)
-    sim_dem_fm_nb  <- rbeta(1, fm_params_dll$nb$alpha,  fm_params_dll$nb$beta)
-
-    sim_pel_fm_j1  <- rbeta(1, fm_params_pll$j1$alpha,  fm_params_pll$j1$beta)
-    sim_pel_fm_juv <- rbeta(1, fm_params_pll$juv$alpha, fm_params_pll$juv$beta)
-    sim_pel_fm_imm <- rbeta(1, fm_params_pll$imm$alpha, fm_params_pll$imm$beta)
-    sim_pel_fm_fb  <- rbeta(1, fm_params_pll$fb$alpha,  fm_params_pll$fb$beta)
-    sim_pel_fm_sb  <- rbeta(1, fm_params_pll$sb$alpha,  fm_params_pll$sb$beta)
-    sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
-
-    # Clamp FM to mortality budget for each stage (only triggers on rare extreme draws)
+    # --- Draw FM, redraw if infeasible, cap as fallback ---
     # fb/sb/nb each map to two stages; use the higher-survival stage as the binding constraint
-    fm_j1  <- clamp_fm(sim_dem_fm_j1,  sim_pel_fm_j1,  (1 - sim_s_Juv),                   sim_iuu_p)
-    fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),                   sim_iuu_p)
-    fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm),                   sim_iuu_p)
-    fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - max(sim_s_EF, sim_s_IF)),     sim_iuu_p)
-    fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - max(sim_s_ES, sim_s_IS)),     sim_iuu_p)
-    fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - max(sim_s_ENB, sim_s_PF)),    sim_iuu_p)
+    fm_j1  <- draw_fm_feasible(fm_params_dll$j1,  fm_params_pll$j1,  (1 - sim_s_Juv),                sim_iuu_p)
+    fm_juv <- draw_fm_feasible(fm_params_dll$juv, fm_params_pll$juv, (1 - sim_s_Juv),                sim_iuu_p)
+    fm_imm <- draw_fm_feasible(fm_params_dll$imm, fm_params_pll$imm, (1 - sim_s_Imm),                sim_iuu_p)
+    fm_fb  <- draw_fm_feasible(fm_params_dll$fb,  fm_params_pll$fb,  (1 - max(sim_s_EF, sim_s_IF)),  sim_iuu_p)
+    fm_sb  <- draw_fm_feasible(fm_params_dll$sb,  fm_params_pll$sb,  (1 - max(sim_s_ES, sim_s_IS)),  sim_iuu_p)
+    fm_nb  <- draw_fm_feasible(fm_params_dll$nb,  fm_params_pll$nb,  (1 - max(sim_s_ENB, sim_s_PF)), sim_iuu_p)
 
     sim_dem_fm_j1  <- fm_j1$dll;  sim_pel_fm_j1  <- fm_j1$pll
     sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
@@ -2911,6 +2904,9 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     sim_dem_fm_fb  <- fm_fb$dll;  sim_pel_fm_fb  <- fm_fb$pll
     sim_dem_fm_sb  <- fm_sb$dll;  sim_pel_fm_sb  <- fm_sb$pll
     sim_dem_fm_nb  <- fm_nb$dll;  sim_pel_fm_nb  <- fm_nb$pll
+
+    diag_fm_redraws <- diag_fm_redraws + fm_j1$redraws + fm_juv$redraws + fm_imm$redraws + fm_fb$redraws + fm_sb$redraws + fm_nb$redraws
+    diag_fm_caps    <- diag_fm_caps    + fm_j1$capped  + fm_juv$capped  + fm_imm$capped  + fm_fb$capped  + fm_sb$capped  + fm_nb$capped
 
     # --- Calculate IUU mortality ---
     sim_iuu_j1  <- (sim_dem_fm_j1  + sim_pel_fm_j1)  * sim_iuu_p
@@ -3003,9 +2999,10 @@ for (k in seq_along(mitigation_scenarios$efficacy)) {
     }
   }
 
-  # Biological bound filter: remove sims where baseline (coverage = 0) lambda >= 1 (upper bound),
-  # or where no-fishing lambda < 1 (lower bound — VR combination inconsistent with observed population)
-  invalid_sims <- which(output_mat[1, ] >= 1 | lambda_nm_only < 1)
+  # Biological bound filter: remove sims where baseline (coverage = 0) lambda >= 1 (upper bound).
+  # Lower bound (lambda_nm_only < 1) removed — sims where natural mortality alone causes decline
+  # are valid uncertainty scenarios, not biologically impossible, especially in low-FM periods.
+  invalid_sims <- which(output_mat[1, ] >= 1)
   if (length(invalid_sims) > 0) output_mat[, invalid_sims] <- NA
 
   # Store results with metadata
@@ -3025,10 +3022,13 @@ tibble(
   metric = c(
     paste0("Total sim draws (", nrow(mitigation_scenarios), " scenarios x ", n_sims, " sims)"),
     "s_Juv redraws (s_Juv >= s_Adult)",
-    "s_Juv fallback caps (100 redraws exhausted)"
+    "s_Juv fallback caps (100 redraws exhausted)",
+    "FM redraws (feasibility rejection sampling)",
+    "FM cap fallbacks (100 redraws exhausted)"
   ),
-  value = c(total_draws, diag_juv_redraws, diag_juv_capped),
-  per_sim = round(c(NA_real_, diag_juv_redraws / total_draws, diag_juv_capped / total_draws), 4)
+  value = c(total_draws, diag_juv_redraws, diag_juv_capped, diag_fm_redraws, diag_fm_caps),
+  per_sim = round(c(NA_real_, diag_juv_redraws / total_draws, diag_juv_capped / total_draws,
+                    diag_fm_redraws / total_draws, diag_fm_caps / total_draws), 4)
 ) %>% print()
 ```
 
@@ -3065,6 +3065,191 @@ uncert_long %>%
   group_by(scenario) %>%
   summarise(n_valid_sims = n_distinct(simrun)) %>%
   print()
+
+# Adjust uncertainty quantiles to be centred on deterministic lambda,
+# correcting Jensen's inequality bias from VR stochasticity.
+# Ribbon widths (spread) are preserved; only the centre is re-anchored.
+uncert_summary_adj <- uncert_summary %>%
+  left_join(
+    blanket_results %>% rename(coverage = reduction) %>% select(scenario, coverage, lambda),
+    by = c("scenario", "coverage")
+  ) %>%
+  mutate(
+    offset  = mean_lambda - lambda,
+    q05_adj = q05 - offset,
+    q25_adj = q25 - offset,
+    q75_adj = q75 - offset,
+    q95_adj = q95 - offset
+  )
+```
+
+**diagnostic: deterministic vs uncertainty mean lambda**
+```{r fig.width=10, fig.height=5}
+# Overlay deterministic lambda and uncertainty mean lambda — should match closely
+# Any remaining gap indicates residual FM distribution bias
+det_compare <- blanket_results %>%
+  rename(coverage = reduction) %>%
+  select(scenario, coverage, lambda) %>%
+  mutate(source = "Deterministic")
+
+uncert_compare <- uncert_summary %>%
+  select(scenario, coverage, mean_lambda) %>%
+  rename(lambda = mean_lambda) %>%
+  mutate(source = "Uncertainty mean (FM + IUU only)")
+
+compare_df <- bind_rows(det_compare, uncert_compare)
+
+p_det_uncert_check <- ggplot(compare_df,
+    aes(x = coverage, y = lambda,
+        group = interaction(scenario, source),
+        color = scenario, linetype = source)) +
+  geom_line(linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "darkgrey", linetype = "dashed", alpha = 0.6) +
+  scale_linetype_manual(values = c("Deterministic" = "solid",
+                                   "Uncertainty mean (FM + IUU only)" = "dashed"),
+                        name = NULL) +
+  scale_color_manual(values = scenario_colors, name = "Scenario") +
+  labs(x = "% fisheries with bycatch mitigation", y = expression(lambda),
+       title = "Diagnostic: deterministic vs uncertainty mean \u03bb",
+       subtitle = "Solid = deterministic; dashed = uncertainty mean. Lines should overlap.") +
+  themeo +
+  guides(color = guide_legend(nrow = 2))
+p_det_uncert_check
+```
+
+**diagnostic: individual sim runs with deterministic lambda overlaid**
+```{r fig.width=14, fig.height=5}
+p_det_runs_check <- ggplot(uncert_long) +
+  geom_line(aes(x = coverage, y = lambda, group = simrun),
+            color = "grey70", alpha = 0.1) +
+  geom_line(data = uncert_summary,
+            aes(x = coverage, y = mean_lambda, color = "Simulation mean"),
+            linewidth = 1) +
+  geom_line(data = uncert_summary_adj,
+            aes(x = coverage, y = lambda, color = "Deterministic"),
+            linewidth = 0.6, linetype = "dashed") +
+  geom_hline(yintercept = 1, color = "red", alpha = 0.5, linetype = "dashed") +
+  scale_color_manual(values = c("Simulation mean" = "blue", "Deterministic" = "orange"),
+                     name = NULL) +
+  labs(x = "% legal fisheries with bycatch mitigation", y = expression(lambda),
+       title = "Diagnostic: sim runs vs simulation mean vs deterministic \u03bb",
+       subtitle = "Grey = individual sims; blue = simulation mean; orange dashed = deterministic") +
+  facet_wrap(~scenario, nrow = 1) +
+  themeo +
+  coord_cartesian(expand = FALSE)
+p_det_runs_check
+```
+
+**delta method: analytical VR uncertainty (comparison with simulation)**
+```{r}
+# Sensitivities from Pardo analysis (baseline deterministic matrix)
+vr_sens <- tribble(
+  ~rate,    ~sensitivity,
+  "s_Imm",  0.366,
+  "s_ES",   0.188,
+  "s_PF",   0.151,
+  "s_ENB",  0.140,
+  "s_Juv",  0.117,
+  "s_EF",   0.074,
+  "s_IS",   0.019,
+  "s_IF",   0.014,
+  "r_Imm",  0.022,
+  "b_Imm",  0.149,
+  "k_PF",   0.015,
+  "b_PF",   0.009,
+  "r_PF",   0.006,
+  "k_ENB",  0.009,
+  "b_ENB",  0.007,
+  "k_EF",   0.006,
+  "b_EF",   0.003,
+  "k_Imm",  0.004,
+  "r_EF",   0.001,
+  "r_ENB",  0.001,
+  "k_IF",   0.001,
+  "r_IF",   0.000,
+  "r_IS",   0.000,
+  "b_IF",   0.001,
+  "b_IS",   0.000,
+  "b_ES",   0.002,
+  "k_IS",   0.000,
+  "k_ES",   0.000,
+  "r_ES",  -0.004
+)
+
+# Beta distribution variances for all VRs: Var = alpha*beta / ((alpha+beta)^2 * (alpha+beta+1))
+all_params <- c(surv_params, return_params, breed_params, success_params)
+beta_vars <- tibble(
+  rate     = names(all_params),
+  beta_var = map_dbl(all_params, ~ .x$alpha * .x$beta /
+               ((.x$alpha + .x$beta)^2 * (.x$alpha + .x$beta + 1)))
+)
+
+# Delta method: Var(lambda_VR) ≈ Σ sens_i² × Var(x_i)
+lambda_vr_var <- vr_sens %>%
+  left_join(beta_vars, by = "rate") %>%
+  summarise(var_lambda = sum(sensitivity^2 * beta_var, na.rm = TRUE)) %>%
+  pull(var_lambda)
+
+lambda_vr_sd <- sqrt(lambda_vr_var)
+message("Delta method lambda SD (VR uncertainty only): ", round(lambda_vr_sd, 5))
+
+# Build delta method ribbon (fixed width, centred on deterministic lambda)
+delta_ribbon <- uncert_summary_adj %>%
+  select(scenario, coverage, lambda) %>%
+  mutate(
+    delta_lo90 = lambda - 1.645 * lambda_vr_sd,
+    delta_hi90 = lambda + 1.645 * lambda_vr_sd,
+    delta_lo50 = lambda - 0.674 * lambda_vr_sd,
+    delta_hi50 = lambda + 0.674 * lambda_vr_sd
+  )
+```
+
+**comparison: simulation (offset-corrected) vs delta method 90% CI**
+```{r fig.width=14, fig.height=5}
+p_delta_vs_sim <- ggplot(uncert_summary_adj) +
+  geom_ribbon(aes(x = coverage, ymin = q05_adj, ymax = q95_adj,
+                  fill = "Simulation (offset-corrected)"),
+              alpha = 0.3) +
+  geom_ribbon(data = delta_ribbon,
+              aes(x = coverage, ymin = delta_lo90, ymax = delta_hi90,
+                  fill = "Delta method"),
+              alpha = 0.3) +
+  geom_line(aes(x = coverage, y = lambda), color = "black", linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "red", alpha = 0.5, linetype = "dashed") +
+  scale_fill_manual(values = c("Simulation (offset-corrected)" = "steelblue",
+                               "Delta method" = "darkorange"),
+                    name = "Uncertainty method") +
+  labs(x = "% legal fisheries with bycatch mitigation", y = expression(lambda),
+       title = "Comparison: simulation vs delta method 90% CI",
+       subtitle = "Both ribbons centred on deterministic \u03bb; 90% CI shown") +
+  facet_wrap(~scenario, nrow = 1) +
+  themeo +
+  coord_cartesian(expand = FALSE)
+p_delta_vs_sim
+```
+
+```{r}
+vr_check <- tibble(
+    rate = c("s_EF","s_ENB","s_ES","s_IF","s_Imm","s_IS","s_PF","s_Juv",
+             "r_EF","r_ENB","r_ES","r_IF","r_Imm","r_IS","r_PF",                                                                                                                     
+             "b_EF","b_ENB","b_ES","b_IF","b_Imm","b_IS","b_PF",                                                                                                                     
+             "k_EF","k_ENB","k_ES","k_IF","k_Imm","k_IS","k_PF"),                                                                                                                    
+    det = c(s_EF, s_ENB, s_ES, s_IF, s_Imm, s_IS, s_PF, s_Juv,                                                                                                                       
+            r_EF, r_ENB, r_ES, r_IF, r_Imm, r_IS, r_PF,                                                                                                                              
+            b_EF, b_ENB, b_ES, b_IF, b_Imm, b_IS, b_PF,                                                                                                                              
+            k_EF, k_ENB, k_ES, k_IF, k_Imm, k_IS, k_PF),                                                                                                                             
+    params = c(surv_params, return_params, breed_params, success_params)                                                                                                             
+  ) %>%                                                                                                                                                                              
+    mutate(                                                                                                                                                                          
+      alpha    = map_dbl(params, "alpha"),
+      beta_par = map_dbl(params, "beta"),                                                                                                                                            
+      beta_mean = alpha / (alpha + beta_par),
+      beta_sd   = sqrt(alpha * beta_par / ((alpha + beta_par)^2 * (alpha + beta_par + 1)))                                                                                           
+    ) %>%
+    select(rate, det, beta_mean, beta_sd)                                                                                                                                            
+                                                                                                                                                                                     
+  print(vr_check, n = 30)
+
 ```
 
 **plot uncertainty — individual sim runs + mean**
@@ -3072,8 +3257,8 @@ uncert_long %>%
 p_uncert_runs <- ggplot(uncert_long) +
   geom_line(aes(x = coverage, y = lambda, group = simrun),
             color = "grey", alpha = 0.1) +
-  geom_line(data = uncert_summary,
-            aes(x = coverage, y = mean_lambda),
+  geom_line(data = uncert_summary_adj,
+            aes(x = coverage, y = lambda),
             color = "blue", linewidth = 0.8) +
   geom_hline(yintercept = 1, color = "red", alpha = 0.5) +
   labs(x = "% legal fisheries with bycatch mitigation", y = "lambda") +
@@ -3085,12 +3270,12 @@ p_uncert_runs
 
 **plot uncertainty — ribbon (90% CI + IQR)**
 ```{r, fig.width=14, fig.height=5}
-p_uncert_ribbon <- ggplot(uncert_summary) +
-  geom_ribbon(aes(x = coverage, ymin = q05, ymax = q95),
+p_uncert_ribbon <- ggplot(uncert_summary_adj) +
+  geom_ribbon(aes(x = coverage, ymin = q05_adj, ymax = q95_adj),
               fill = "lightblue", alpha = 0.4) +
-  geom_ribbon(aes(x = coverage, ymin = q25, ymax = q75),
+  geom_ribbon(aes(x = coverage, ymin = q25_adj, ymax = q75_adj),
               fill = "steelblue", alpha = 0.4) +
-  geom_line(aes(x = coverage, y = mean_lambda),
+  geom_line(aes(x = coverage, y = lambda),
             color = "darkblue", linewidth = 0.8) +
   geom_hline(yintercept = 1, color = "red", alpha = 0.5, linetype = "dashed") +
   labs(x = "% legal fisheries with bycatch mitigation", y = "lambda",
@@ -3105,14 +3290,14 @@ p_uncert_ribbon
 ```{r, fig.width=10, fig.height=5}
 # Overlay all scenarios on one plot, zoomed to the threshold region
 # This makes the difference between 2/3 and 3/3 visible
-p_uncert_zoom <- ggplot(uncert_summary) +
-  geom_line(aes(x = coverage, y = mean_lambda,
+p_uncert_zoom <- ggplot(uncert_summary_adj) +
+  geom_line(aes(x = coverage, y = lambda,
                 group = scenario, color = scenario),
             linewidth = 0.8) +
   geom_hline(yintercept = 1, color = "darkgrey", alpha = 0.5, linetype = "dashed") +
   labs(x = "% legal fisheries with bycatch mitigation", y = "lambda",
        color = "Mitigation scenario",
-       subtitle = "Mean lambda with VR + FM + IUU uncertainty — zoomed to recovery threshold") +
+       subtitle = "Deterministic lambda — zoomed to recovery threshold") +
   themeo +
   guides(colour = guide_legend(nrow = 2)) +
   coord_cartesian(ylim = c(0.995, 1.005), expand = FALSE) +
@@ -3125,9 +3310,14 @@ p_uncert_zoom
 # For each coverage × scenario, what fraction of sims achieve lambda >= 1?
 # This directly shows whether the population is likely to recover
 prob_recovery <- uncert_long %>%
+  left_join(
+    uncert_summary_adj %>% select(scenario, coverage, offset),
+    by = c("scenario", "coverage")
+  ) %>%
+  mutate(lambda_adj = lambda - offset) %>%
   group_by(scenario, coverage) %>%
   summarise(
-    prob_recover = mean(lambda >= 1),
+    prob_recover = mean(lambda_adj >= 1),
     .groups = "drop"
   )
 
@@ -3149,25 +3339,27 @@ p_prob_recovery
 
 *UNCERTAINTY SIMULATION WITH FIXED IUU RATES + IUU REDUCTION*
 
-Same VR/FM uncertainty as above, but with fixed IUU proportions (2%, 10%, 30%)
+Same VR/FM uncertainty as above, but with fixed IUU proportions (0%, 5%, 10%, 15%)
 crossed with 3 IUU enforcement levels (no reduction, 50% reduction, full elimination).
 IUU only affects lambda when it is partially or fully reduced — without reduction,
 IUU cancels algebraically (it's just relabeled natural mortality).
 
 **run fixed-IUU uncertainty simulation with enforcement levels**
 ```{r}
-fixed_iuu_vals <- c(0.02, 0.10, 0.30)
+fixed_iuu_vals <- c(0, 0.05, 0.10, 0.15)
 fixed_iuu_red_vals <- c(0, 0.50, 1.0)  # no reduction, 50% reduction, full elimination
 n_sims_fixed <- 1000
 coverage_seq_fixed <- seq(0, 1, by = 0.01)
 
-# Total combos: 3 IUU levels × 3 IUU reductions × 6 mitigation scenarios = 54
+# Total combos: 4 IUU levels × 3 IUU reductions × 6 mitigation scenarios = 72
 full_output_fixed_iuu <- vector("list",
   length(fixed_iuu_vals) * length(fixed_iuu_red_vals) * nrow(mitigation_scenarios))
 
 # Diagnostic counters for fixed-IUU simulation — s_Juv < min(adult stages) enforced
 diag2_juv_redraws <- 0
 diag2_juv_capped  <- 0
+diag2_fm_redraws  <- 0     # total FM redraws across all stages and sims (feasibility)
+diag2_fm_caps     <- 0     # times FM hit 100-redraw fallback cap after max redraws
 
 set.seed(123)
 list_idx <- 0
@@ -3236,28 +3428,14 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         sim_k_IS  <- rbeta(1, success_params$k_IS$alpha,  success_params$k_IS$beta)
         sim_k_PF  <- rbeta(1, success_params$k_PF$alpha,  success_params$k_PF$beta)
 
-        # --- Draw FM freely, clamp if needed ---
-        sim_dem_fm_j1  <- rbeta(1, fm_params_dll$j1$alpha,  fm_params_dll$j1$beta)
-        sim_dem_fm_juv <- rbeta(1, fm_params_dll$juv$alpha, fm_params_dll$juv$beta)
-        sim_dem_fm_imm <- rbeta(1, fm_params_dll$imm$alpha, fm_params_dll$imm$beta)
-        sim_dem_fm_fb  <- rbeta(1, fm_params_dll$fb$alpha,  fm_params_dll$fb$beta)
-        sim_dem_fm_sb  <- rbeta(1, fm_params_dll$sb$alpha,  fm_params_dll$sb$beta)
-        sim_dem_fm_nb  <- rbeta(1, fm_params_dll$nb$alpha,  fm_params_dll$nb$beta)
-
-        sim_pel_fm_j1  <- rbeta(1, fm_params_pll$j1$alpha,  fm_params_pll$j1$beta)
-        sim_pel_fm_juv <- rbeta(1, fm_params_pll$juv$alpha, fm_params_pll$juv$beta)
-        sim_pel_fm_imm <- rbeta(1, fm_params_pll$imm$alpha, fm_params_pll$imm$beta)
-        sim_pel_fm_fb  <- rbeta(1, fm_params_pll$fb$alpha,  fm_params_pll$fb$beta)
-        sim_pel_fm_sb  <- rbeta(1, fm_params_pll$sb$alpha,  fm_params_pll$sb$beta)
-        sim_pel_fm_nb  <- rbeta(1, fm_params_pll$nb$alpha,  fm_params_pll$nb$beta)
-
-        # All adult stages share sim_s_Adult so budget = (1 - sim_s_Adult)
-        fm_j1  <- clamp_fm(sim_dem_fm_j1,  sim_pel_fm_j1,  (1 - sim_s_Juv),                   fixed_iuu_p)
-        fm_juv <- clamp_fm(sim_dem_fm_juv, sim_pel_fm_juv, (1 - sim_s_Juv),                   fixed_iuu_p)
-        fm_imm <- clamp_fm(sim_dem_fm_imm, sim_pel_fm_imm, (1 - sim_s_Imm),                   fixed_iuu_p)
-        fm_fb  <- clamp_fm(sim_dem_fm_fb,  sim_pel_fm_fb,  (1 - max(sim_s_EF, sim_s_IF)),     fixed_iuu_p)
-        fm_sb  <- clamp_fm(sim_dem_fm_sb,  sim_pel_fm_sb,  (1 - max(sim_s_ES, sim_s_IS)),     fixed_iuu_p)
-        fm_nb  <- clamp_fm(sim_dem_fm_nb,  sim_pel_fm_nb,  (1 - max(sim_s_ENB, sim_s_PF)),    fixed_iuu_p)
+        # --- Draw FM, redraw if infeasible, cap as fallback ---
+        # fb/sb/nb each map to two stages; use the higher-survival stage as the binding constraint
+        fm_j1  <- draw_fm_feasible(fm_params_dll$j1,  fm_params_pll$j1,  (1 - sim_s_Juv),                fixed_iuu_p)
+        fm_juv <- draw_fm_feasible(fm_params_dll$juv, fm_params_pll$juv, (1 - sim_s_Juv),                fixed_iuu_p)
+        fm_imm <- draw_fm_feasible(fm_params_dll$imm, fm_params_pll$imm, (1 - sim_s_Imm),                fixed_iuu_p)
+        fm_fb  <- draw_fm_feasible(fm_params_dll$fb,  fm_params_pll$fb,  (1 - max(sim_s_EF, sim_s_IF)),  fixed_iuu_p)
+        fm_sb  <- draw_fm_feasible(fm_params_dll$sb,  fm_params_pll$sb,  (1 - max(sim_s_ES, sim_s_IS)),  fixed_iuu_p)
+        fm_nb  <- draw_fm_feasible(fm_params_dll$nb,  fm_params_pll$nb,  (1 - max(sim_s_ENB, sim_s_PF)), fixed_iuu_p)
 
         sim_dem_fm_j1  <- fm_j1$dll;  sim_pel_fm_j1  <- fm_j1$pll
         sim_dem_fm_juv <- fm_juv$dll; sim_pel_fm_juv <- fm_juv$pll
@@ -3265,6 +3443,9 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
         sim_dem_fm_fb  <- fm_fb$dll;  sim_pel_fm_fb  <- fm_fb$pll
         sim_dem_fm_sb  <- fm_sb$dll;  sim_pel_fm_sb  <- fm_sb$pll
         sim_dem_fm_nb  <- fm_nb$dll;  sim_pel_fm_nb  <- fm_nb$pll
+
+        diag2_fm_redraws <- diag2_fm_redraws + fm_j1$redraws + fm_juv$redraws + fm_imm$redraws + fm_fb$redraws + fm_sb$redraws + fm_nb$redraws
+        diag2_fm_caps    <- diag2_fm_caps    + fm_j1$capped  + fm_juv$capped  + fm_imm$capped  + fm_fb$capped  + fm_sb$capped  + fm_nb$capped
 
         # --- Fixed IUU proportion ---
         sim_iuu_j1  <- (sim_dem_fm_j1  + sim_pel_fm_j1)  * fixed_iuu_p
@@ -3377,9 +3558,11 @@ for (iuu_idx in seq_along(fixed_iuu_vals)) {
 # Biological bound filters: baseline lambda (coverage=0) >= 1 removed (upper); no-fishing lambda < 1 removed (lower)
 total_draws2 <- length(fixed_iuu_vals) * length(fixed_iuu_red_vals) * nrow(mitigation_scenarios) * n_sims_fixed
 tibble(
-  metric = c("Total sim draws", "s_Juv redraws (s_Juv >= s_Adult)", "s_Juv fallback caps"),
-  value  = c(total_draws2, diag2_juv_redraws, diag2_juv_capped),
-  per_sim = round(c(NA_real_, diag2_juv_redraws / total_draws2, diag2_juv_capped / total_draws2), 4)
+  metric = c("Total sim draws", "s_Juv redraws (s_Juv >= s_Adult)", "s_Juv fallback caps",
+             "FM redraws (feasibility rejection sampling)", "FM cap fallbacks (100 redraws exhausted)"),
+  value  = c(total_draws2, diag2_juv_redraws, diag2_juv_capped, diag2_fm_redraws, diag2_fm_caps),
+  per_sim = round(c(NA_real_, diag2_juv_redraws / total_draws2, diag2_juv_capped / total_draws2,
+                    diag2_fm_redraws / total_draws2, diag2_fm_caps / total_draws2), 4)
 ) %>% print()
 ```
 

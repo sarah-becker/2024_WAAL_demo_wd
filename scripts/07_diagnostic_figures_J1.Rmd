@@ -35,19 +35,15 @@ survival are attributable to fishing vs. other processes.
 # Load Data
 
 ```{r load-data}
-# Most recent 03f output date
-date_sfx_03f <- "2026-02-25"
+# Current 04_v3 output date (includes J1)
+date_sfx_04v3 <- "2026-03-29"
 
-# Hooks by fleet and period (03g, 2026-02-24 — the file with hooks output)
-hooks_raw <- read_csv(here("output/hooks_by_fleet_period_03g_2026-02-24.csv"),
-                      show_col_types = FALSE)
-
-# Bycatch by fishery and period (03f — mean annual BI bycatch, all ages summed)
-byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_03f_", date_sfx_03f, ".csv")),
+# Bycatch by fishery and period (04_v3 — mean annual BI bycatch, all ages summed, includes J1)
+byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_04_v3_", date_sfx_04v3, ".csv")),
                        show_col_types = FALSE)
 
-# Per-capita fishing mortality by period and age class (03f)
-percap <- read_csv(here(paste0("output/percap_rates_by_period_03f_", date_sfx_03f, ".csv")),
+# Per-capita fishing mortality by period and age class (04_v3, includes J1)
+percap <- read_csv(here(paste0("output/percap_rates_by_period_04_v3_", date_sfx_04v3, ".csv")),
                    show_col_types = FALSE)
 ```
 
@@ -58,30 +54,47 @@ percap <- read_csv(here(paste0("output/percap_rates_by_period_03f_", date_sfx_03
 ```{r period-labels}
 # Period labels used in 06a-06d (bycatch model periods)
 model_periods <- c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
-
-# The hooks file (03g) uses slightly different period endpoints
-# ("1990-1995" vs "1990-1994") due to raw data year groupings — mapping them here
-hooks_period_map <- c(
-  "1990-1995" = "1990-1994",
-  "1996-2000" = "1995-1999",
-  "2001-2005" = "2000-2004",
-  "2006-2010" = "2005-2009"
-)
 ```
 
 ```{r effort-data}
-# Total hooks by fishery type and period (summed across fleets, excluding NAs)
-# The hooks_raw total_hooks column is the 5-year total; divide by 5 for mean annual
-hooks_by_period <- hooks_raw %>%
-  filter(!is.na(total_hooks)) %>%
-  mutate(period = recode(year_group, !!!hooks_period_map)) %>%
-  filter(period %in% model_periods) %>%
-  group_by(period, fishery) %>%
-  summarise(mean_annual_hooks = sum(total_hooks, na.rm = TRUE) / 5,
+# Total hooks by fishery type and period — derived from raw effort files
+# (no hooks_by_fleet_period file exists for 04_v3; same source data as script 01)
+# Step 1: sum hooks across months within each year per cell; Step 2: sum across cells
+# per year; Step 3: average across years per period
+pll_hooks <- read_csv(here("output/pll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009"
+  )) %>%
+  group_by(year_group, Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(year_group) %>%
+  summarise(mean_annual_hooks = mean(annual_hooks, na.rm = TRUE),
             .groups = "drop") %>%
+  mutate(fishery = "PLL")
+
+dll_hooks <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  mutate(year_group = case_when(
+    Year >= 1990 & Year <= 1994 ~ "1990-1994",
+    Year >= 1995 & Year <= 1999 ~ "1995-1999",
+    Year >= 2000 & Year <= 2004 ~ "2000-2004",
+    Year >= 2005 & Year <= 2009 ~ "2005-2009"
+  )) %>%
+  group_by(year_group, Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(year_group) %>%
+  summarise(mean_annual_hooks = mean(annual_hooks, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(fishery = "DLL")
+
+hooks_by_period <- bind_rows(pll_hooks, dll_hooks) %>%
   mutate(
-    period   = factor(period, levels = model_periods),
-    fishery  = factor(fishery, levels = c("PLL", "DLL"))
+    period  = factor(year_group, levels = model_periods),
+    fishery = factor(fishery, levels = c("PLL", "DLL"))
   )
 ```
 
@@ -89,7 +102,7 @@ hooks_by_period <- hooks_raw %>%
 # Effective catchability (BPUE): mean annual BI bycatch / mean annual hooks
 # bi_total in bycatch file is already mean annual
 catchability_by_period <- byc_period %>%
-  left_join(hooks_by_period, by = c("year_group" = "period", "fishery")) %>%
+  left_join(hooks_by_period, by = c("year_group", "fishery")) %>%
   mutate(
     period  = factor(year_group, levels = model_periods),
     fishery = factor(fishery, levels = c("PLL", "DLL")),
@@ -390,15 +403,40 @@ Mean annual hooks by fleet across the four 5-year periods, separated by fishery 
 Top fleets by total effort are shown individually; the remainder are collapsed to "Other".
 
 ```{r p-fleet-effort, fig.width=12, fig.height=8}
-# Mean annual hooks per fleet × period × fishery
-# total_hooks in hooks_raw is the 5-year total; divide by 5 for mean annual
-fleet_effort <- hooks_raw %>%
-  filter(!is.na(total_hooks)) %>%
-  mutate(period = recode(year_group, !!!hooks_period_map)) %>%
-  filter(period %in% model_periods) %>%
+# Mean annual hooks per fleet × period × fishery — derived from raw effort files
+pll_fleet_period <- read_csv(here("output/pll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  mutate(fleet = ifelse(is.na(Flag), "Other", Flag),
+         fishery = "PLL",
+         year_group = case_when(
+           Year >= 1990 & Year <= 1994 ~ "1990-1994",
+           Year >= 1995 & Year <= 1999 ~ "1995-1999",
+           Year >= 2000 & Year <= 2004 ~ "2000-2004",
+           Year >= 2005 & Year <= 2009 ~ "2005-2009"
+         )) %>%
+  group_by(fishery, fleet, year_group, Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(fishery, fleet, year_group) %>%
+  summarise(mean_annual_hooks = mean(annual_hooks, na.rm = TRUE), .groups = "drop")
+
+dll_fleet_period <- read_csv(here("output/dll_effort_by_fleet.csv"), show_col_types = FALSE) %>%
+  filter(Year >= 1990, Year <= 2009) %>%
+  rename(fleet = Fleet) %>%
+  mutate(fishery = "DLL",
+         year_group = case_when(
+           Year >= 1990 & Year <= 1994 ~ "1990-1994",
+           Year >= 1995 & Year <= 1999 ~ "1995-1999",
+           Year >= 2000 & Year <= 2004 ~ "2000-2004",
+           Year >= 2005 & Year <= 2009 ~ "2005-2009"
+         )) %>%
+  group_by(fishery, fleet, year_group, Year) %>%
+  summarise(annual_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  group_by(fishery, fleet, year_group) %>%
+  summarise(mean_annual_hooks = mean(annual_hooks, na.rm = TRUE), .groups = "drop")
+
+fleet_effort <- bind_rows(pll_fleet_period, dll_fleet_period) %>%
   mutate(
-    mean_annual_hooks = total_hooks / 5,
-    period  = factor(period,  levels = model_periods),
+    period  = factor(year_group, levels = model_periods),
     fishery = factor(fishery, levels = c("PLL", "DLL"))
   )
 
@@ -679,24 +717,25 @@ calc_lambda_from_survival <- function(ns_Juv, ns_Imm, ns_EF, ns_ES, ns_ENB,
 ## Load Decomposition Data (03g counterfactuals)
 
 ```{r decomp-load}
-# 03g files use different period labels than 03f/Clay ("1990-1995" vs "1990-1994")
-date_sfx_03g <- "2026-02-24"
+# 04_v3 counterfactual files — generated by Section 12b of script 04, includes J1
+# Uses same period labels as 04_v3 ("1990-1994" etc.)
+date_sfx_04v3_decomp <- "2026-03-29"
 
-# Observed bycatch from 03g (same data as 03f but with 03g period labels)
+# Observed bycatch from 04_v3
 byc_obs_03g <- read_csv(
-  here(paste0("output/bycatch_by_fishery_period_03g_", date_sfx_03g, ".csv")),
+  here(paste0("output/bycatch_by_fishery_period_04_v3_", date_sfx_04v3_decomp, ".csv")),
   show_col_types = FALSE
 )
 
 # Counterfactual: baseline beta × current effort (effort change only)
 byc_eff_only <- read_csv(
-  here(paste0("output/bycatch_effort_only_03g_", date_sfx_03g, ".csv")),
+  here(paste0("output/bycatch_effort_only_04_v3_", date_sfx_04v3_decomp, ".csv")),
   show_col_types = FALSE
 )
 
 # Counterfactual: current beta × baseline effort (catchability change only)
 byc_catch_only <- read_csv(
-  here(paste0("output/bycatch_catchability_only_03g_", date_sfx_03g, ".csv")),
+  here(paste0("output/bycatch_catchability_only_04_v3_", date_sfx_04v3_decomp, ".csv")),
   show_col_types = FALSE
 )
 
@@ -705,30 +744,26 @@ dem_props_07 <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
                          show_col_types = FALSE) %>%
   mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
 
-# Map 03g effort periods to Clay population periods
-period_pop_map_07 <- tibble(
-  year_group = c("1990-1995", "1996-2000", "2001-2005", "2006-2010"),
-  pop_period = c("1990-1994", "1995-1999", "2000-2004", "2005-2009")
-)
-
-# Population sizes by age class and 03g effort period
-age_cols_decomp <- c("fb", "sb", "nb", "j2j3", "imm")
+# 04_v3 uses same period labels as Clay ("1990-1994" etc.) — no remapping needed
+# age_cols_decomp includes j1 now that 04_v3 outputs include it
+age_cols_decomp <- c("fb", "sb", "nb", "j1", "j2j3", "imm")
 
 pop_by_effort_period <- dem_props_07 %>%
-  filter(Dem_class != "J1", Period != "1990-2009") %>%
+  filter(Period != "1990-2009") %>%
   select(Period, Dem_class, Pop) %>%
   mutate(age_class = case_when(
+    Dem_class == "J1"   ~ "j1",
     Dem_class == "J2J3" ~ "j2j3",
     Dem_class == "IMM"  ~ "imm",
     Dem_class == "FB"   ~ "fb",
     Dem_class == "SB"   ~ "sb",
     Dem_class == "NB"   ~ "nb"
   )) %>%
-  left_join(period_pop_map_07, by = c("Period" = "pop_period"))
+  rename(year_group = Period)
 
-# Baseline (1990-1995 effort period) population vector — fixed denominator for all periods
+# Baseline (1990-1994) population vector — fixed denominator for all periods
 pop_tmp <- pop_by_effort_period %>%
-  filter(year_group == "1990-1995") %>%
+  filter(year_group == "1990-1994") %>%
   select(age_class, Pop)
 pop_baseline_vec <- setNames(pop_tmp$Pop, pop_tmp$age_class)
 
@@ -750,8 +785,8 @@ to_percap_03g <- function(byc_df, period_filter = NULL) {
 ## Compute FM Decomposition
 
 ```{r fm-decomposition}
-baseline_03g <- "1990-1995"
-later_03g    <- c("1996-2000", "2001-2005", "2006-2010")
+baseline_03g <- "1990-1994"
+later_03g    <- c("1995-1999", "2000-2004", "2005-2009")
 
 # Observed per-capita FM for baseline period
 fm_base_vec <- to_percap_03g(byc_obs_03g, period_filter = baseline_03g) %>%
@@ -828,7 +863,7 @@ p4 <- ggplot(decomp_bars, aes(x = year_group, y = pct_reduction, fill = componen
   ) +
   labs(
     x        = "Period",
-    y        = "% reduction in FM relative to 1990\u20131995 baseline",
+    y        = "% reduction in FM relative to 1990\u20131994 baseline",
     title    = "Decomposition of fishing mortality decline by period",
     subtitle = "FM change split into effort-driven (fewer hooks) and catchability-driven (\u03b2) components"
   ) +

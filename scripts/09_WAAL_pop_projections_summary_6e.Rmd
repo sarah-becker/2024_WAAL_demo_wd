@@ -9,9 +9,9 @@ library(tidyverse)
 library(RColorBrewer)
 
 
-input_sfx     <- "2026-03-27"                    # date 06a was last run — must match saved CSV
+input_sfx     <- "2026-03-30"                    # date 06e was last run — must match saved CSV
 output_sfx    <- format(Sys.Date(), "%Y-%m-%d")  # today's date, used when saving figures
-target_period <- "1990-1994" #baseline reference period
+target_period <- "1990-2009" # full-period baseline (06e output)
 
 themeo <- theme_classic() + #custom plotting theme
   theme(strip.background = element_blank(),
@@ -224,17 +224,17 @@ dem_obs <- dem_props %>%
   filter(Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
   group_by(Period) %>%
   summarise(N_obs = sum(Pop) * 0.6, .groups = "drop") %>%  # scale SG to Bird Island
-  mutate(year = c(0, 5, 10, 15))
+  mutate(year = c(-10, -5, 0, 5))
 
 # Split into adults (SB + FB + NB) and immatures (IMM + J2+3) for stage comparison plots
 dem_obs_split <- dem_props %>%
   filter(Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
   mutate(group = ifelse(Dem_class %in% c("J1", "IMM", "J2J3"), "Immatures", "Adults"),
          year  = case_when(
-           Period == "1990-1994" ~ 0,
-           Period == "1995-1999" ~ 5,
-           Period == "2000-2004" ~ 10,
-           Period == "2005-2009" ~ 15
+           Period == "1990-1994" ~ -10,
+           Period == "1995-1999" ~ -5,
+           Period == "2000-2004" ~ 0,
+           Period == "2005-2009" ~ 5
          )) %>%
   group_by(Period, year, group) %>%
   summarise(N_obs = sum(Pop) * 0.6, .groups = "drop")  # scale SG to Bird Island
@@ -245,7 +245,7 @@ pairs_scale <- N0 / 1200
 
 bird_obs <- tibble(
   season   = c("1983/84", "2003/04", "2014/15", "2023/24"),
-  year     = c(-6, 14, 25, 34),
+  year     = c(-16, 4, 15, 24),
   pairs    = c(1370, 948, 772, 699),
   N_scaled = pairs * pairs_scale
 )
@@ -253,13 +253,13 @@ bird_obs <- tibble(
 print(bird_obs)
 
 # Clay et al. 2019 breeding pair estimates (model-derived, not directly observed)
-# BI pairs = (SB + FB) * 0.6 / 2; year = period midpoint relative to 1990 baseline
+# BI pairs = (SB + FB) * 0.6 / 2; year = period midpoint relative to 2000 (1990-2009 midpoint)
 clay_pairs <- dem_props %>%
   filter(Period %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009"),
          Dem_class %in% c("SB", "FB")) %>%
   group_by(Period) %>%
   summarise(pairs = sum(Pop) * 0.6 / 2, .groups = "drop") %>%
-  mutate(year = c(2, 7, 12, 17),  # period midpoints relative to 1990
+  mutate(year = c(-8, -3, 2, 7),  # period midpoints relative to 2000 (1990-2009 midpoint)
          source = "Clay et al. 2019 (model-derived)")
 
 print(clay_pairs)
@@ -315,7 +315,7 @@ p_pairs_comparison <- ggplot() +
   geom_text(data = bird_obs,
             aes(x = year, y = pairs, label = season),
             color = "#e6550d", size = 2.5, vjust = -0.9) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Breeding pairs",
        title = "Bird Island breeding pairs: Clay et al. 2019 vs Mackley et al. (in press)",
        subtitle = "Blue squares = Clay et al. (model-derived 5-yr period estimates); orange dots = Mackley et al. (observed census)") +
@@ -407,13 +407,13 @@ p_1a <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = sce
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 4),
@@ -456,7 +456,7 @@ p_1b <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = sce
                      sec.axis = sec_axis(~ . / N0 * 100,
                                          name = "% of 1990\u20131994 baseline",
                                          labels = function(x) paste0(round(x), "%"))) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL,
        subtitle = "Black triangles = total population; \nfilled circles = adults; open circles = immatures (Clay 2019)") +
@@ -480,13 +480,13 @@ p_1c <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection vs observed breeding pairs — ", target_period, " baseline"),
@@ -529,7 +529,7 @@ p_1d <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
                      sec.axis = sec_axis(~ . / N0 * 100,
                                          name = "% of 1990\u20131994 baseline",
                                          labels = function(x) paste0(round(x), "%"))) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL,
        title = paste0("500-year projection vs observed age classes — ", target_period, " baseline"),
@@ -553,10 +553,10 @@ p_1e <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "log\u2081\u2080(N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection, log scale — ", target_period, " baseline"),
@@ -587,7 +587,7 @@ p_1f <- ggplot(lambda_ts, aes(x = year, y = lambda_t, color = scenario, linetype
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB over 500-year horizon — ", target_period, " baseline") ) + #,
@@ -680,13 +680,13 @@ p_2a <- ggplot(proj_part2_total, aes(x = year, y = N, color = scenario, linetype
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("100-year stage-structured projection — ", target_period, " baseline"),
@@ -717,9 +717,9 @@ p_2a_pairs <- ggplot(proj_part2_pairs, aes(x = year, y = predicted_pairs, color 
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("100-year stage-structured projection in breeding pairs — ", target_period, " baseline"),
@@ -776,13 +776,13 @@ p_2c <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, lin
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year stage-structured projection — ", target_period, " baseline"),
@@ -808,9 +808,9 @@ p_2c_pairs <- ggplot(proj_part2_pairs_long, aes(x = year, y = predicted_pairs, c
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("500-year stage-structured projection in breeding pairs — ", target_period, " baseline"),
@@ -832,7 +832,7 @@ p_2e <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, lin
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "log\u2081\u2080(N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year stage-structured projection, log scale — ", target_period, " baseline"))+ #,
@@ -858,7 +858,7 @@ p_2f <- ggplot(lambda_ts_2, aes(x = year, y = lambda_t, color = scenario, linety
                                     "Immediate 3/3 (100% coverage)" = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB — stage-structured model, 500-year horizon — ", target_period, " baseline") ) + #,
@@ -1649,13 +1649,13 @@ p_3a <- ggplot(proj_part3_compare, aes(x = year, y = N, color = scenario, linety
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "5-year phase-in"               = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("100-year projection with 5-yr phase-in — ", target_period, " baseline"),
@@ -1693,9 +1693,9 @@ p_3a_pairs <- ggplot(proj_part3_compare_pairs, aes(x = year, y = predicted_pairs
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "5-year phase-in"               = "solid")) +
-  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("100-year projection with 5-yr phase-in in breeding pairs — ", target_period, " baseline"),
@@ -1754,13 +1754,13 @@ p_3c <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, l
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "5-year phase-in"               = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection with 5-yr phase-in — ", target_period, " baseline"),
@@ -1796,9 +1796,9 @@ p_3c_pairs <- ggplot(proj_part3_compare_pairs_long, aes(x = year, y = predicted_
   scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "5-year phase-in"               = "solid")) +
-  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-10, yearslong)) +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection with 5-yr phase-in in breeding pairs — ", target_period, " baseline"),
@@ -1822,7 +1822,7 @@ p_3e <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, l
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = "log\u2081\u2080(N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection with 5-yr phase-in, log scale — ", target_period, " baseline"))+ #,
@@ -1850,7 +1850,7 @@ p_3f <- ggplot(lambda_ts_3, aes(x = year, y = lambda_t, color = scenario, linety
                                     "5-year phase-in"               = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB — 5-yr phase-in scenario, 500-year horizon — ", target_period, " baseline"),
@@ -2041,13 +2041,13 @@ p_6a <- all_scenarios %>%
     "5-year phase-in"               = "solid",
     "10-year phase-in"              = "solid",
     "20-year phase-in"              = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Phase-in speed comparison — ", target_period, " baseline"),
        subtitle = "Darker green = faster phase-in; orange dots = observed breeding pairs") +
@@ -2088,9 +2088,9 @@ p_6a_pairs <- all_scenarios_pairs %>%
     "5-year phase-in"               = "solid",
     "10-year phase-in"              = "solid",
     "20-year phase-in"              = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Breeding pairs",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("Phase-in speed comparison in breeding pairs — ", target_period, " baseline"),
        subtitle = "Darker green = faster phase-in; orange dots = Bird Island census pairs (no conversion applied)") +
@@ -2127,13 +2127,13 @@ p_6b <- all_scenarios %>%
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
     "20-yr delay, then immediate 3/3" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying immediate 3/3 — ", target_period, " baseline"),
        subtitle = "Darker blue = shorter delay; orange dots = observed breeding pairs") +
@@ -2174,9 +2174,9 @@ p_6b_pairs <- all_scenarios_pairs %>%
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
     "20-yr delay, then immediate 3/3" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Breeding pairs",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying immediate 3/3 in breeding pairs — ", target_period, " baseline"),
        subtitle = "Darker blue = shorter delay; orange dots = Bird Island census pairs (no conversion applied)") +
@@ -2213,13 +2213,13 @@ p_6c <- all_scenarios %>%
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
     "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying 5-yr phase-in — ", target_period, " baseline"),
        subtitle = "Darker purple = shorter delay; orange dots = observed breeding pairs") +
@@ -2260,9 +2260,9 @@ p_6c_pairs <- all_scenarios_pairs %>%
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
     "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Breeding pairs",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("Cost of delaying 5-yr phase-in in breeding pairs — ", target_period, " baseline"),
        subtitle = "Darker purple = shorter delay; orange dots = Bird Island census pairs (no conversion applied)") +
@@ -2305,13 +2305,13 @@ p_6d <- ggplot(all_scenarios, aes(x = year, y = N, color = scenario, linetype = 
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
     "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("All mitigation scenarios — ", target_period, " baseline"),
        subtitle = "Green = phase-in speed; blue = delay then immediate; purple = delay then phase-in; orange dots = observed") +
@@ -2359,9 +2359,9 @@ p_6d_pairs <- ggplot(all_scenarios_pairs, aes(x = year, y = predicted_pairs, col
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
     "20-yr delay, then 5-yr phase-in" = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Breeding pairs",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("All mitigation scenarios in breeding pairs — ", target_period, " baseline"),
        subtitle = "Green = phase-in speed; blue = delay then immediate; purple = delay then phase-in; orange dots = Bird Island census pairs (no conversion)") +
@@ -2400,7 +2400,7 @@ p_6e <- ggplot(lambda_delay_imm, aes(x = year, y = lambda_t, color = scenario, l
     "20-yr delay, then immediate 3/3" = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB — cost of delaying immediate 3/3 — ", target_period, " baseline"),
@@ -2439,7 +2439,7 @@ p_6f <- ggplot(lambda_delay_phasein, aes(x = year, y = lambda_t, color = scenari
     "20-yr delay, then 5-yr phase-in" = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB — cost of delaying 5-yr phase-in — ", target_period, " baseline"),
@@ -2487,7 +2487,7 @@ p_6g <- ggplot(lambda_all_delays, aes(x = year, y = lambda_t, color = scenario, 
     "20-yr delay, then 5-yr phase-in" = "dashed")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(0, years)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB — all delay scenarios — ", target_period, " baseline")) + #,
@@ -2619,13 +2619,13 @@ p_7a <- ggplot(bell_proj, aes(x = year, y = N, color = scenario, linetype = scen
     "Mean 2/3 ACAP"        = "solid",
     "3/3 ACAP"             = "solid",
     "Complete elimination"  = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline",
+  labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Immediate implementation — Bell et al. 2025 ACAP scenarios — ", target_period, " baseline"),
@@ -2771,7 +2771,7 @@ p_8a <- ggplot(
     name   = "Scenario"
   ) +
   scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(
     labels    = scales::comma,
     breaks    = scales::pretty_breaks(n = 6),
@@ -2780,7 +2780,7 @@ p_8a <- ggplot(
                          labels = scales::comma)
   ) +
   labs(
-    x        = "Years since 1990 baseline",
+    x        = "Years since 2000 (1990\u20132009 mean)",
     y        = "Population (N individuals)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
     subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation. Orange dots = observed breeding pairs"
@@ -2898,7 +2898,7 @@ p_8b <- ggplot(
                          labels = scales::comma)
   ) +
   labs(
-    x        = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+    x        = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
     y        = "Population (N individuals)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
     subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
@@ -3149,13 +3149,13 @@ p_9a <- ggplot(realistic_scenarios,
     "2/3 phase-in (2005), 100% compliance"      = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "solid",
     "Immediate 3/3 (100% coverage)"             = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = "Years since 1990 baseline", y = "Population (N individuals)",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("Realistic trajectory: 2/3 ACAP phase-in from 2005, upgrade options 2026 — ",
                       target_period, " baseline"),
@@ -3200,9 +3200,9 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
     "2/3 phase-in (2005), 100% compliance"      = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "solid",
     "Immediate 3/3 (100% coverage)"             = "solid")) +
-  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = "Years since 1990 baseline", y = "Breeding pairs",
+  labs(x = "Years since 2000 (1990\u20132009 mean)", y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("Realistic trajectory in breeding pairs: 2/3 ACAP phase-in from 2005 — ",
                       target_period, " baseline"),
@@ -3321,13 +3321,13 @@ p_9b <- ggplot(realistic_300,
     "2/3 phase-in (2005), 100% compliance"       = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)"  = "solid",
     "Immediate 3/3 (100% coverage)"              = "solid")) +
-  scale_x_continuous(breaks = seq(0, years_300, 50), limits = c(-10, years_300)) +
+  scale_x_continuous(breaks = seq(0, years_300, 50), limits = c(-20, years_300)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
                      sec.axis = sec_axis(~ . / pairs_scale,
                                          name = "Breeding pairs (Bird Island)",
                                          labels = scales::comma)) +
-  labs(x = paste0("Years since 1990 baseline (", years_300, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", years_300, "-year horizon)"),
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("300-year projection: 2/3 ACAP phase-in from 2005, upgrade options 2026 — ",
@@ -3369,9 +3369,9 @@ p_9b_pairs <- ggplot(realistic_300_pairs,
     "2/3 phase-in (2005), 100% compliance"       = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)"  = "solid",
     "Immediate 3/3 (100% coverage)"              = "solid")) +
-  scale_x_continuous(breaks = seq(0, years_300, 50), limits = c(-10, years_300)) +
+  scale_x_continuous(breaks = seq(0, years_300, 50), limits = c(-20, years_300)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
-  labs(x = paste0("Years since 1990 baseline (", years_300, "-year horizon)"),
+  labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", years_300, "-year horizon)"),
        y = "Breeding pairs",
        color = NULL, linetype = NULL,
        title = paste0("300-year projection in breeding pairs: 2/3 ACAP phase-in from 2005 — ",

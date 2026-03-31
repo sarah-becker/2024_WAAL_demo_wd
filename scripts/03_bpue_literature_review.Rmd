@@ -757,8 +757,12 @@ ggsave(here("output/maps/bpue_review/coverage_heatmap.png"),
 ```
 
 ```{r}
-# Southern Hemisphere only — filter to fleets with effort at lat <= 0                                                                                               
-coverage_plot_so <- spatial_gaps %>%   
+# Define SH fleet lists here so this chunk can run independently
+pll_effort_fleets_so <- pll_data %>% filter(Lat <= 0) %>% distinct(fleet) %>% pull()
+dll_effort_fleets_so <- dll_data %>% filter(Lat <= 0) %>% distinct(fleet) %>% pull()
+
+# Southern Hemisphere only — filter to fleets with effort at lat <= 0
+coverage_plot_so <- spatial_gaps %>%
   filter(has_effort) %>%  
   filter((fishery == "PLL" & fleet %in% pll_effort_fleets_so) | (fishery == "DLL" & fleet %in% dll_effort_fleets_so))    
 
@@ -1123,6 +1127,50 @@ write_csv(regional_gap, here("output/regional_bpue_gap_table.csv"))
 write_csv(gaps_only, here("output/regional_bpue_gaps_only.csv"))
 ```
 
+## Southern hemisphere gap table (lat < 0 only)
+
+```{r gap-table-sh}
+# Rebuild effort summary filtered to southern hemisphere cells only (Lat < 0)
+pll_effort_sh <- pll_with_region %>%
+  filter(!is.na(region), Lat < 0) %>%
+  group_by(fleet, year_group, region, RFMO) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery = "PLL")
+
+dll_effort_sh <- dll_with_region %>%
+  filter(!is.na(region), Lat < 0) %>%
+  group_by(fleet, year_group, region, RFMO) %>%
+  summarise(total_hooks = sum(Hooks, na.rm = TRUE), .groups = "drop") %>%
+  mutate(fishery = "DLL")
+
+effort_sh <- bind_rows(pll_effort_sh, dll_effort_sh)
+
+# Gap table: left join effort (SH only) with BPUE where it exists
+regional_gap_sh <- effort_sh %>%
+  left_join(
+    bpue_regional_summary,
+    by = c("fishery", "fleet", "year_group", "region")
+  ) %>%
+  mutate(
+    has_bpue = !is.na(n_studies),
+    n_studies = replace_na(n_studies, 0),
+    n_bpue    = replace_na(n_bpue, 0)
+  ) %>%
+  arrange(fishery, fleet, year_group, region)
+
+regional_gap_sh %>% print(n = 200)
+
+gaps_only_sh <- regional_gap_sh %>%
+  filter(!has_bpue) %>%
+  select(fishery, fleet, RFMO, year_group, region, total_hooks) %>%
+  arrange(fishery, fleet, region, year_group)
+
+gaps_only_sh %>% print(n = 200)
+
+write_csv(regional_gap_sh,  here("output/regional_bpue_gap_table_SH.csv"))
+write_csv(gaps_only_sh,     here("output/regional_bpue_gaps_only_SH.csv"))
+```
+
 ## Regional gap summary
 
 ```{r regional-gap-heatmap, fig.width=16, fig.height=10}
@@ -1177,7 +1225,7 @@ each region they cover.
 
 ```{r bpue-summary-full}
 bpue_summary_full <- bpue_by_region %>%
-  group_by(fishery_type, fleet, plot_year_group, bpue_region) %>%
+  group_by(fishery_type, superfleet, fleet, plot_year_group, bpue_region) %>%
   summarise(
     n_studies = n_distinct(citation),
     n_bpue = n_distinct(row_id),
@@ -1185,7 +1233,7 @@ bpue_summary_full <- bpue_by_region %>%
     sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
     .groups = "drop"
   ) %>%
-  arrange(fishery_type, fleet, plot_year_group, bpue_region)
+  arrange(fishery_type, superfleet, fleet, plot_year_group, bpue_region)
 
 bpue_summary_full %>% print(n = 200)
 write_csv(bpue_summary_full, here("output/bpue_summary_full.csv"))
@@ -1212,7 +1260,7 @@ write_csv(bpue_summary_fishery, here("output/bpue_summary_by_fishery.csv"))
 
 ```{r bpue-by-fleet}
 bpue_summary_fleet <- bpue_by_region %>%
-  group_by(fishery_type, fleet) %>%
+  group_by(fishery_type, superfleet, fleet) %>%
   summarise(
     n_studies = n_distinct(citation),
     n_bpue = n_distinct(row_id),
@@ -1220,7 +1268,7 @@ bpue_summary_fleet <- bpue_by_region %>%
     sd_bpue = round(sd(bpue[!duplicated(row_id)], na.rm = TRUE), 4),
     .groups = "drop"
   ) %>%
-  arrange(fishery_type, fleet)
+  arrange(fishery_type, superfleet, fleet)
 
 bpue_summary_fleet %>% print(n = 50)
 write_csv(bpue_summary_fleet, here("output/bpue_summary_by_fleet.csv"))
@@ -1259,6 +1307,68 @@ bpue_summary_region <- bpue_by_region %>%
 
 bpue_summary_region %>% print()
 write_csv(bpue_summary_region, here("output/bpue_summary_by_region.csv"))
+```
+
+# Methods reporting summary
+
+```{r methods-reporting-summary}
+# All counts use bpue_raw (one row per study x fleet x period entry in the CSV)
+# Only rows with actual BPUE values (not temporal gap placeholders) are counted
+
+bpue_data <- bpue_raw %>% filter(!is.na(bpue))
+
+# --- Overall counts ---
+n_studies_total  <- n_distinct(bpue_data$citation)
+n_bpue_total     <- nrow(bpue_data)
+n_dll            <- bpue_data %>% filter(fishery_type == "DLL") %>% nrow()
+n_pll            <- bpue_data %>% filter(fishery_type == "PLL") %>% nrow()
+n_studies_dll    <- bpue_data %>% filter(fishery_type == "DLL") %>% distinct(citation) %>% nrow()
+n_studies_pll    <- bpue_data %>% filter(fishery_type == "PLL") %>% distinct(citation) %>% nrow()
+
+cat("Total unique studies assessed:", n_studies_total, "\n")
+cat("Total BPUE values used:       ", n_bpue_total, "\n")
+cat("  DLL studies:", n_studies_dll, "| BPUE values:", n_dll, "\n")
+cat("  PLL studies:", n_studies_pll, "| BPUE values:", n_pll, "\n\n")
+
+# --- Direct vs downscaled vs mean ---
+bpue_source_summary <- bpue_data %>%
+  mutate(source_clean = case_when(
+    str_detect(tolower(bpue_source), "direct") ~ "direct",
+    str_detect(tolower(bpue_source), "downscal") ~ "downscaled",
+    str_detect(tolower(bpue_source), "mean") ~ "mean",
+    TRUE ~ "other/unspecified"
+  )) %>%
+  count(fishery_type, source_clean, name = "n_bpue") %>%
+  arrange(fishery_type, source_clean)
+
+cat("BPUE source breakdown:\n")
+print(bpue_source_summary)
+
+# --- Geographic coverage: unique regions with BPUE data ---
+region_coverage <- bpue_by_region %>%
+  distinct(fishery_type, bpue_region) %>%
+  arrange(fishery_type, bpue_region)
+
+cat("\nRegions with BPUE coverage:\n")
+print(region_coverage)
+
+# --- Temporal coverage: periods with at least one BPUE value ---
+period_coverage <- bpue_data %>%
+  count(fishery_type, year_group, name = "n_bpue") %>%
+  arrange(fishery_type, year_group)
+
+cat("\nTemporal coverage (BPUE values per period):\n")
+print(period_coverage)
+
+# --- Fleet coverage: how many fleets have BPUE data by fishery ---
+fleet_coverage <- bpue_data %>%
+  group_by(fishery_type) %>%
+  summarise(n_fleets = n_distinct(fleet),
+            fleets = paste(sort(unique(fleet)), collapse = ", "),
+            .groups = "drop")
+
+cat("\nFleet coverage:\n")
+print(fleet_coverage)
 ```
 
 # Session Info

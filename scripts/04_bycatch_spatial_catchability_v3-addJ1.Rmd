@@ -129,7 +129,7 @@ pop_sizes <- c(
   j1   = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J1"],
   j2j3 = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "J2J3"],
   imm  = dem_props_summary$mean_pop[dem_props_summary$Dem_class == "IMM"]
-)
+) * 0.6  # scale SG counts to Bird Island (BI = SG × 0.6); bycatch numerator is already BI-scale
 ```
 
 ## Build BI age-class density rasters
@@ -2012,6 +2012,136 @@ naive_check %>%
 # Ratio ~ 1 → BI bird distribution aligns with total WAAL distribution
 ```
 
+# Section 12b: Counterfactual Bycatch for FM Decomposition
+
+Computes two counterfactual bycatch scenarios used by script 07 to decompose
+changes in fishing mortality into effort-driven vs. catchability-driven components:
+
+- **effort_only**: 1990-1994 catchability (β) × later-period effort × BI bird density.
+  Answers: how much bycatch would have occurred if only effort changed?
+- **catchability_only**: later-period catchability × 1990-1994 effort × BI bird density.
+  Answers: how much bycatch would have occurred if only fishing practices changed?
+
+Fleet-level results are summed to fishery × period totals, matching the structure
+of script 07's decomposition analysis.
+
+```{r counterfactual-bycatch}
+baseline_period <- "1990-1994"
+later_periods   <- c("1995-1999", "2000-2004", "2005-2009")
+age_cols        <- names(bi_dists)
+
+# Build fishery-level baseline catchability raster (effort-weighted mean across
+# all fleets with data in 1990-1994), used as fallback for fleets without a
+# baseline catchability raster of their own
+baseline_catch_by_fishery <- list()
+for (fi in c("PLL", "DLL")) {
+  baseline_keys <- names(catchability_rasters)[
+    str_detect(names(catchability_rasters), paste0("^", fi, "\\|.*\\|", baseline_period, "$"))
+  ]
+  effort_keys <- str_replace_all(baseline_keys, "catchability", "effort")
+
+  valid <- map_lgl(baseline_keys, function(k) {
+    r <- catchability_rasters[[k]]
+    !is.null(r) && !(is.logical(r) && is.na(r))
+  })
+  baseline_keys <- baseline_keys[valid]
+
+  if (length(baseline_keys) == 0) {
+    baseline_catch_by_fishery[[fi]] <- NA
+    next
+  }
+
+  # Effort-weighted mean: sum(catch_k * effort_k) / sum(effort_k)
+  effort_stack <- map(baseline_keys, function(k) {
+    fl <- str_split(k, "\\|")[[1]][2]
+    ek <- paste(fi, fl, baseline_period, sep = "|")
+    effort_rasters[[ek]]
+  })
+  catch_stack <- map(baseline_keys, ~catchability_rasters[[.x]])
+
+  valid_pairs <- map_lgl(seq_along(effort_stack), function(j) {
+    !is.null(effort_stack[[j]]) && !is.null(catch_stack[[j]])
+  })
+
+  num <- Reduce("+", map2(catch_stack[valid_pairs], effort_stack[valid_pairs], function(c, e) {
+    subst(c, NA, 0) * subst(e, NA, 0)
+  }))
+  den <- Reduce("+", map(effort_stack[valid_pairs], ~subst(.x, NA, 0)))
+  baseline_catch_by_fishery[[fi]] <- ifel(den > 0, num / den, NA)
+}
+
+# Helper: compute total bycatch (all age classes) for one raster combination
+byc_from_rasters <- function(catch_r, effort_r) {
+  map_dbl(age_cols, function(age) {
+    global(catch_r * effort_r * bi_dists[[age]], "sum", na.rm = TRUE)[1, 1]
+  }) %>% setNames(age_cols)
+}
+
+effort_only_rows    <- tibble()
+catchability_only_rows <- tibble()
+
+for (fi in c("PLL", "DLL")) {
+  for (yg in later_periods) {
+
+    # Fleets with effort in this later period
+    current_keys <- names(effort_rasters)[
+      str_detect(names(effort_rasters), paste0("^", fi, "\\|.*\\|", yg, "$"))
+    ]
+
+    for (ck in current_keys) {
+      fl <- str_split(ck, "\\|")[[1]][2]
+
+      current_effort <- effort_rasters[[ck]]
+      current_catch  <- catchability_rasters[[ck]]
+      if (is.null(current_effort)) next
+
+      # --- effort_only: baseline β × current effort ---
+      baseline_catch_key <- paste(fi, fl, baseline_period, sep = "|")
+      baseline_catch_r   <- catchability_rasters[[baseline_catch_key]]
+      if (is.null(baseline_catch_r) || (is.logical(baseline_catch_r) && is.na(baseline_catch_r))) {
+        baseline_catch_r <- baseline_catch_by_fishery[[fi]]
+      }
+      if (!is.null(baseline_catch_r) && !(is.logical(baseline_catch_r) && is.na(baseline_catch_r))) {
+        byc <- byc_from_rasters(baseline_catch_r, current_effort)
+        effort_only_rows <- bind_rows(effort_only_rows, tibble(
+          fishery = fi, fleet = fl, year_group = yg,
+          bi_total = sum(byc), !!!as.list(byc)
+        ))
+      }
+
+      # --- catchability_only: current β × baseline effort ---
+      if (is.null(current_catch) || (is.logical(current_catch) && is.na(current_catch))) next
+      baseline_effort_key <- paste(fi, fl, baseline_period, sep = "|")
+      baseline_effort_r   <- effort_rasters[[baseline_effort_key]]
+      if (!is.null(baseline_effort_r)) {
+        byc <- byc_from_rasters(current_catch, baseline_effort_r)
+        catchability_only_rows <- bind_rows(catchability_only_rows, tibble(
+          fishery = fi, fleet = fl, year_group = yg,
+          bi_total = sum(byc), !!!as.list(byc)
+        ))
+      }
+    }
+  }
+}
+
+# Aggregate to fishery × period (same structure as script 07 input)
+byc_effort_only <- effort_only_rows %>%
+  group_by(fishery, year_group) %>%
+  summarise(across(c(bi_total, all_of(age_cols)), sum, na.rm = TRUE), .groups = "drop")
+
+byc_catchability_only <- catchability_only_rows %>%
+  group_by(fishery, year_group) %>%
+  summarise(across(c(bi_total, all_of(age_cols)), sum, na.rm = TRUE), .groups = "drop")
+
+byc_effort_only %>% mutate(across(where(is.numeric), ~round(.x, 3))) %>% print()
+byc_catchability_only %>% mutate(across(where(is.numeric), ~round(.x, 3))) %>% print()
+
+write_csv(byc_effort_only,
+          here(paste0("output/bycatch_effort_only_04_v3_", date_sfx, ".csv")))
+write_csv(byc_catchability_only,
+          here(paste0("output/bycatch_catchability_only_04_v3_", date_sfx, ".csv")))
+```
+
 # Section 13: Demographic Validation — Implied Natural Mortality Check
 
 Compare 03f per-capita fishing mortality against known survival rates from the
@@ -2097,6 +2227,75 @@ if (n_impossible > 0) {
 # Fishing as % of total mortality by age class
 validation %>% select(age_class, fishing_pct_of_total, flag)
 
+# Secondary feasibility check using the most-constrained stage survival rate
+# For age classes mapped to multiple matrix stages, the binding constraint is
+# the stage with the highest survival (smallest total mortality budget):
+#   nb  → ENB (s=0.943) is more constrained than Sabb (s=0.935)
+#   fb  → EF (s=0.913) < IF (s=0.920): EF has lower survival so more budget — mean is conservative
+#   sb  → ES (s=0.895) < IS (s=0.892): similar — mean is conservative
+# Only NB is affected: using ENB survival tightens the budget from 0.061 to 0.057
+known_survival_strict <- known_survival %>%
+  mutate(s_observed = case_when(
+    age_class == "nb" ~ 0.943,  # ENB — most constrained stage receiving dem_fm_nb
+    TRUE ~ s_observed
+  ))
+
+validation_strict <- known_survival_strict %>%
+  left_join(percap_combined, by = "age_class") %>%
+  mutate(
+    total_mortality       = 1 - s_observed,
+    implied_natural_mort  = total_mortality - total_fishing_mort,
+    fishing_pct_of_total  = round(100 * total_fishing_mort / total_mortality, 1),
+    flag = case_when(
+      implied_natural_mort < 0    ~ "IMPOSSIBLE (negative natural mortality)",
+      implied_natural_mort < 0.01 ~ "SUSPICIOUS (near-zero natural mortality)",
+      fishing_pct_of_total > 50   ~ "HIGH (fishing > 50% of total mortality)",
+      TRUE ~ "OK"
+    )
+  )
+
+# Feasibility check using stage-specific (most constrained) survival rates
+validation_strict %>%
+  select(age_class, stage_labels, s_observed, total_mortality,
+         total_fishing_mort, implied_natural_mort, fishing_pct_of_total, flag) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print(width = Inf)
+
+# Feasibility check expanded to all 11 matrix stages
+# Uses mean per-capita FM (averaged across 1990-2009) mapped to each stage,
+# with the stage-specific survival rate actually used in the demographic matrix.
+# FM mapping: j2j3 → J2, J3 | imm → Imm4, Imm5, PB | fb → EF, IF | sb → ES, IS | nb → ENB, Sabb
+fm_mean <- percap_combined %>% select(age_class, total_fishing_mort)
+
+# Stage map: matrix stage → Clay age class → stage-specific survival rate
+# Defined once and reused for mean, period, and annual feasibility checks
+# J1 uses same survival as J2/J3 (no J1-specific vital rates available)
+matrix_stage_map <- tibble(
+  stage      = c("J1",   "J2",   "J3",   "Imm4", "Imm5", "PB",   "IS",   "IF",   "ES",   "EF",   "ENB",  "Sabb"),
+  s_stage    = c(0.846,  0.846,  0.846,  0.921,  0.921,  0.921,  0.892,  0.920,  0.895,  0.913,  0.943,  0.935),
+  clay_class = c("j1",   "j2j3", "j2j3", "imm",  "imm",  "imm",  "sb",   "fb",   "sb",   "fb",   "nb",   "nb")
+)
+
+matrix_feasibility <- matrix_stage_map %>%
+  left_join(fm_mean, by = c("clay_class" = "age_class")) %>%
+  rename(total_fm = total_fishing_mort) %>%
+  mutate(
+    total_mortality      = 1 - s_stage,
+    implied_nm           = total_mortality - total_fm,
+    fishing_pct          = round(100 * total_fm / total_mortality, 1),
+    flag = case_when(
+      implied_nm < 0    ~ "IMPOSSIBLE (negative natural mortality)",
+      implied_nm < 0.01 ~ "SUSPICIOUS (near-zero natural mortality)",
+      fishing_pct > 50  ~ "HIGH (fishing > 50% of total mortality)",
+      TRUE ~ "OK"
+    )
+  )
+
+# Feasibility by matrix stage — mean 1990-2009 per-capita FM
+matrix_feasibility %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  print(width = Inf)
+
 # Also check per-period: rates vary by period, so check worst case
 # Per-period check (worst case)
 percap_by_period <- bycatch_results %>%
@@ -2120,6 +2319,37 @@ percap_period_combined <- percap_by_period %>%
     implied_nm = (1 - s_observed) - total_fm,
     flag = ifelse(implied_nm < 0, "*** NEGATIVE ***", "ok")
   )
+
+# Full feasibility table: all periods × age classes
+percap_period_combined %>%
+  mutate(fishing_pct = round(100 * total_fm / (1 - s_observed), 1)) %>%
+  select(age_class, year_group, total_fm, s_observed, implied_nm, fishing_pct, flag) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  arrange(age_class, year_group) %>%
+  print(n = Inf)
+
+# Per-period feasibility expanded to all matrix stages
+# Each matrix stage gets its own survival rate; FM comes from the corresponding Clay class
+matrix_period_feasibility <- percap_period_combined %>%
+  left_join(matrix_stage_map, by = c("age_class" = "clay_class")) %>%
+  mutate(
+    total_mortality = 1 - s_stage,
+    implied_nm      = total_mortality - total_fm,
+    fishing_pct     = round(100 * total_fm / total_mortality, 1),
+    flag = case_when(
+      implied_nm < 0    ~ "IMPOSSIBLE (negative natural mortality)",
+      implied_nm < 0.01 ~ "SUSPICIOUS (near-zero natural mortality)",
+      fishing_pct > 50  ~ "HIGH (fishing > 50% of total mortality)",
+      TRUE ~ "OK"
+    )
+  )
+
+# Feasibility by matrix stage × period
+matrix_period_feasibility %>%
+  select(stage, year_group, s_stage, total_fm, total_mortality, implied_nm, fishing_pct, flag) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  arrange(stage, year_group) %>%
+  print(n = Inf)
 
 # Show the worst period for each age class
 worst_periods <- percap_period_combined %>%
@@ -2215,6 +2445,34 @@ annual_validation %>%
   slice_min(implied_nm, n = 1) %>%
   ungroup() %>%
   select(age_class, year, total_fm, total_mortality, implied_nm, fishing_pct, flag) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  arrange(desc(fishing_pct))
+
+# Annual validation expanded to all matrix stages using stage-specific survival rates
+annual_validation_matrix <- annual_percap_by_age %>%
+  select(year, age_class, percap) %>%
+  rename(total_fm = percap) %>%
+  left_join(matrix_stage_map, by = c("age_class" = "clay_class")) %>%
+  mutate(
+    total_mortality = 1 - s_stage,
+    implied_nm      = total_mortality - total_fm,
+    fishing_pct     = round(100 * total_fm / total_mortality, 1),
+    flag            = ifelse(implied_nm < 0, "IMPOSSIBLE — fm > total mortality", "ok")
+  )
+
+# Flagged years by matrix stage
+annual_validation_matrix %>%
+  filter(flag != "ok") %>%
+  select(year, stage, total_fm, total_mortality, implied_nm, flag) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4))) %>%
+  arrange(year, stage)
+
+# Worst year per matrix stage
+annual_validation_matrix %>%
+  group_by(stage) %>%
+  slice_min(implied_nm, n = 1) %>%
+  ungroup() %>%
+  select(stage, year, total_fm, total_mortality, implied_nm, fishing_pct, flag) %>%
   mutate(across(where(is.numeric), ~round(.x, 4))) %>%
   arrange(desc(fishing_pct))
 ```

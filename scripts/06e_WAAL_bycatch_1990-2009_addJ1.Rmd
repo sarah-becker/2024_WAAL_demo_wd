@@ -1,18 +1,11 @@
 ---
-title: "WAAL Bycatch — Period 2000–2004"
+title: "WAAL Bycatch — Full Period 1990–2009"
 output: html_document
 ---
 
-TO DO:
-fine tune Bell et al. sceanrio vals from plot digitizer
-fine tune Pardo et al. VR ranges from plot digitizer
-
-6b-d then 7 using same assumptions
-9 updates as well
-4-9 into detailed methods doc
-detailed methods doc into reasonable methods section/SI
-analysis FINISHED and paper DRAFT by the end of the week (3/23)
-Dissertation draft FINISHED by the end of the following week
+Full 1990–2009 period analysis using mean annual bycatch averaged across all four 5-year periods.
+Bycatch rates: mean of 1990–1994, 1995–1999, 2000–2004, 2005–2009 period estimates from script 04.
+Population: 1990–2009 summary row from Clay et al. dem_props.
 ```{r, echo= FALSE, include =FALSE}
 library(here)
 library(tidyverse)
@@ -197,7 +190,7 @@ dem_props_obs %>%
 
 Fishing effort, bird distributions, spatial overlap, and BPUE estimation are all handled in script 03f (spatial catchability approach). Here we load the mean annual per-capita bycatch rates and use them in the demographic model.
 
-**load per-capita bycatch rates from 03f (2000–2004 period)**
+**load per-capita bycatch rates from script 04 (full 1990–2009 period: mean of four 5-year periods)**
 ```{r}
 # Load period-specific bycatch totals from script 04_v3_addJ1
 byc_period <- read_csv(here(paste0("output/bycatch_by_fishery_period_04_v3_", in_sfx, ".csv")), show_col_types = FALSE)
@@ -207,9 +200,10 @@ dem_props <- read_csv(here("data/WAAL_dist_Clay2019/Dem_props copy.csv"),
                       show_col_types = FALSE) %>%
   mutate(Dem_class = str_replace(Dem_class, "J2\\+3", "J2J3"))
 
-# Use 2000-2004 bycatch with 2000-2004 population (matching periods)
-target_period_byc <- "2000-2004"
-target_period_pop <- "2000-2004"
+# Full period: average bycatch across all four 5-year periods
+# Population: use 1990-2009 summary row from Clay dem_props
+target_period_byc <- "1990-2009"
+target_period_pop <- "1990-2009"
 
 pop_period <- dem_props %>%
   filter(Period == target_period_pop) %>%
@@ -217,10 +211,13 @@ pop_period <- dem_props %>%
   mutate(Pop       = Pop * 0.6,  # scale SG counts to Bird Island (BI = SG × 0.6)
          age_class = tolower(Dem_class))
 
-# Get 2000-2004 bycatch by fishery and calculate per-capita
+# Mean annual bycatch across all four 5-year periods
+# Script 04 outputs mean annual hooks per period, so mean across periods gives
+# the mean annual bycatch rate for the full 1990-2009 period
 byc_percap <- byc_period %>%
-  filter(year_group == target_period_byc) %>%
-  select(fishery, fb, sb, nb, j1, j2j3, imm) %>%
+  filter(year_group %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  group_by(fishery) %>%
+  summarise(across(c(fb, sb, nb, j1, j2j3, imm), mean), .groups = "drop") %>%
   pivot_longer(cols = c(fb, sb, nb, j1, j2j3, imm), names_to = "age_class", values_to = "annual_byc") %>%
   left_join(pop_period %>% select(age_class, Pop), by = "age_class") %>%
   mutate(percap = annual_byc / Pop)
@@ -531,9 +528,12 @@ The blanket approach above applies uniform mitigation across all fisheries. Belo
 
 **load fleet-level bycatch and define mitigation scenarios**
 ```{r}
-# Load fleet-level bycatch for the target period
+# Load fleet-level bycatch and average across all four 5-year periods
 fleet_byc <- read_csv(here(paste0("output/bycatch_by_fleet_period_04_v3_", in_sfx, ".csv")), show_col_types = FALSE) %>%
-  filter(year_group == target_period_byc)
+  filter(year_group %in% c("1990-1994", "1995-1999", "2000-2004", "2005-2009")) %>%
+  group_by(fishery, fleet) %>%
+  summarise(across(c(bi_total, fb, sb, nb, j1, j2j3, imm), mean), .groups = "drop") %>%
+  mutate(year_group = target_period_byc)
 
 # Calculate per-capita rates by fleet
 fleet_percap <- fleet_byc %>%
@@ -572,9 +572,9 @@ These are placeholders, and will need to be verified. Best to leave these out of
 fleet_mitigation <- fleet_percap %>% distinct(fishery, fleet)
 ```
 
-**historical fleet mitigation — 1990-1994 baseline**
+**historical fleet mitigation — 1990-2009 baseline**
 ```{r hist-fleet-mitigation}
-# 1990-1994: pre-CCAMLR mitigation era — all fleets at zero mitigation
+# 1990-2009 full period: baseline with no mitigation applied
 hist_fleet_mitigation <- fleet_percap %>%
   distinct(fishery, fleet) %>%
   mutate(effective_reduction = 0, base_efficacy = 0)
@@ -2135,8 +2135,8 @@ p_iuu_opt1_v2
 Full 4D view: how does IUU enforcement interact with mitigation?
 ```{r iuu_option2, fig.width=14, fig.height=12}
 # Use subset of IUU proportions to keep readable
-grid_opt2 <- iuu_heatmap_grid %>% filter(iuu_prop %in% c(0.05, 0.10, 0.20))
-pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0.05, 0.10, 0.20))
+grid_opt2 <- iuu_heatmap_grid %>% filter(iuu_prop %in% c(0,0.03, 0.07, 0.20))
+pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0, 0.03, 0.07, 0.20))
 
 # Labels: only baseline compliance, only in top-left panel to reduce clutter
 labels_opt2 <- pts_opt2 %>%
@@ -3174,6 +3174,7 @@ vr_sens <- tribble(
   "r_ES",  -0.004
 )
 
+# Beta distribution variances for all VRs: Var = alpha*beta / ((alpha+beta)^2 * (alpha+beta+1))
 all_params <- c(surv_params, return_params, breed_params, success_params)
 beta_vars <- tibble(
   rate     = names(all_params),
@@ -3181,6 +3182,7 @@ beta_vars <- tibble(
                ((.x$alpha + .x$beta)^2 * (.x$alpha + .x$beta + 1)))
 )
 
+# Delta method: Var(lambda_VR) ≈ Σ sens_i² × Var(x_i)
 lambda_vr_var <- vr_sens %>%
   left_join(beta_vars, by = "rate") %>%
   summarise(var_lambda = sum(sensitivity^2 * beta_var, na.rm = TRUE)) %>%
@@ -3189,6 +3191,7 @@ lambda_vr_var <- vr_sens %>%
 lambda_vr_sd <- sqrt(lambda_vr_var)
 message("Delta method lambda SD (VR uncertainty only): ", round(lambda_vr_sd, 5))
 
+# Build delta method ribbon (fixed width, centred on deterministic lambda)
 delta_ribbon <- uncert_summary_adj %>%
   select(scenario, coverage, lambda) %>%
   mutate(
@@ -3221,6 +3224,30 @@ p_delta_vs_sim <- ggplot(uncert_summary_adj) +
   themeo +
   coord_cartesian(expand = FALSE)
 p_delta_vs_sim
+```
+
+```{r}
+vr_check <- tibble(
+    rate = c("s_EF","s_ENB","s_ES","s_IF","s_Imm","s_IS","s_PF","s_Juv",
+             "r_EF","r_ENB","r_ES","r_IF","r_Imm","r_IS","r_PF",                                                                                                                     
+             "b_EF","b_ENB","b_ES","b_IF","b_Imm","b_IS","b_PF",                                                                                                                     
+             "k_EF","k_ENB","k_ES","k_IF","k_Imm","k_IS","k_PF"),                                                                                                                    
+    det = c(s_EF, s_ENB, s_ES, s_IF, s_Imm, s_IS, s_PF, s_Juv,                                                                                                                       
+            r_EF, r_ENB, r_ES, r_IF, r_Imm, r_IS, r_PF,                                                                                                                              
+            b_EF, b_ENB, b_ES, b_IF, b_Imm, b_IS, b_PF,                                                                                                                              
+            k_EF, k_ENB, k_ES, k_IF, k_Imm, k_IS, k_PF),                                                                                                                             
+    params = c(surv_params, return_params, breed_params, success_params)                                                                                                             
+  ) %>%                                                                                                                                                                              
+    mutate(                                                                                                                                                                          
+      alpha    = map_dbl(params, "alpha"),
+      beta_par = map_dbl(params, "beta"),                                                                                                                                            
+      beta_mean = alpha / (alpha + beta_par),
+      beta_sd   = sqrt(alpha * beta_par / ((alpha + beta_par)^2 * (alpha + beta_par + 1)))                                                                                           
+    ) %>%
+    select(rate, det, beta_mean, beta_sd)                                                                                                                                            
+                                                                                                                                                                                     
+  print(vr_check, n = 30)
+
 ```
 
 **plot uncertainty — individual sim runs + mean**
@@ -3825,4 +3852,3 @@ ggsave(fig_path("26_fixed_iuu_prob_recovery"),   p_fixed_iuu_prob,   width = 14,
 
 message("All 26 figures saved to output/figures/ with suffix ", out_sfx)
 ```
-

@@ -214,7 +214,8 @@ target_period_pop <- "2005-2009"
 pop_period <- dem_props %>%
   filter(Period == target_period_pop) %>%
   select(Dem_class, Pop) %>%
-  mutate(age_class = tolower(Dem_class))
+  mutate(Pop       = Pop * 0.6,  # scale SG counts to Bird Island (BI = SG × 0.6)
+         age_class = tolower(Dem_class))
 
 # Get 2005-2009 bycatch by fishery and calculate per-capita
 byc_percap <- byc_period %>%
@@ -1641,11 +1642,8 @@ IUU FM is estimated as a proportion of legal FM, carved out of what was previous
 
 **define IUU range and check natural mortality stays positive**
 ```{r}
-# PLACEHOLDER RANGE: 2-30% of legal FM
-# Low end (~2-6%): Carneiro et al. (2022), Agnew et al. (2009)
-# Mid (~10%): conservative working estimate
-# High end (~30%): Weimerskirch et al. (likely upper bound)
-iuu_range <- seq(0.02, 0.30, by = 0.02)  # PLACEHOLDER — update from literature
+# IUU range 0-25% of legal FM, covering scenario values of 0, 3, 7, 20%
+iuu_range <- seq(0, 0.25, by = 0.01)
 
 # Check that natural mortality stays positive across the full IUU range
 map_dfr(iuu_range, function(iuu_p) {
@@ -1789,7 +1787,7 @@ for (i in 1:nrow(iuu_scenario_output)) {
 **plot IUU scenarios — faceted by mitigation scenario × IUU proportion**
 ```{r, fig.width=14, fig.height=10}
 # Select representative IUU proportions and mitigation scenarios for plotting
-iuu_plot_vals <- c(0.02, 0.10, 0.20, 0.30)
+iuu_plot_vals <- c(0, 0.03, 0.07, 0.20)
 # Focus on the most policy-relevant scenarios
 mit_plot_scenarios <- c("HSD", "BLW + NS", "BLW + BSL", "NS + BSL", "Mean 2/3 ACAP", "3/3 ACAP", "Complete elimination")
 
@@ -1848,7 +1846,7 @@ that account for IUU fishing mortality. Four visualization approaches:
 # --- Shared infrastructure for IUU-integrated heatmaps ---
 
 # IUU proportions and enforcement reduction levels to visualize
-iuu_props_plot <- c(0, 0.05, 0.10, 0.20)   # 0% = no IUU (original heatmap)
+iuu_props_plot <- c(0, 0.03, 0.07, 0.20)   # 0% = no IUU (original heatmap)
 iuu_red_plot  <- c(0, 0.50, 1.0)            # % reduction in IUU via enforcement
 
 # Coarser grid for IUU heatmaps (faster computation)
@@ -2321,8 +2319,8 @@ p_iuu_opt2b_v2
 **Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
 Each scenario shows where it starts (no enforcement) and where it moves with IUU reduction.
 ```{r iuu_option3, fig.width=10, fig.height=7}
-# Use a single IUU proportion (best estimate = 10%)
-iuu_best <- 0.10
+# Use a single IUU proportion (best estimate = 7%)
+iuu_best <- 0.07
 grid_opt3 <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
 
 # Fleet points at IUU = 10%, baseline compliance only (to keep arrows readable)

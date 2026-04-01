@@ -211,17 +211,23 @@ map_extent <- c(-180, 180, -90, 0)
 
 ```{r map-raw-distributions, fig.width=10, fig.height=10}
 # Function to map population distributions
+# Matches style used in script 01: % of population, YlGnBu palette, cells < 0.1% masked
 map_population_dist <- function(rast_obj, title, extent) {
-  df <- as.data.frame(rast_obj, xy = TRUE, na.rm = TRUE)
-  names(df)[3] <- "density"
+  r_norm <- rast_obj / global(rast_obj, fun = "sum", na.rm = TRUE)[1,1]
+  r_pct  <- r_norm * 100
+  r_pct[r_pct < 0.1] <- NA
 
-  ggplot(df, aes(x = x, y = y, fill = density)) +
+  df <- as.data.frame(r_pct, xy = TRUE, na.rm = TRUE)
+  names(df)[3] <- "pct"
+
+  ggplot(df, aes(x = x, y = y, fill = pct)) +
     geom_raster() +
     geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
     coord_sf(xlim = extent[1:2], ylim = extent[3:4], expand = FALSE) +
-    scale_fill_viridis_c(
-      name = "Density",
-      na.value = "transparent"
+    scale_fill_gradientn(
+      name = "% of Population",
+      colours = brewer.pal(9, "YlGnBu"),
+      na.value = "white"
     ) +
     labs(title = title) +
     theme_minimal() +
@@ -247,6 +253,42 @@ iwalk(pop_dist_maps, function(p, pop) {
     p, width = 8, height = 6, dpi = 300
   )
 })
+```
+
+## Total Global Distribution
+
+```{r map-total-global, fig.width=12, fig.height=6}
+# Convert to % of population, mask cells < 0.1% — matches script 01 style
+total_pct <- total_bird_density / global(total_bird_density, fun = "sum", na.rm = TRUE)[1,1] * 100
+total_pct[total_pct < 0.1] <- NA
+
+total_df <- as.data.frame(total_pct, xy = TRUE, na.rm = TRUE)
+names(total_df)[3] <- "pct"
+
+p_total_global <- ggplot(total_df, aes(x = x, y = y, fill = pct)) +
+  geom_raster() +
+  geom_sf(data = ne_land, inherit.aes = FALSE, fill = "grey80", color = NA) +
+  coord_sf(xlim = map_extent[1:2], ylim = map_extent[3:4], expand = FALSE) +
+  scale_fill_gradientn(
+    name = "% of Population",
+    colours = brewer.pal(9, "YlGnBu"),
+    na.value = "white"
+  ) +
+  labs(
+    title = "Wandering Albatross: Total Global Distribution",
+    subtitle = "All populations combined, weighted by breeding pair proportions (Carneiro et al. 2020)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title    = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10),
+    legend.position = "right"
+  )
+
+p_total_global
+
+ggsave(here("output/maps/total_global_distribution.png"),
+       p_total_global, width = 12, height = 6, dpi = 300)
 ```
 
 ## Percentage from South Georgia and Bird Island

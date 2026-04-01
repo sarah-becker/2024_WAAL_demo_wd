@@ -2316,6 +2316,51 @@ p_iuu_opt2b_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambd
 p_iuu_opt2b_v2
 ```
 
+**IUU 12-panel: mean λ with final uncertainty plot symbology (geom_contour_filled + heat_grad)**
+```{r p_iuu_12panel_mean, fig.width=16, fig.height=12}
+# Full 4 × 3 = 12-panel IUU × enforcement heatmap matching p_hm_mean symbology.
+# Uses geom_contour_filled + heat_grad palette + theme_bw instead of geom_tile + gradientn.
+# Labels shown only in the no-IUU / no-enforcement panel to avoid clutter.
+iuu_labels_12 <- iuu_fleet_pts %>%
+  filter(compliance_level == "100%",
+         iuu_prop == 0, iuu_reduction == 0,
+         !efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
+
+p_iuu_12panel_mean <- ggplot(iuu_heatmap_grid, aes(x = coverage, y = efficacy, z = lambda)) +
+  geom_contour_filled(breaks = lambda_breaks) +
+  geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
+  geom_line(data = iuu_fleet_pts,
+            aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
+            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+  geom_point(data = iuu_fleet_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+  geom_point(data = iuu_fleet_pts,
+             aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
+             inherit.aes = FALSE, size = 2, color = "black") +
+  geom_label(data = iuu_labels_12,
+             aes(x = effective_coverage, y = effective_efficacy, label = efficacy_scenario),
+             inherit.aes = FALSE,
+             size = 2.0, fill = "white", alpha = 0.8,
+             label.padding = unit(0.12, "lines"),
+             hjust = -0.05, vjust = 0.5) +
+  facet_grid(iuu_label ~ iuu_red_label) +
+  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+                     name = "Compliance level") +
+  scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
+                    drop = FALSE, name = "Mean \u03BB") +
+  scale_x_continuous(breaks = seq(0, 1, 0.25), labels = paste0(seq(0, 100, 25), "%")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.2),  labels = paste0(seq(0, 100, 20), "%")) +
+  labs(x = "% of total bycatch under active mitigation",
+       y = "Mitigation efficacy",
+       title = "Mitigation \u00D7 IUU enforcement: Mean \u03BB",
+       subtitle = "Rows = IUU proportion; columns = % IUU reduction via enforcement; white contour = \u03BB = 1") +
+  coord_cartesian(expand = FALSE) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+p_iuu_12panel_mean
+```
+
 **Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
 Each scenario shows where it starts (no enforcement) and where it moves with IUU reduction.
 ```{r iuu_option3, fig.width=10, fig.height=7}
@@ -3693,6 +3738,14 @@ p_hm_mean <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
              inherit.aes = FALSE, size = 2, color = "black") +
+  geom_label(data = heatmap_labels,
+             aes(x = effective_coverage,
+                 y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE,
+             size = 2.2, fill = "white", alpha = 0.8,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.1, vjust = 0.5) +
   scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
@@ -3743,6 +3796,14 @@ p_hm_prob <- ggplot(prob_heatmap_full,
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
              inherit.aes = FALSE, size = 2, color = "black") +
+  geom_label(data = heatmap_labels,
+             aes(x = effective_coverage,
+                 y = effective_efficacy + nudge_y,
+                 label = efficacy_scenario),
+             inherit.aes = FALSE,
+             size = 2.2, fill = "white", alpha = 0.8,
+             label.padding = unit(0.15, "lines"),
+             hjust = -0.1, vjust = 0.5) +
   scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = colorRampPalette(heat_grad)(length(prob_breaks) - 1),
@@ -3822,7 +3883,8 @@ ggsave(fig_path("23_fixed_iuu_ribbon"),          p_fixed_iuu_ribbon, width = 14,
 ggsave(fig_path("24_fixed_iuu_all_scenarios"),   p_fixed_iuu_all,    width = 14, height = 10, dpi = 200)
 ggsave(fig_path("25_fixed_iuu_zoom"),            p_fixed_iuu_zoom,   width = 14, height = 10, dpi = 200)
 ggsave(fig_path("26_fixed_iuu_prob_recovery"),   p_fixed_iuu_prob,   width = 14, height = 10, dpi = 200)
+ggsave(fig_path("28_iuu_12panel_mean"), p_iuu_12panel_mean, width = 16, height = 12, dpi = 200)
 
-message("All 26 figures saved to output/figures/ with suffix ", out_sfx)
+message("All 27 figures saved to output/figures/ with suffix ", out_sfx)
 ```
 

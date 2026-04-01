@@ -2590,6 +2590,9 @@ bell_proj <- map_dfr(1:nrow(bell_scenarios), function(i) {
 bell_proj <- bell_proj %>%
   mutate(scenario = factor(scenario, levels = bell_scenarios$scenario))
 
+bell_proj_pairs <- bell_proj %>%
+  mutate(predicted_pairs = N / pairs_scale)
+
 # Lambda summary
 bell_proj %>%
   distinct(scenario, lambda) %>%
@@ -2634,6 +2637,38 @@ p_7a <- ggplot(bell_proj, aes(x = year, y = N, color = scenario, linetype = scen
 p_7a
 ```
 
+**plot 7a (pairs) — immediate implementation, breeding pairs as primary y-axis**
+```{r plot-7a-pairs, fig.width = 9, fig.height = 5}
+p_7a_pairs <- ggplot(bell_proj_pairs, aes(x = year, y = predicted_pairs, color = scenario, linetype = scenario)) +
+  geom_line(linewidth = 0.9) +
+  geom_hline(yintercept = pairs_baseline, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data = bird_obs,
+             aes(x = year, y = pairs),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data = bird_obs,
+            aes(x = year, y = pairs, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(values = bell_colors) +
+  scale_linetype_manual(values = c(
+    "No mitigation"        = "dashed",
+    "HSD"                  = "solid",
+    "BLW + NS"             = "solid",
+    "BLW + BSL"            = "solid",
+    "NS + BSL"             = "solid",
+    "Mean 2/3 ACAP"        = "solid",
+    "3/3 ACAP"             = "solid",
+    "Complete elimination"  = "solid")) +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+  labs(x = "Years since 1990 baseline",
+       y = "Breeding pairs (Bird Island)",
+       color = NULL, linetype = NULL,
+       title = paste0("Immediate implementation — Bell et al. 2025 ACAP scenarios — ", target_period, " baseline"),
+       subtitle = "Orange dots = observed breeding pairs; dashed grey = pairs baseline") +
+  themeo + theme(legend.position = "right")
+p_7a_pairs
+```
+
 ---
 
 *PART 8 — BELL ET AL. 2025 SCENARIOS × PHASE-IN TIMING*
@@ -2672,9 +2707,11 @@ bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
     n_steps <- phase_df$n_steps[j]
     ph_lbl  <- phase_df$phase_in[j]
 
-    N_vec  <- n0_vec
-    N_t    <- numeric(years + 1)
-    N_t[1] <- sum(N_vec)
+    N_vec      <- n0_vec
+    N_t        <- numeric(years + 1)
+    pairs_t    <- numeric(years + 1)
+    N_t[1]     <- sum(N_vec)
+    pairs_t[1] <- sum(N_vec[6:9]) / 2
 
     for (k in 1:years) {
       frac <- if (n_steps == 0L) 1 else min(k / n_steps, 1)
@@ -2704,26 +2741,30 @@ bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
         0,    0,    0,    0,    0,                                     nis*(1-r_IS),              nif*(1-r_IF),            nes*(1-r_ES),              nef*(1-r_EF),            nenb*(1-r_ENB),              npf*(1-r_PF)
       ), nrow = 11, byrow = TRUE)
 
-      N_vec      <- A %*% N_vec
-      N_t[k + 1] <- sum(N_vec)
+      N_vec           <- A %*% N_vec
+      N_t[k + 1]      <- sum(N_vec)
+      pairs_t[k + 1]  <- sum(N_vec[6:9]) / 2
     }
 
-    tibble(year = 0:years, N = N_t, scenario = scen, phase_in = ph_lbl)
+    tibble(year = 0:years, N = N_t, predicted_pairs = pairs_t, scenario = scen, phase_in = ph_lbl)
   })
 })
 
 # No-mitigation baseline: stage-structured projection with m_base (consistent with above)
-N_vec_base <- n0_vec
-N_base     <- numeric(years + 1)
-N_base[1]  <- sum(N_vec_base)
+N_vec_base    <- n0_vec
+N_base        <- numeric(years + 1)
+pairs_base    <- numeric(years + 1)
+N_base[1]     <- sum(N_vec_base)
+pairs_base[1] <- sum(N_vec_base[6:9]) / 2
 for (k in 1:years) {
-  N_vec_base    <- m_base %*% N_vec_base
-  N_base[k + 1] <- sum(N_vec_base)
+  N_vec_base         <- m_base %*% N_vec_base
+  N_base[k + 1]      <- sum(N_vec_base)
+  pairs_base[k + 1]  <- sum(N_vec_base[6:9]) / 2
 }
 
 bell_phase_proj <- bind_rows(
   bell_phase_proj,
-  tibble(year = 0:years, N = N_base, scenario = "No mitigation", phase_in = "Immediate")
+  tibble(year = 0:years, N = N_base, predicted_pairs = pairs_base, scenario = "No mitigation", phase_in = "Immediate")
 ) %>%
   mutate(
     scenario = factor(scenario, levels = bell_scenarios$scenario),
@@ -2789,6 +2830,40 @@ p_8a <- ggplot(
 p_8a
 ```
 
+**plot 8a (pairs) — Bell et al. 2025 scenarios × phase-in timing, breeding pairs as primary y-axis**
+```{r plot-8a-pairs, fig.width = 11, fig.height = 6}
+p_8a_pairs <- ggplot(
+  bell_phase_proj %>% filter(scenario != "No mitigation"),
+  aes(x = year, y = predicted_pairs, color = scenario, linetype = phase_in)
+) +
+  geom_line(linewidth = 0.8) +
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation"),
+            aes(x = year, y = predicted_pairs),
+            inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_hline(yintercept = pairs_baseline, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data        = bird_obs,
+             aes(x = year, y = pairs),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data        = bird_obs,
+            aes(x = year, y = pairs, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(
+    values = bell_colors[names(bell_colors) != "No mitigation"],
+    name   = "Scenario"
+  ) +
+  scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
+  scale_x_continuous(breaks = seq(-10, years, 10), limits = c(-10, years)) +
+  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    x        = "Years since 1990 baseline",
+    y        = "Breeding pairs (Bird Island)",
+    title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation. Orange dots = observed breeding pairs"
+  ) +
+  themeo + theme(legend.position = "right")
+p_8a_pairs
+```
+
 **project — 500-year horizon**
 ```{r part8-bell-phasein-500yr}
 bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
@@ -2809,9 +2884,11 @@ bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
     n_steps <- phase_df$n_steps[j]
     ph_lbl  <- phase_df$phase_in[j]
 
-    N_vec  <- n0_vec
-    N_t    <- numeric(yearslong + 1)
-    N_t[1] <- sum(N_vec)
+    N_vec      <- n0_vec
+    N_t        <- numeric(yearslong + 1)
+    pairs_t    <- numeric(yearslong + 1)
+    N_t[1]     <- sum(N_vec)
+    pairs_t[1] <- sum(N_vec[6:9]) / 2
 
     for (k in 1:yearslong) {
       frac <- if (n_steps == 0L) 1 else min(k / n_steps, 1)
@@ -2840,26 +2917,30 @@ bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
         0,    0,    0,    0,    0,                                     nis*(1-r_IS),              nif*(1-r_IF),            nes*(1-r_ES),              nef*(1-r_EF),            nenb*(1-r_ENB),              npf*(1-r_PF)
       ), nrow = 11, byrow = TRUE)
 
-      N_vec      <- A %*% N_vec
-      N_t[k + 1] <- sum(N_vec)
+      N_vec           <- A %*% N_vec
+      N_t[k + 1]      <- sum(N_vec)
+      pairs_t[k + 1]  <- sum(N_vec[6:9]) / 2
     }
 
-    tibble(year = 0:yearslong, N = N_t, scenario = scen, phase_in = ph_lbl)
+    tibble(year = 0:yearslong, N = N_t, predicted_pairs = pairs_t, scenario = scen, phase_in = ph_lbl)
   })
 })
 
 # No-mitigation baseline (500-year)
-N_vec_base_long <- n0_vec
-N_base_long     <- numeric(yearslong + 1)
-N_base_long[1]  <- sum(N_vec_base_long)
+N_vec_base_long    <- n0_vec
+N_base_long        <- numeric(yearslong + 1)
+pairs_base_long    <- numeric(yearslong + 1)
+N_base_long[1]     <- sum(N_vec_base_long)
+pairs_base_long[1] <- sum(N_vec_base_long[6:9]) / 2
 for (k in 1:yearslong) {
-  N_vec_base_long    <- m_base %*% N_vec_base_long
-  N_base_long[k + 1] <- sum(N_vec_base_long)
+  N_vec_base_long         <- m_base %*% N_vec_base_long
+  N_base_long[k + 1]      <- sum(N_vec_base_long)
+  pairs_base_long[k + 1]  <- sum(N_vec_base_long[6:9]) / 2
 }
 
 bell_phase_proj_long <- bind_rows(
   bell_phase_proj_long,
-  tibble(year = 0:yearslong, N = N_base_long, scenario = "No mitigation", phase_in = "Immediate")
+  tibble(year = 0:yearslong, N = N_base_long, predicted_pairs = pairs_base_long, scenario = "No mitigation", phase_in = "Immediate")
 ) %>%
   mutate(
     scenario = factor(scenario, levels = bell_scenarios$scenario),
@@ -2905,6 +2986,40 @@ p_8b <- ggplot(
   ) +
   themeo + theme(legend.position = "right")
 p_8b
+```
+
+**plot 8b (pairs) — 500-year horizon, breeding pairs as primary y-axis**
+```{r plot-8b-pairs, fig.width = 11, fig.height = 6}
+p_8b_pairs <- ggplot(
+  bell_phase_proj_long %>% filter(scenario != "No mitigation"),
+  aes(x = year, y = predicted_pairs, color = scenario, linetype = phase_in)
+) +
+  geom_line(linewidth = 0.8) +
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation"),
+            aes(x = year, y = predicted_pairs),
+            inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_hline(yintercept = pairs_baseline, color = "grey50", linetype = "dashed", linewidth = 0.4) +
+  geom_point(data        = bird_obs,
+             aes(x = year, y = pairs),
+             inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
+  geom_text(data        = bird_obs,
+            aes(x = year, y = pairs, label = season),
+            inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
+  scale_color_manual(
+    values = bell_colors[names(bell_colors) != "No mitigation"],
+    name   = "Scenario"
+  ) +
+  scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
+  scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
+  scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
+  labs(
+    x        = paste0("Years since 1990 baseline (", yearslong, "-year horizon)"),
+    y        = "Breeding pairs (Bird Island)",
+    title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+  ) +
+  themeo + theme(legend.position = "right")
+p_8b_pairs
 ```
 
 **plot 8c — 500-year horizon, zoomed to N ≤ 50,000 to show recovery timing**
@@ -3301,8 +3416,8 @@ p_9b <- ggplot(realistic_300,
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_vline(xintercept = yr_phase_start, color = "grey60", linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = yr_upgrade,     color = "grey60", linetype = "dotted", linewidth = 0.4) +
-  annotate("text", x = yr_phase_start + 1, y = Inf, label = "2005", vjust = 1.4, hjust = 0, size = 2.5, color = "grey40") +
-  annotate("text", x = yr_upgrade + 1,     y = Inf, label = "2026", vjust = 1.4, hjust = 0, size = 2.5, color = "grey40") +
+  annotate("text", x = yr_phase_start + 1, y = Inf, label = "2005\n (2/3 begins)", vjust = 1.4, hjust = 0, size = 2.5, color = "grey40") +
+  annotate("text", x = yr_upgrade + 1,     y = Inf, label = "2026\n (3/3 begins)", vjust = 1.4, hjust = 0, size = 2.5, color = "grey40") +
   geom_point(data = bird_obs, aes(x = year, y = N_scaled),
              inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
@@ -3411,10 +3526,13 @@ ggsave(fig_path("09_6e_lambda_delay_immediate"),   p_6e,  width = 9,  height = 5
 ggsave(fig_path("09_6f_lambda_delay_phasein"),     p_6f,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6g_lambda_all_delays"),        p_6g,  width = 11, height = 5, dpi = 200)
 ggsave(fig_path("09_7a_bell_scenarios_immediate"), p_7a,  width = 9,  height = 5, dpi = 200)
+ggsave(fig_path("09_7a_pairs_bell_scenarios_immediate"), p_7a_pairs,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_8a_bell_scenarios_phasein"),      p_8a,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_8a_pairs_bell_scenarios_phasein"), p_8a_pairs,  width = 11, height = 6, dpi = 200)
 ggsave(fig_path("09_8b_bell_scenarios_phasein_500yr"),      p_8b,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_8b_pairs_bell_scenarios_phasein_500yr"), p_8b_pairs,  width = 11, height = 6, dpi = 200)
 ggsave(fig_path("09_8c_bell_scenarios_phasein_500yr_zoom"), p_8c,  width = 11, height = 6, dpi = 200)
 ggsave(fig_path("09_9a_realistic_2of3_phasein"),        p_9a,  width = 10, height = 5, dpi = 200)
 ggsave(fig_path("09_9b_realistic_2of3_phasein_300yr"), p_9b,  width = 10, height = 5, dpi = 200)
-message("15 figures saved to output/figures/ with suffix ", output_sfx)
+message("18 figures saved to output/figures/ with suffix ", output_sfx)
 ```

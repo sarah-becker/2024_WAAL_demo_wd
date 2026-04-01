@@ -197,6 +197,39 @@ pll_summary_flag <- pll_data %>%
 
 pll_summary_flag %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
 
+# Southern Hemisphere summary (Lat < 0) — effort within WAAL range
+pll_sh <- pll_data %>% filter(Lat < 0)
+
+total_pel_hooks_sh <- sum(pll_sh$Hooks, na.rm = TRUE)
+mean_annual_pel_sh <- pll_sh %>%
+  group_by(Year) %>%
+  summarize(total_hooks = sum(Hooks, na.rm = TRUE)) %>%
+  pull(total_hooks) %>%
+  mean()
+
+tibble(metric = c("Total SH pelagic hooks", "Mean annual SH pelagic hooks"),
+       value  = c(scales::comma(total_pel_hooks_sh), scales::comma(mean_annual_pel_sh)))
+
+# SH summary by RFMO
+pll_sh %>%
+  group_by(RFMO) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks)) %>%
+  mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
+# SH summary by Flag (fleet)
+pll_sh %>%
+  group_by(Flag) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks)) %>%
+  mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
 # Calculate mean annual effort by location:
 # Step 1 — sum hooks across months within each year to get total annual effort per cell
 # Step 2 — average annual totals across years
@@ -376,6 +409,39 @@ dll_summary_fleet <- dll_data %>%
   arrange(desc(total_hooks))
 
 dll_summary_fleet %>% mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
+# Southern Hemisphere summary (Lat < 0) — effort within WAAL range
+dll_sh <- dll_data %>% filter(Lat < 0)
+
+total_dem_hooks_sh <- sum(dll_sh$Hooks, na.rm = TRUE)
+mean_annual_dem_sh <- dll_sh %>%
+  group_by(Year) %>%
+  summarize(total_hooks = sum(Hooks, na.rm = TRUE)) %>%
+  pull(total_hooks) %>%
+  mean()
+
+tibble(metric = c("Total SH demersal hooks", "Mean annual SH demersal hooks"),
+       value  = c(scales::comma(total_dem_hooks_sh), scales::comma(mean_annual_dem_sh)))
+
+# SH summary by dataset and RFMO
+dll_sh %>%
+  group_by(dataset, RFMO) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks)) %>%
+  mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
+
+# SH summary by Fleet
+dll_sh %>%
+  group_by(Fleet) %>%
+  summarise(total_hooks       = sum(Hooks, na.rm = TRUE),
+            mean_annual_hooks = total_hooks / n_distinct(Year),
+            n_years           = n_distinct(Year),
+            .groups = "drop") %>%
+  arrange(desc(total_hooks)) %>%
+  mutate(across(c(total_hooks, mean_annual_hooks), scales::comma))
 
 # Process non-NZ and NZ sources separately — they use different 5° grid conventions
 # Non-NZ: cell centers at x.5 (e.g. 172.5, 177.5); NZ: cell centers at x.0 (e.g. 170, 175)

@@ -675,6 +675,14 @@ bpue_betas %>%
   mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
   print(n = 50)
 
+
+beta_by_study <- bpue_betas %>%
+  filter(!is.na(beta)) %>%
+  select(fishery_type, fleet, plot_year_group, bpue, B_study, beta,
+         fleet_hooks_in_box) %>%
+  mutate(across(where(is.numeric), ~signif(.x, 4))) 
+
+write_csv(beta_by_study, here(paste0("output/beta_by_study", date_sfx, ".csv")))
 # Compute FISHERY-LEVEL MEAN BETA
 # This is the key step: average beta across all studies within each fishery type.
 # Each study contributes equally (simple mean). This gives a single catchability
@@ -713,6 +721,8 @@ beta_by_fleet_type <- bpue_betas %>%
 beta_by_fleet_type %>%
   mutate(mean_beta = signif(mean_beta, 4)) %>%
   print(n = 20)
+
+write_csv(beta_by_fleet_type, here(paste0("output/beta_by_fleet_type_04_v3_", date_sfx, ".csv")))
 ```
 
 
@@ -774,8 +784,11 @@ beta_by_fleet_type %>%
            overall_mean, diff_from_overall) %>%
     mutate(across(where(is.numeric), ~signif(.x, 4)))                                                                                                      
                                                                                                                                                            
-  print(bpue_used_summary, n = 100)                                                                                                                        
-  print(bpue_skipped_summary, n = 100)                                                                                                                     
+  print(bpue_used_summary, n = 100)
+  print(bpue_skipped_summary, n = 100)
+
+  write_csv(bpue_used_summary,    here(paste0("output/bpue_used_summary_04_v3_",    date_sfx, ".csv")))
+  write_csv(bpue_skipped_summary, here(paste0("output/bpue_skipped_summary_04_v3_", date_sfx, ".csv")))                                                                                                                     
                                                                                                                                                            
   # Quick visual: skipped vs used BPUE distributions by fishery type                                                                                       
   bind_rows(                                                                                                                                               
@@ -964,6 +977,12 @@ bpue_period_means %>% print()
 # Mean beta by fishery type (ultimate fallback)
 beta_by_fishery_mean %>% print()
 
+write_csv(beta_by_fleet_period,  here(paste0("output/beta_by_fleet_period_04_v3_",   date_sfx, ".csv")))
+write_csv(beta_by_region_period, here(paste0("output/beta_by_region_period_04_v3_",  date_sfx, ".csv")))
+write_csv(beta_by_region,        here(paste0("output/beta_by_region_04_v3_",         date_sfx, ".csv")))
+write_csv(beta_by_fishery_mean,  here(paste0("output/beta_by_fishery_mean_04_v3_",   date_sfx, ".csv")))
+write_csv(bpue_period_means,     here(paste0("output/bpue_period_means_04_v3_",      date_sfx, ".csv")))
+
 # Track gap-fill details
 gap_fill_log <- tibble()
 
@@ -1125,15 +1144,32 @@ for (i in 1:nrow(fleet_fp_combos)) {
   catchability_rasters[[key]] <- catch_rast
 }
 
-gap_fill_log %>%
+gap_fill_summary <- gap_fill_log %>%
   group_by(fishery, fill_method) %>%
   summarise(
     n_fleet_periods = n(),
     total_cells = sum(n_cells),
     mean_fill_beta = format(mean(fill_beta, na.rm = TRUE), scientific = TRUE),
     .groups = "drop"
-  ) %>%
-  print(n = 30)
+  )
+
+# Add "no fill needed" rows: fleet x periods with full direct BPUE coverage (n_gap == 0)
+no_fill <- coverage_info %>%
+  filter(method == "direct", n_gap == 0) %>%
+  group_by(fishery) %>%
+  summarise(
+    fill_method     = "no_fill_needed",
+    n_fleet_periods = n(),
+    total_cells     = sum(n_covered, na.rm = TRUE),
+    mean_fill_beta  = NA_character_,
+    .groups = "drop"
+  )
+
+gap_fill_summary <- bind_rows(gap_fill_summary, no_fill) %>%
+  arrange(fishery, fill_method)
+
+print(gap_fill_summary, n = 30)
+write_csv(gap_fill_summary, here(paste0("output/gap_fill_summary_04_v3_", date_sfx, ".csv")))
 
 # Show temporal scaling details where applied
 temporal_fills <- gap_fill_log %>% filter(str_detect(fill_method, "fleet_temporal"))
@@ -1142,6 +1178,7 @@ if (nrow(temporal_fills) > 0) {
     select(fishery, fleet, year_group, fill_method, source_beta, temporal_ratio, fill_beta) %>%
     mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
     print(n = 30)
+  write_csv(temporal_fills, here(paste0("output/gap_fill_temporal_fills_04_v3_", date_sfx, ".csv")))
 }
 ```
 
@@ -1203,7 +1240,9 @@ for (i in 1:nrow(fleet_fp_combos)) {
 # Bycatch by fleet x fishery x period
 bycatch_results %>%
   mutate(across(where(is.numeric), ~round(.x, 4))) %>%
-  print(n = 100)
+  print()
+
+write_csv(bycatch_results,     here(paste0("output/bycatch_by_fleet",      date_sfx, ".csv")))
 ```
 
 # Section 10: Summary Tables
@@ -1231,7 +1270,9 @@ byc_by_fp <- bycatch_results %>%
 # Annual BI bycatch by fishery x period
 byc_by_fp %>%
   mutate(across(where(is.numeric) & !matches("n_fleets"), ~round(.x, 2))) %>%
-  print(n = 20)
+  print()
+
+write_csv(byc_by_fp,     here(paste0("output/bycatch_by_fishery_period_age",      date_sfx, ".csv")))
 ```
 
 ## Total annual bycatch by period (PLL + DLL combined)
@@ -1255,6 +1296,7 @@ byc_by_period %>%
   mutate(across(where(is.numeric), ~round(.x, 2))) %>%
   print()
 
+write_csv(byc_by_period,     here(paste0("output/bycatch_by_period_annualmean",      date_sfx, ".csv")))
 # Grand total: sum of (annual bycatch * years in period) across all periods
 # All periods span 5 years
 byc_cumulative <- byc_by_period %>%
@@ -1357,6 +1399,42 @@ fleet_bpue_status %>%
   print()
 ```
 
+## Cell-level fill method detail by fleet x period
+
+For each fleet x fishery x period: number of cells covered directly (BPUE bounding box
+overlap), filled by each gap-fill method, and total mean annual hooks in that fleet x period.
+
+```{r fill-detail-by-fleet-period}
+# Cells filled by each method per fleet x period (from gap_fill_log)
+fill_by_method <- gap_fill_log %>%
+  group_by(fishery, fleet, year_group, fill_method) %>%
+  summarise(n_cells = sum(n_cells), .groups = "drop") %>%
+  pivot_wider(names_from = fill_method, values_from = n_cells, values_fill = 0L)
+
+# Direct coverage cells per fleet x period (from coverage_info)
+direct_coverage <- coverage_info %>%
+  filter(method == "direct") %>%
+  select(fishery, fleet, year_group, n_direct = n_covered)
+
+# Total mean annual hooks per fleet x period
+hooks_fp <- hooks_by_fp %>%
+  select(fishery, fleet, year_group, total_hooks)
+
+# Combine: all fleet x periods with effort
+fleet_period_fill_detail <- hooks_fp %>%
+  left_join(direct_coverage, by = c("fishery", "fleet", "year_group")) %>%
+  left_join(fill_by_method,  by = c("fishery", "fleet", "year_group")) %>%
+  mutate(n_direct = replace_na(n_direct, 0L)) %>%
+  arrange(fishery, fleet, year_group)
+
+fleet_period_fill_detail %>%
+  mutate(total_hooks = round(total_hooks)) %>%
+  print(n = 100)
+
+write_csv(fleet_period_fill_detail,
+          here(paste0("output/fleet_period_fill_detail_04_v3_", date_sfx, ".csv")))
+```
+
 ## Mean annual bycatch by fishery (averaged across periods)
 
 ```{r summary-by-fishery}
@@ -1406,6 +1484,10 @@ percap_rates <- byc_annual_avg %>%
 percap_rates %>%
   mutate(across(where(is.numeric), ~signif(.x, 4))) %>%
   print(n = 20)
+
+
+write_csv(percap_rates,
+          here(paste0("output/percap_rates", date_sfx, ".csv")))
 ```
 
 ## Per capita rates by period
@@ -1937,6 +2019,17 @@ write_csv(
 # Save fishery-level beta summary
 write_csv(beta_by_fishery_type, here(paste0("output/beta_by_fishery_type_04_v3_", date_sfx, ".csv")))
 
+# Save bycatch period and fishery summaries
+write_csv(byc_by_period,   here(paste0("output/bycatch_by_period_04_v3_",        date_sfx, ".csv")))
+write_csv(byc_cumulative,  here(paste0("output/bycatch_cumulative_04_v3_",       date_sfx, ".csv")))
+write_csv(byc_by_fishery,  here(paste0("output/bycatch_by_fishery_04_v3_",       date_sfx, ".csv")))
+
+# Save hooks and coverage diagnostics
+write_csv(hooks_by_fp,      here(paste0("output/hooks_by_fleet_period_04_v3_",   date_sfx, ".csv")))
+write_csv(naive_check,      here(paste0("output/naive_bycatch_check_04_v3_",     date_sfx, ".csv")))
+write_csv(fleet_bpue_status,here(paste0("output/fleet_bpue_status_04_v3_",       date_sfx, ".csv")))
+write_csv(coverage_overall, here(paste0("output/coverage_overall_04_v3_",        date_sfx, ".csv")))
+
 # Save catchability rasters per fishery x period (effort-weighted mean across fleets)
 for (fi in c("PLL", "DLL")) {
   for (yg in target_year_groups) {
@@ -2294,7 +2387,7 @@ matrix_feasibility <- matrix_stage_map %>%
 # Feasibility by matrix stage — mean 1990-2009 per-capita FM
 matrix_feasibility %>%
   mutate(across(where(is.numeric), ~round(.x, 4))) %>%
-  print(width = Inf)
+  print()
 
 # Also check per-period: rates vary by period, so check worst case
 # Per-period check (worst case)
@@ -2483,6 +2576,11 @@ write_csv(validation, here(paste0("output/demographic_validation_04_v3_", date_s
 write_csv(percap_period_combined, here(paste0("output/demographic_validation_by_period_04_v3_", date_sfx, ".csv")))
 write_csv(mortality_budget, here(paste0("output/mortality_budget_04_v3_", date_sfx, ".csv")))
 write_csv(annual_validation, here(paste0("output/annual_validation_04_v3_", date_sfx, ".csv")))
+write_csv(validation_strict,           here(paste0("output/demographic_validation_strict_04_v3_",    date_sfx, ".csv")))
+write_csv(matrix_feasibility,          here(paste0("output/matrix_feasibility_04_v3_",              date_sfx, ".csv")))
+write_csv(matrix_period_feasibility,   here(paste0("output/matrix_period_feasibility_04_v3_",       date_sfx, ".csv")))
+write_csv(worst_periods,               here(paste0("output/worst_periods_per_age_04_v3_",           date_sfx, ".csv")))
+write_csv(annual_validation_matrix,    here(paste0("output/annual_validation_matrix_04_v3_",        date_sfx, ".csv")))
 ```
 
 # Session Info

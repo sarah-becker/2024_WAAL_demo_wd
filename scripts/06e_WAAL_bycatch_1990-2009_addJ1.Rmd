@@ -1263,10 +1263,19 @@ reference_pts <- tibble(
 write_csv(reference_pts,
           here(paste0("output/heatmap_ref_pts_", target_period_byc, "_", out_sfx, ".csv")))
 
-# Labels for heatmap scenario points at 100% compliance
+# Labels for heatmap scenario points at 50% compliance
+# (leftmost point on each scenario line — less crowded, away from top-right edge)
+# Scenarios sharing the same position are collapsed into a single combined label
 heatmap_labels <- scenario_heatmap_pts %>%
-  filter(compliance_level == "100%",
+  filter(compliance_level == "50%",
          !efficacy_scenario %in% c("No Mitigation", "Full Elimination")) %>%
+  mutate(cov_r = round(effective_coverage, 2),
+         eff_r = round(effective_efficacy, 2)) %>%
+  group_by(cov_r, eff_r) %>%
+  summarise(efficacy_scenario = paste(efficacy_scenario, collapse = " / "),
+            effective_coverage = first(effective_coverage),
+            effective_efficacy = first(effective_efficacy),
+            .groups = "drop") %>%
   mutate(nudge_y = 0)
 
 # Qualitative palette for efficacy scenario lines/points on heatmaps
@@ -1295,13 +1304,13 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
   geom_line(data = scenario_heatmap_pts,
             aes(x = effective_coverage, y = effective_efficacy,
                 group = efficacy_scenario),
-            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+            inherit.aes = FALSE, color = "lightgrey", linewidth = 0.5, alpha = 0.7) +
   # Overlay fleet scenario points — shape = compliance level
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy,
                  shape = compliance_level),
              inherit.aes = FALSE,
-             size = 3, color = "white", stroke = 0.8) +
+             size = 3, color = "black", stroke = 0.8) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy,
                  shape = compliance_level),
@@ -1313,21 +1322,21 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
                  y = effective_efficacy + nudge_y,
                  label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.2, fill = "white", alpha = 0.8,
+             size = 3.5, fill = "white", alpha = 0.8,
              label.padding = unit(0.15, "lines"),
-             hjust = -0.1, vjust = 0.5) +
-  # Reference points: no-mitigation, historical, current (gold diamonds)
-  geom_point(data = reference_pts,
+             hjust = 1.1, vjust = 0.5) +
+  # Reference point: no mitigation (black circle, same size as compliance symbols)
+  geom_point(data = reference_pts %>% filter(ref_label == "No mitigation"),
              aes(x = effective_coverage, y = effective_efficacy),
              inherit.aes = FALSE,
-             size = 5, shape = 23, fill = "gold", color = "black", stroke = 0.8) +
-  geom_label(data = reference_pts,
-             aes(x = effective_coverage, y = effective_efficacy, label = ref_label),
+             size = 2, shape = 16, color = "black") +
+  geom_label(data = reference_pts %>% filter(ref_label == "No mitigation"),
+             aes(x = effective_coverage, y = effective_efficacy + 0.04, label = ref_label),
              inherit.aes = FALSE,
-             size = 2.2, fill = "gold", alpha = 0.85,
+             size = 3.5, fill = "white", alpha = 0.85, color = "black",
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("50%"  = 0,
+  scale_shape_manual(values = c("50%"  = 15,
                                 "75%"  = 17,
                                 "100%" = 16),
                      name = "Compliance level") +
@@ -1341,7 +1350,7 @@ p_heatmap <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
        y = "% mitigation efficacy",
        title = "Mean \u03BB",
        subtitle = "White contour = \u03BB = 1; points = fleet scenarios") +
-  coord_cartesian(expand = FALSE) +
+  coord_cartesian(expand = FALSE, clip = "off") +
   theme_bw() +
   theme(panel.grid = element_blank())
 p_heatmap
@@ -1642,8 +1651,8 @@ IUU FM is estimated as a proportion of legal FM, carved out of what was previous
 
 **define IUU range and check natural mortality stays positive**
 ```{r}
-# IUU range 0-25% of legal FM, covering scenario values of 0, 3, 7, 20%
-iuu_range <- seq(0, 0.25, by = 0.01)
+# IUU range 0-30% of legal FM, covering scenario values of 5, 15, 30%
+iuu_range <- seq(0, 0.30, by = 0.01)
 
 # Check that natural mortality stays positive across the full IUU range
 map_dfr(iuu_range, function(iuu_p) {
@@ -1787,7 +1796,7 @@ for (i in 1:nrow(iuu_scenario_output)) {
 **plot IUU scenarios — faceted by mitigation scenario × IUU proportion**
 ```{r, fig.width=14, fig.height=10}
 # Select representative IUU proportions and mitigation scenarios for plotting
-iuu_plot_vals <- c(0, 0.03, 0.07, 0.20)
+iuu_plot_vals <- c(0.05, 0.15, 0.30)
 # Focus on the most policy-relevant scenarios
 mit_plot_scenarios <- c("HSD", "BLW + NS", "BLW + BSL", "NS + BSL", "Mean 2/3 ACAP", "3/3 ACAP", "Complete elimination")
 
@@ -1846,7 +1855,7 @@ that account for IUU fishing mortality. Four visualization approaches:
 # --- Shared infrastructure for IUU-integrated heatmaps ---
 
 # IUU proportions and enforcement reduction levels to visualize
-iuu_props_plot <- c(0, 0.03, 0.07, 0.20)   # 0% = no IUU (original heatmap)
+iuu_props_plot <- c(0.05, 0.15, 0.30)
 iuu_red_plot  <- c(0, 0.50, 1.0)            # % reduction in IUU via enforcement
 
 # Coarser grid for IUU heatmaps (faster computation)
@@ -2135,8 +2144,8 @@ p_iuu_opt1_v2
 Full 4D view: how does IUU enforcement interact with mitigation?
 ```{r iuu_option2, fig.width=14, fig.height=12}
 # Use subset of IUU proportions to keep readable
-grid_opt2 <- iuu_heatmap_grid %>% filter(iuu_prop %in% c(0,0.03, 0.07, 0.20))
-pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0, 0.03, 0.07, 0.20))
+grid_opt2 <- iuu_heatmap_grid %>% filter(iuu_prop %in% c(0.05, 0.15, 0.30))
+pts_opt2  <- iuu_fleet_pts %>% filter(iuu_prop %in% c(0.05, 0.15, 0.30))
 
 # Labels: only baseline compliance, only in top-left panel to reduce clutter
 labels_opt2 <- pts_opt2 %>%
@@ -2322,30 +2331,52 @@ p_iuu_opt2b_v2
 # Uses geom_contour_filled + heat_grad palette + theme_bw instead of geom_tile + gradientn.
 # Labels shown only in the no-IUU / no-enforcement panel to avoid clutter.
 iuu_labels_12 <- iuu_fleet_pts %>%
-  filter(compliance_level == "100%",
-         iuu_prop == 0, iuu_reduction == 0,
-         !efficacy_scenario %in% c("No Mitigation", "Full Elimination"))
+  filter(compliance_level == "50%",
+         iuu_prop == 0.05, iuu_reduction == 0,
+         !efficacy_scenario %in% c("No Mitigation", "Full Elimination")) %>%
+  mutate(cov_r = round(effective_coverage, 2),
+         eff_r = round(effective_efficacy, 2)) %>%
+  group_by(cov_r, eff_r) %>%
+  summarise(efficacy_scenario = paste(efficacy_scenario, collapse = " / "),
+            effective_coverage = first(effective_coverage),
+            effective_efficacy = first(effective_efficacy),
+            .groups = "drop")
 
 p_iuu_12panel_mean <- ggplot(iuu_heatmap_grid, aes(x = coverage, y = efficacy, z = lambda)) +
   geom_contour_filled(breaks = lambda_breaks) +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
   geom_line(data = iuu_fleet_pts,
             aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
-            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
-  geom_point(data = iuu_fleet_pts,
+            inherit.aes = FALSE, color = "lightgrey", linewidth = 0.5, alpha = 0.7) +
+  # Compliance level points (excluding No Mitigation — plotted separately below)
+  geom_point(data = iuu_fleet_pts %>% filter(efficacy_scenario != "No Mitigation"),
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
-             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
-  geom_point(data = iuu_fleet_pts,
+             inherit.aes = FALSE, size = 2, color = "black", stroke = 0.6) +
+  geom_point(data = iuu_fleet_pts %>% filter(efficacy_scenario != "No Mitigation"),
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
-             inherit.aes = FALSE, size = 2, color = "black") +
+             inherit.aes = FALSE, size = 1.5, color = "black") +
+  # Scenario labels (50% compliance points, first panel only)
   geom_label(data = iuu_labels_12,
              aes(x = effective_coverage, y = effective_efficacy, label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.0, fill = "white", alpha = 0.8,
-             label.padding = unit(0.12, "lines"),
-             hjust = -0.05, vjust = 0.5) +
+             size = 2.5, fill = "white", alpha = 0.8,
+             label.padding = unit(0.10, "lines"),
+             hjust = 1.05, vjust = 0.5) +
+  # No mitigation: diamond in all panels, label in first panel only
+  geom_point(data = iuu_fleet_pts %>%
+               filter(efficacy_scenario == "No Mitigation", compliance_level == "100%"),
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2.5, shape = 18, color = "black") +
+  geom_label(data = iuu_fleet_pts %>%
+               filter(efficacy_scenario == "No Mitigation", compliance_level == "100%"),
+             aes(x = effective_coverage, y = effective_efficacy + 0.04,
+                 label = "No mitigation"),
+             inherit.aes = FALSE,
+             size = 2.5, fill = "white", alpha = 0.85, color = "black",
+             label.padding = unit(0.10, "lines"),
+             hjust = -0.1, vjust = 0.5) +
   facet_grid(iuu_label ~ iuu_red_label) +
-  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+  scale_shape_manual(values = c("50%" = 15, "75%" = 17, "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
                     drop = FALSE, name = "Mean \u03BB") +
@@ -2355,17 +2386,19 @@ p_iuu_12panel_mean <- ggplot(iuu_heatmap_grid, aes(x = coverage, y = efficacy, z
        y = "Mitigation efficacy",
        title = "Mitigation \u00D7 IUU enforcement: Mean \u03BB",
        subtitle = "Rows = IUU proportion; columns = % IUU reduction via enforcement; white contour = \u03BB = 1") +
-  coord_cartesian(expand = FALSE) +
+  coord_cartesian(expand = FALSE, clip = "off") +
   theme_bw() +
-  theme(panel.grid = element_blank(), strip.text = element_text(face = "bold", size = 8))
+  theme(panel.grid = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_text(color = "black", size = 8))
 p_iuu_12panel_mean
 ```
 
 **Option 3: Arrow trajectories — IUU enforcement gains on a single heatmap**
 Each scenario shows where it starts (no enforcement) and where it moves with IUU reduction.
 ```{r iuu_option3, fig.width=10, fig.height=7}
-# Use a single IUU proportion (best estimate = 7%)
-iuu_best <- 0.07
+# Use a single IUU proportion (best estimate = 15%)
+iuu_best <- 0.15
 grid_opt3 <- iuu_heatmap_grid %>% filter(iuu_prop == iuu_best, iuu_reduction == 0)
 
 # Fleet points at IUU = 10%, baseline compliance only (to keep arrows readable)
@@ -2682,6 +2715,39 @@ return probability	0.76*		0.5
 *mean of values for experienced and inexperienced breeders. 
 
                                                                 
+**Digitized vital rate time series — input here**
+```{r vr-timeseries-input}
+# Load digitized annual vital rate estimates from Pardo et al. (1990-2009)
+# Columns: Year, Juvenile_S, Imm_Adult_S, Return_prob, Breeding_prob, Success_prob
+# Juvenile_S has NAs for 2001-2009 (not estimable in later years)
+pardo_ts <- read_csv(here("data/Pardo_VR_annual_est_digitized.csv"),
+                     show_col_types = FALSE)
+
+# Extract time series vectors (na.rm = TRUE for Juvenile_S)
+ts_surv_adult <- pardo_ts$Imm_Adult_S                         # immature/adult survival, n = 20
+ts_surv_juv   <- pardo_ts$Juvenile_S[!is.na(pardo_ts$Juvenile_S)]  # juvenile survival, n = 11
+ts_breed      <- pardo_ts$Breeding_prob                        # breeding probability, n = 20
+ts_return     <- pardo_ts$Return_prob                          # return probability, n = 20
+ts_success    <- pardo_ts$Success_prob                         # breeding success, n = 20
+
+# Compute mean and SE from each time series
+Smn_adult   <- mean(ts_surv_adult);  SE_adult   <- sd(ts_surv_adult)   / sqrt(length(ts_surv_adult))
+Smn_juv     <- mean(ts_surv_juv);   SE_juv     <- sd(ts_surv_juv)     / sqrt(length(ts_surv_juv))
+Smn_breed   <- mean(ts_breed);       SE_breed   <- sd(ts_breed)         / sqrt(length(ts_breed))
+Smn_return  <- mean(ts_return);      SE_return  <- sd(ts_return)        / sqrt(length(ts_return))
+Smn_success <- mean(ts_success);     SE_success <- sd(ts_success)       / sqrt(length(ts_success))
+
+# Print summary for verification
+tibble(
+  rate       = c("Imm/Adult survival", "Juvenile survival", "Breeding prob",
+                 "Return prob", "Success prob"),
+  n          = c(length(ts_surv_adult), length(ts_surv_juv), length(ts_breed),
+                 length(ts_return), length(ts_success)),
+  mean       = round(c(Smn_adult, Smn_juv, Smn_breed, Smn_return, Smn_success), 4),
+  SE         = round(c(SE_adult, SE_juv, SE_breed, SE_return, SE_success), 6)
+) %>% print()
+```
+
 ```{r}
 # Helper function to calculate beta distribution shape parameters from mean and 95% CI
 # Uses method of moments: SE = (upper - lower) / 3.92
@@ -2704,69 +2770,143 @@ calc_beta_params <- function(mean_val, lower_ci, upper_ci) {
   return(list(alpha = alpha, beta = beta))
 }
 
-# === SURVIVAL RATES (stage-specific, Pardo 1980-2012, shared directly) ===
-# SD estimated directly from observed annual range (Bird Island 1980–2012):
-# SD = (upper - lower) / 3.92, where 3.92 = 2 * 1.96 (range spans ~95% of values).
-# A single SD is applied to all stages within each rate type, giving all stages
-# the same absolute uncertainty — appropriate since the range comes from pooled data
-# that does not distinguish between stages.
-sd_juv   <- (0.95 - 0.65) / 3.92  # juvenile survival range 0.65–0.95
-sd_adult <- (0.98 - 0.88) / 3.92  # immature/adult survival range 0.88–0.98
-
-surv_ci_from_sd <- function(mean_val, sd) {
-  lower <- max(mean_val - 1.96 * sd, 0.01)
-  upper <- min(mean_val + 1.96 * sd, 0.9999)
-  calc_beta_params(mean_val, lower, upper)
+# === VARIANCE-RATIO APPROACH FOR ALL VITAL RATES (advisor method) ===
+# Applied consistently to survival, breeding probability, return probability,
+# and breeding success — all are beta-distributed [0,1] parameters.
+#
+# For each rate type, the five steps are:
+#   Step 1: Smn = mean of the digitized Pardo time series for that rate group
+#           SE  = sd / sqrt(n) of the digitized Pardo time series for that rate group
+#   Step 2: SE_max   = sqrt(Smn * (1 - Smn))      [maximum possible SE for a beta at this mean]
+#   Step 3: SE_ratio = SE / SE_max                 [relative SE, transferable across stages]
+#   Step 4: se_stage = sqrt(Smn_stage * (1 - Smn_stage)) * SE_ratio
+#           where Smn_stage = the deterministic VR value for that stage from Pardo's model
+#   Step 5: feed (Smn_stage, se_stage) into beta method-of-moments via calc_beta_params_from_se
+#
+# Helper: beta distribution shape parameters from mean and variance directly
+# (method of moments; no CI step needed)
+calc_beta_params_from_var <- function(mean_val, variance) {
+  max_var  <- mean_val * (1 - mean_val)
+  variance <- min(variance, max_var * 0.999)   # clamp to valid beta range
+  phi   <- mean_val * (1 - mean_val) / variance - 1
+  alpha <- mean_val * phi
+  beta  <- (1 - mean_val) * phi
+  if (alpha <= 0 || beta <= 0) {
+    alpha <- mean_val * 100
+    beta  <- (1 - mean_val) * 100
+  }
+  list(alpha = alpha, beta = beta)
 }
 
-surv_params <- list(
-  s_Juv = surv_ci_from_sd(s_Juv, sd_juv),   # juvenile
-  s_EF  = surv_ci_from_sd(s_EF,  sd_adult), # experienced failed
-  s_ENB = surv_ci_from_sd(s_ENB, sd_adult), # experienced non-breeding
-  s_ES  = surv_ci_from_sd(s_ES,  sd_adult), # experienced successful
-  s_IF  = surv_ci_from_sd(s_IF,  sd_adult), # inexperienced failed
-  s_Imm = surv_ci_from_sd(s_Imm, sd_adult), # immature
-  s_IS  = surv_ci_from_sd(s_IS,  sd_adult), # inexperienced successful
-  s_PF  = surv_ci_from_sd(s_PF,  sd_adult)  # sabbatical
+# Helper: beta distribution shape parameters from mean and SE
+# Converts SE to variance then calls calc_beta_params_from_var
+calc_beta_params_from_se <- function(mean_val, se) {
+  calc_beta_params_from_var(mean_val, se^2)
+}
+
+
+# === SURVIVAL RATES ===
+
+# --- Adult survival (pooled stages) ---
+# Smn_adult and SE_adult computed from ts_surv_adult in vr-timeseries-input chunk above
+SE_max_adult   <- sqrt(Smn_adult * (1 - Smn_adult))    # step 2
+SE_ratio_adult <- SE_adult / SE_max_adult               # step 3
+
+se_s_EF  <- sqrt(s_EF  * (1 - s_EF))  * SE_ratio_adult  # step 4
+se_s_ENB <- sqrt(s_ENB * (1 - s_ENB)) * SE_ratio_adult
+se_s_ES  <- sqrt(s_ES  * (1 - s_ES))  * SE_ratio_adult
+se_s_IF  <- sqrt(s_IF  * (1 - s_IF))  * SE_ratio_adult
+se_s_Imm <- sqrt(s_Imm * (1 - s_Imm)) * SE_ratio_adult
+se_s_IS  <- sqrt(s_IS  * (1 - s_IS))  * SE_ratio_adult
+se_s_PF  <- sqrt(s_PF  * (1 - s_PF))  * SE_ratio_adult
+
+# --- Juvenile survival ---
+# Smn_juv and SE_juv computed from ts_surv_juv in vr-timeseries-input chunk above
+SE_max_juv   <- sqrt(Smn_juv * (1 - Smn_juv))          # step 2
+SE_ratio_juv <- SE_juv / SE_max_juv                     # step 3
+
+se_s_Juv <- sqrt(s_Juv * (1 - s_Juv)) * SE_ratio_juv   # step 4
+
+surv_params <- list(                                    # step 5
+  s_Juv = calc_beta_params_from_se(s_Juv, se_s_Juv),
+  s_EF  = calc_beta_params_from_se(s_EF,  se_s_EF),
+  s_ENB = calc_beta_params_from_se(s_ENB, se_s_ENB),
+  s_ES  = calc_beta_params_from_se(s_ES,  se_s_ES),
+  s_IF  = calc_beta_params_from_se(s_IF,  se_s_IF),
+  s_Imm = calc_beta_params_from_se(s_Imm, se_s_Imm),
+  s_IS  = calc_beta_params_from_se(s_IS,  se_s_IS),
+  s_PF  = calc_beta_params_from_se(s_PF,  se_s_PF)
 )
 
 # === BREEDING PROBABILITY ===
-# Range 0.65–0.75 (Pardo model estimates, Bird Island)
-sd_breed <- (0.75 - 0.65) / 3.92
-breed_params <- list(
-  b_EF  = surv_ci_from_sd(b_EF,  sd_breed),
-  b_ENB = surv_ci_from_sd(b_ENB, sd_breed),
-  b_ES  = surv_ci_from_sd(b_ES,  sd_breed),
-  b_IF  = surv_ci_from_sd(b_IF,  sd_breed),
-  b_Imm = surv_ci_from_sd(b_Imm, sd_breed),
-  b_IS  = surv_ci_from_sd(b_IS,  sd_breed),
-  b_PF  = surv_ci_from_sd(b_PF,  sd_breed)
+# Smn_breed and SE_breed computed from ts_breed in vr-timeseries-input chunk above
+SE_max_breed   <- sqrt(Smn_breed * (1 - Smn_breed))     # step 2
+SE_ratio_breed <- SE_breed / SE_max_breed                # step 3
+
+se_b_EF  <- sqrt(b_EF  * (1 - b_EF))  * SE_ratio_breed  # step 4
+se_b_ENB <- sqrt(b_ENB * (1 - b_ENB)) * SE_ratio_breed
+se_b_ES  <- sqrt(b_ES  * (1 - b_ES))  * SE_ratio_breed
+se_b_IF  <- sqrt(b_IF  * (1 - b_IF))  * SE_ratio_breed
+se_b_Imm <- sqrt(b_Imm * (1 - b_Imm)) * SE_ratio_breed
+se_b_IS  <- sqrt(b_IS  * (1 - b_IS))  * SE_ratio_breed
+se_b_PF  <- sqrt(b_PF  * (1 - b_PF))  * SE_ratio_breed
+
+breed_params <- list(                                    # step 5
+  b_EF  = calc_beta_params_from_se(b_EF,  se_b_EF),
+  b_ENB = calc_beta_params_from_se(b_ENB, se_b_ENB),
+  b_ES  = calc_beta_params_from_se(b_ES,  se_b_ES),
+  b_IF  = calc_beta_params_from_se(b_IF,  se_b_IF),
+  b_Imm = calc_beta_params_from_se(b_Imm, se_b_Imm),
+  b_IS  = calc_beta_params_from_se(b_IS,  se_b_IS),
+  b_PF  = calc_beta_params_from_se(b_PF,  se_b_PF)
 )
+
 
 # === RETURN PROBABILITY ===
-# Range 0.60–0.70 (Pardo model estimates, Bird Island)
-sd_return <- (0.70 - 0.60) / 3.92
-return_params <- list(
-  r_EF  = surv_ci_from_sd(r_EF,  sd_return),
-  r_ENB = surv_ci_from_sd(r_ENB, sd_return),
-  r_ES  = surv_ci_from_sd(r_ES,  sd_return),
-  r_IF  = surv_ci_from_sd(r_IF,  sd_return),
-  r_Imm = surv_ci_from_sd(r_Imm, sd_return),
-  r_IS  = surv_ci_from_sd(r_IS,  sd_return),
-  r_PF  = surv_ci_from_sd(r_PF,  sd_return)
+# Smn_return and SE_return computed from ts_return in vr-timeseries-input chunk above
+SE_max_return   <- sqrt(Smn_return * (1 - Smn_return))   # step 2
+SE_ratio_return <- SE_return / SE_max_return              # step 3
+
+se_r_EF  <- sqrt(r_EF  * (1 - r_EF))  * SE_ratio_return  # step 4
+se_r_ENB <- sqrt(r_ENB * (1 - r_ENB)) * SE_ratio_return
+se_r_ES  <- sqrt(r_ES  * (1 - r_ES))  * SE_ratio_return
+se_r_IF  <- sqrt(r_IF  * (1 - r_IF))  * SE_ratio_return
+se_r_Imm <- sqrt(r_Imm * (1 - r_Imm)) * SE_ratio_return
+se_r_IS  <- sqrt(r_IS  * (1 - r_IS))  * SE_ratio_return
+se_r_PF  <- sqrt(r_PF  * (1 - r_PF))  * SE_ratio_return
+
+return_params <- list(                                    # step 5
+  r_EF  = calc_beta_params_from_se(r_EF,  se_r_EF),
+  r_ENB = calc_beta_params_from_se(r_ENB, se_r_ENB),
+  r_ES  = calc_beta_params_from_se(r_ES,  se_r_ES),
+  r_IF  = calc_beta_params_from_se(r_IF,  se_r_IF),
+  r_Imm = calc_beta_params_from_se(r_Imm, se_r_Imm),
+  r_IS  = calc_beta_params_from_se(r_IS,  se_r_IS),
+  r_PF  = calc_beta_params_from_se(r_PF,  se_r_PF)
 )
 
+
 # === BREEDING SUCCESS ===
-# Range 0.65–0.80 (Pardo model estimates, Bird Island)
-sd_success <- (0.80 - 0.65) / 3.92
-success_params <- list(
-  k_EF  = surv_ci_from_sd(k_EF,  sd_success),
-  k_ENB = surv_ci_from_sd(k_ENB, sd_success),
-  k_ES  = surv_ci_from_sd(k_ES,  sd_success),
-  k_IF  = surv_ci_from_sd(k_IF,  sd_success),
-  k_Imm = surv_ci_from_sd(k_Imm, sd_success),
-  k_IS  = surv_ci_from_sd(k_IS,  sd_success),
-  k_PF  = surv_ci_from_sd(k_PF,  sd_success)
+# Smn_success and SE_success computed from ts_success in vr-timeseries-input chunk above
+SE_max_success   <- sqrt(Smn_success * (1 - Smn_success))  # step 2
+SE_ratio_success <- SE_success / SE_max_success             # step 3
+
+se_k_EF  <- sqrt(k_EF  * (1 - k_EF))  * SE_ratio_success   # step 4
+se_k_ENB <- sqrt(k_ENB * (1 - k_ENB)) * SE_ratio_success
+se_k_ES  <- sqrt(k_ES  * (1 - k_ES))  * SE_ratio_success
+se_k_IF  <- sqrt(k_IF  * (1 - k_IF))  * SE_ratio_success
+se_k_Imm <- sqrt(k_Imm * (1 - k_Imm)) * SE_ratio_success
+se_k_IS  <- sqrt(k_IS  * (1 - k_IS))  * SE_ratio_success
+se_k_PF  <- sqrt(k_PF  * (1 - k_PF))  * SE_ratio_success
+
+success_params <- list(                                     # step 5
+  k_EF  = calc_beta_params_from_se(k_EF,  se_k_EF),
+  k_ENB = calc_beta_params_from_se(k_ENB, se_k_ENB),
+  k_ES  = calc_beta_params_from_se(k_ES,  se_k_ES),
+  k_IF  = calc_beta_params_from_se(k_IF,  se_k_IF),
+  k_Imm = calc_beta_params_from_se(k_Imm, se_k_Imm),
+  k_IS  = calc_beta_params_from_se(k_IS,  se_k_IS),
+  k_PF  = calc_beta_params_from_se(k_PF,  se_k_PF)
 )
 ```
 
@@ -3758,10 +3898,10 @@ p_hm_mean <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
   geom_contour(aes(z = lambda), breaks = 1, color = "white", linewidth = 1.2) +
   geom_line(data = scenario_heatmap_pts,
             aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
-            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+            inherit.aes = FALSE, color = "lightgrey", linewidth = 0.5, alpha = 0.7) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
-             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+             inherit.aes = FALSE, size = 3, color = "black", stroke = 0.8) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
              inherit.aes = FALSE, size = 2, color = "black") +
@@ -3770,10 +3910,19 @@ p_hm_mean <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
                  y = effective_efficacy + nudge_y,
                  label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.2, fill = "white", alpha = 0.8,
+             size = 3.5, fill = "white", alpha = 0.8,
+             label.padding = unit(0.15, "lines"),
+             hjust = 1.1, vjust = 0.5) +
+  geom_point(data = reference_pts %>% filter(ref_label == "No mitigation"),
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2, shape = 16, color = "black") +
+  geom_label(data = reference_pts %>% filter(ref_label == "No mitigation"),
+             aes(x = effective_coverage, y = effective_efficacy + 0.04, label = ref_label),
+             inherit.aes = FALSE,
+             size = 3.5, fill = "white", alpha = 0.85, color = "black",
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+  scale_shape_manual(values = c("50%" = 15, "75%" = 17, "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = colorRampPalette(heat_grad)(length(lambda_breaks) - 1),
                     drop = FALSE, name = "Mean \u03BB") +
@@ -3782,7 +3931,7 @@ p_hm_mean <- ggplot(heatmap_data, aes(x = coverage, y = efficacy, z = lambda)) +
   labs(x = "% legal fisheries with bycatch mitigation",
        y = "% mitigation efficacy",
        title = "Mean \u03BB") +
-  coord_cartesian(expand = FALSE) +
+  coord_cartesian(expand = FALSE, clip = "off") +
   theme_bw() +
   theme(panel.grid = element_blank())
 
@@ -3816,10 +3965,10 @@ p_hm_prob <- ggplot(prob_heatmap_full,
                color = "white", linewidth = 1.2) +
   geom_line(data = scenario_heatmap_pts,
             aes(x = effective_coverage, y = effective_efficacy, group = efficacy_scenario),
-            inherit.aes = FALSE, color = "white", linewidth = 0.5, alpha = 0.7) +
+            inherit.aes = FALSE, color = "lightgrey", linewidth = 0.5, alpha = 0.7) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
-             inherit.aes = FALSE, size = 3, color = "white", stroke = 0.8) +
+             inherit.aes = FALSE, size = 3, color = "black", stroke = 0.8) +
   geom_point(data = scenario_heatmap_pts,
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
              inherit.aes = FALSE, size = 2, color = "black") +
@@ -3828,10 +3977,19 @@ p_hm_prob <- ggplot(prob_heatmap_full,
                  y = effective_efficacy + nudge_y,
                  label = efficacy_scenario),
              inherit.aes = FALSE,
-             size = 2.2, fill = "white", alpha = 0.8,
+             size = 3.5, fill = "white", alpha = 0.8,
+             label.padding = unit(0.15, "lines"),
+             hjust = 1.1, vjust = 0.5) +
+  geom_point(data = reference_pts %>% filter(ref_label == "No mitigation"),
+             aes(x = effective_coverage, y = effective_efficacy),
+             inherit.aes = FALSE, size = 2, shape = 16, color = "black") +
+  geom_label(data = reference_pts %>% filter(ref_label == "No mitigation"),
+             aes(x = effective_coverage, y = effective_efficacy + 0.04, label = ref_label),
+             inherit.aes = FALSE,
+             size = 3.5, fill = "white", alpha = 0.85, color = "black",
              label.padding = unit(0.15, "lines"),
              hjust = -0.1, vjust = 0.5) +
-  scale_shape_manual(values = c("50%" = 0, "75%" = 17, "100%" = 16),
+  scale_shape_manual(values = c("50%" = 15, "75%" = 17, "100%" = 16),
                      name = "Compliance level") +
   scale_fill_manual(values = colorRampPalette(heat_grad)(length(prob_breaks) - 1),
                     drop = FALSE, na.value = "grey80", name = "P(\u03BB \u2265 1)") +
@@ -3840,7 +3998,7 @@ p_hm_prob <- ggplot(prob_heatmap_full,
   labs(x = "% legal fisheries with bycatch mitigation",
        y = "% mitigation efficacy",
        title = "Probability \u03BB \u2265 1") +
-  coord_cartesian(expand = FALSE) +
+  coord_cartesian(expand = FALSE, clip = "off") +
   theme_bw() +
   theme(panel.grid = element_blank())
 
@@ -3913,7 +4071,7 @@ ggsave(fig_path("26_fixed_iuu_prob_recovery"),   p_fixed_iuu_prob,   width = 14,
 
 
 ggsave(fig_path("27_hm_mean_prob"),   p_hm_mean_prob,   width = 14, height = 6, dpi = 200)
-ggsave(fig_path("28_iuu_12panel_mean"), p_iuu_12panel_mean, width = 16, height = 18, dpi = 200)
+ggsave(fig_path("28_iuu_12panel_mean"), p_iuu_12panel_mean, width = 16, height = 14, dpi = 200)
 
 message("All 27 figures saved to output/figures/ with suffix ", out_sfx)
 ```

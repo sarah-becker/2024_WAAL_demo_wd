@@ -2682,8 +2682,8 @@ survival is interpolated correctly during the ramp-up period. Color = scenario; 
 ```{r part8-bell-phasein}
 # Phase-in timing options
 phase_df <- tibble(
-  phase_in = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"),
-  n_steps  = c(0L, 5L, 10L, 20L, 30L, 40L)
+  phase_in = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year", "50-year", "60-year"),
+  n_steps  = c(0L, 5L, 10L, 20L, 30L, 40L, 50L, 60L)
 )
 
 # Mitigation scenarios only (No mitigation efficacy = 0; phase-in has no effect, shown as baseline)
@@ -2769,7 +2769,7 @@ bell_phase_proj <- bind_rows(
 ) %>%
   mutate(
     scenario = factor(scenario, levels = bell_scenarios$scenario),
-    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"))
+    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year", "50-year", "60-year"))
   )
 
 # Lambda check: print final N ratios (year 100 vs year 99) for each scenario × phase-in
@@ -2789,7 +2789,9 @@ phase_linetypes <- c(
   "10-year"   = "dotdash",
   "20-year"   = "longdash",
   "30-year"   = "twodash",
-  "40-year"   = "dotted"
+  "40-year"   = "dotted",
+  "50-year"   = "F4",
+  "60-year"   = "1141"
 )
 
 p_8a <- ggplot(
@@ -2945,7 +2947,7 @@ bell_phase_proj_long <- bind_rows(
 ) %>%
   mutate(
     scenario = factor(scenario, levels = bell_scenarios$scenario),
-    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year"))
+    phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year", "50-year", "60-year"))
   )
 ```
 
@@ -3076,8 +3078,8 @@ Four scenarios:
 
 **build matrices and run projections**
 ```{r part9-realistic-trajectory}
-yr_phase_start <- 15   # year 2/3 phase-in begins (2005 = year 15)
-yr_upgrade     <- 36   # year upgrade to 3/3 takes effect (2026 = year 36)
+yr_phase_start <- 5   # year 2/3 phase-in begins (2005 = year 15)
+yr_upgrade     <- 26   # year upgrade to 3/3 takes effect (2026 = year 36)
 n_phase_steps  <- 20   # length of phase-in period (years)
 
 # Helper: build 11-stage matrix from stage-specific survival rates
@@ -3181,6 +3183,15 @@ proj_2of3_50_upgrade_3of3_50 <- run_proj(
   },
   "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)")
 
+proj_2of3_50_upgrade_100 <- run_proj(
+  function(k) {
+    if      (k < yr_phase_start)                           m_base
+    else if (k < yr_phase_start + n_phase_steps)           phase_2of3_50[[k - yr_phase_start + 1]]
+    else if (k < yr_upgrade)                               m_2of3_50
+    else                                                   m_2of3_100
+  },
+  "2/3 phase-in (2005), 50% \u2192 100% (2026)")
+
 proj_2of3_100_stay <- run_proj(
   function(k) {
     if      (k < yr_phase_start)                           m_base
@@ -3203,6 +3214,7 @@ realistic_scenarios <- bind_rows(
   proj_2of3_50_stay,
   proj_2of3_50_upgrade,
   proj_2of3_50_upgrade_3of3_50,
+  proj_2of3_50_upgrade_100,
   proj_2of3_100_stay,
   proj_2of3_100_upgrade
 ) %>%
@@ -3211,6 +3223,7 @@ realistic_scenarios <- bind_rows(
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)",
     "2/3 phase-in (2005), 100% compliance",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)",
     "Immediate 3/3 (100% coverage)"
@@ -3242,6 +3255,15 @@ proj_2of3_50_upgrade_3of3_50_pairs <- run_proj_pairs(
   },
   "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)")
 
+proj_2of3_50_upgrade_100_pairs <- run_proj_pairs(
+  function(k) {
+    if      (k < yr_phase_start)                           m_base
+    else if (k < yr_phase_start + n_phase_steps)           phase_2of3_50[[k - yr_phase_start + 1]]
+    else if (k < yr_upgrade)                               m_2of3_50
+    else                                                   m_2of3_100
+  },
+  "2/3 phase-in (2005), 50% \u2192 100% (2026)")
+
 proj_2of3_100_stay_pairs <- run_proj_pairs(
   function(k) {
     if      (k < yr_phase_start)                           m_base
@@ -3264,6 +3286,7 @@ realistic_scenarios_pairs <- bind_rows(
   proj_2of3_50_stay_pairs,
   proj_2of3_50_upgrade_pairs,
   proj_2of3_50_upgrade_3of3_50_pairs,
+  proj_2of3_50_upgrade_100_pairs,
   proj_2of3_100_stay_pairs,
   proj_2of3_100_upgrade_pairs
 ) %>%
@@ -3272,6 +3295,7 @@ realistic_scenarios_pairs <- bind_rows(
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)",
     "2/3 phase-in (2005), 100% compliance",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)",
     "Immediate 3/3 (100% coverage)"
@@ -3301,6 +3325,7 @@ p_9a <- ggplot(realistic_scenarios,
     "2/3 phase-in (2005), 50% compliance"       = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "#f46d43",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "#b35806",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)"    = "#807dba",
     "2/3 phase-in (2005), 100% compliance"          = "#4dac26",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "#1a9641",
     "Immediate 3/3 (100% coverage)"             = "#253494")) +
@@ -3309,6 +3334,7 @@ p_9a <- ggplot(realistic_scenarios,
     "2/3 phase-in (2005), 50% compliance"       = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "solid",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)"    = "solid",
     "2/3 phase-in (2005), 100% compliance"          = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "solid",
     "Immediate 3/3 (100% coverage)"             = "solid")) +
@@ -3354,6 +3380,7 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
     "2/3 phase-in (2005), 50% compliance"       = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "#f46d43",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "#b35806",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)"    = "#807dba",
     "2/3 phase-in (2005), 100% compliance"          = "#4dac26",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "#1a9641",
     "Immediate 3/3 (100% coverage)"             = "#253494")) +
@@ -3362,6 +3389,7 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
     "2/3 phase-in (2005), 50% compliance"       = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "solid",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)"    = "solid",
     "2/3 phase-in (2005), 100% compliance"          = "solid",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "solid",
     "Immediate 3/3 (100% coverage)"             = "solid")) +
@@ -3374,6 +3402,15 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
        subtitle = "Orange/red = 50% compliance; green = 100% compliance; solid upgrade lines = switch to 3/3 in 2026\nOrange dots = Bird Island census pairs (no conversion applied); dotted verticals = 2005 start, 2026 decision point") +
   themeo + theme(legend.position = "bottom", legend.text = element_text(size = 7))
 p_9a_pairs
+```
+
+**plot 9a-pairs zoomed — realistic trajectory in breeding pairs, ylim capped at 2,000**
+```{r plot-9a-pairs-zoom, fig.width = 10, fig.height = 5}
+p_9a_pairs_zoom <- p_9a_pairs +
+  coord_cartesian(ylim = c(0, 2000)) +
+  scale_y_continuous(labels = scales::comma, breaks = seq(0, 2000, 250)) +
+  geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4)
+p_9a_pairs_zoom
 ```
 
 **plot 9b — 300-year extension**
@@ -3412,6 +3449,7 @@ run_proj_n <- function(phase_fn, scenario_label, n_years) {
 proj_2of3_50_stay_300    <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else m_2of3_50  }, "2/3 phase-in (2005), 50% compliance",       years_300)
 proj_2of3_50_upgrade_300 <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_3of3 }, "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",  years_300)
 proj_2of3_50_upgrade_3of3_50_300 <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_3of3_50 }, "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)", years_300)
+proj_2of3_50_upgrade_100_300 <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_2of3_100 }, "2/3 phase-in (2005), 50% \u2192 100% (2026)", years_300)
 proj_2of3_100_stay_300   <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else m_2of3_100 }, "2/3 phase-in (2005), 100% compliance",      years_300)
 proj_2of3_100_upgrade_300 <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else if (k < yr_upgrade) m_2of3_100 else m_3of3 }, "2/3 phase-in (2005), 100% \u2192 3/3 (2026)", years_300)
 
@@ -3424,6 +3462,7 @@ realistic_300 <- bind_rows(
   proj_2of3_50_stay_300,
   proj_2of3_50_upgrade_300,
   proj_2of3_50_upgrade_3of3_50_300,
+  proj_2of3_50_upgrade_100_300,
   proj_2of3_100_stay_300,
   proj_2of3_100_upgrade_300,
   proj_3of3_300
@@ -3433,6 +3472,7 @@ realistic_300 <- bind_rows(
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)",
     "2/3 phase-in (2005), 100% compliance",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)",
     "Immediate 3/3 (100% coverage)"
@@ -3442,6 +3482,7 @@ realistic_300 <- bind_rows(
 proj_2of3_50_stay_300_pairs    <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else m_2of3_50  }, "2/3 phase-in (2005), 50% compliance",       years_300)
 proj_2of3_50_upgrade_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_3of3 }, "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",  years_300)
 proj_2of3_50_upgrade_3of3_50_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_3of3_50 }, "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)", years_300)
+proj_2of3_50_upgrade_100_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_2of3_100 }, "2/3 phase-in (2005), 50% \u2192 100% (2026)", years_300)
 proj_2of3_100_stay_300_pairs   <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else m_2of3_100 }, "2/3 phase-in (2005), 100% compliance",      years_300)
 proj_2of3_100_upgrade_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else if (k < yr_upgrade) m_2of3_100 else m_3of3 }, "2/3 phase-in (2005), 100% \u2192 3/3 (2026)", years_300)
 proj_base_300_pairs <- run_proj_n_pairs(function(k) m_base,  "No mitigation (baseline)",       years_300)
@@ -3452,6 +3493,7 @@ realistic_300_pairs <- bind_rows(
   proj_2of3_50_stay_300_pairs,
   proj_2of3_50_upgrade_300_pairs,
   proj_2of3_50_upgrade_3of3_50_300_pairs,
+  proj_2of3_50_upgrade_100_300_pairs,
   proj_2of3_100_stay_300_pairs,
   proj_2of3_100_upgrade_300_pairs,
   proj_3of3_300_pairs
@@ -3461,6 +3503,7 @@ realistic_300_pairs <- bind_rows(
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
+    "2/3 phase-in (2005), 50% \u2192 100% (2026)",
     "2/3 phase-in (2005), 100% compliance",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)",
     "Immediate 3/3 (100% coverage)"
@@ -3578,6 +3621,7 @@ ggsave(fig_path("09_6a_phasein_compare"),          p_6a,  width = 9,  height = 5
 ggsave(fig_path("09_6b_delay_immediate"),          p_6b,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6c_delay_phasein"),            p_6c,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6d_all_scenarios"),            p_6d,  width = 11, height = 6, dpi = 200)
+ggsave(fig_path("09_6d_pairs_all_scenarios"),            p_6d_pairs,  width = 11, height = 6, dpi = 200)
 ggsave(fig_path("09_6e_lambda_delay_immediate"),   p_6e,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6f_lambda_delay_phasein"),     p_6f,  width = 9,  height = 5, dpi = 200)
 ggsave(fig_path("09_6g_lambda_all_delays"),        p_6g,  width = 11, height = 5, dpi = 200)
@@ -3592,5 +3636,6 @@ ggsave(fig_path("09_8c_pairs_bell_scenarios_phasein_500yr_zoom"), p_8c_pairs,  w
 ggsave(fig_path("09_9a_realistic_2of3_phasein"),        p_9a,  width = 10, height = 5, dpi = 200)
 ggsave(fig_path("09_9b_realistic_2of3_phasein_300yr"), p_9b,  width = 10, height = 5, dpi = 200)
 ggsave(fig_path("09_9a_pairs_realistic_2of3_phasein"), p_9a_pairs,  width = 10, height = 5, dpi = 200)
-message("19 figures saved to output/figures/ with suffix ", output_sfx)
+ggsave(fig_path("09_9a_pairs_zoom_realistic_2of3_phasein"), p_9a_pairs_zoom,  width = 10, height = 5, dpi = 200)
+message("20 figures saved to output/figures/ with suffix ", output_sfx)
 ```

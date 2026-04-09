@@ -1120,6 +1120,16 @@ p_waterfall <- ggplot(waterfall_data %>% filter(step > 0), aes(x = fleet_label, 
 p_waterfall
 ```
 
+```{r}
+# Diagnostic: check effective_coverage and effective_efficacy per scenario × compliance                                                                    
+  scenario_heatmap_pts %>%                                                                                                                                   
+    filter(!efficacy_scenario %in% c("No Mitigation", "Full Elimination")) %>%
+    select(efficacy_scenario, compliance_level, effective_coverage, effective_efficacy, lambda) %>%                                                          
+    arrange(effective_efficacy, efficacy_scenario, compliance_level) %>%                                                                                     
+    mutate(across(c(effective_coverage, effective_efficacy, lambda), ~round(.x, 3))) %>%                                                                     
+    print(n = 60)              
+```
+
 **Heatmap: efficacy x coverage -> lambda**
 ```{r, fig.width=10, fig.height=7}
 # Build a fine grid across efficacy (0-1) and coverage (0-1)
@@ -2325,18 +2335,22 @@ p_iuu_opt2b_v2 <- ggplot(grid_opt2, aes(x = coverage, y = efficacy, fill = lambd
 p_iuu_opt2b_v2
 ```
 
-**IUU 12-panel: mean λ with final uncertainty plot symbology (geom_contour_filled + heat_grad)**
+**IUU 9-panel: mean λ with final uncertainty plot symbology (geom_contour_filled + heat_grad)**
 ```{r p_iuu_12panel_mean, fig.width=16, fig.height=12}
-# Full 4 × 3 = 12-panel IUU × enforcement heatmap matching p_hm_mean symbology.
-# Uses geom_contour_filled + heat_grad palette + theme_bw instead of geom_tile + gradientn.
-# Labels shown only in the no-IUU / no-enforcement panel to avoid clutter.
+# 3 IUU proportions × 3 enforcement levels = 9 panels, matching p_hm_mean symbology.
+# Scenario labels placed only in top-right panel (IUU = 5%, 100% enforcement),
+# positioned outside the panel to the right to serve as a legend.
+# clip = "off" allows labels to extend beyond the panel boundary.
+
+# Labels: 100% compliance points in top-right panel (IUU = 5%, 100% reduction),
+# placed just beyond x = 1 so they fall outside the panel as a legend.
 iuu_labels_12 <- iuu_fleet_pts %>%
-  filter(compliance_level == "50%",
-         iuu_prop == 0.05, iuu_reduction == 0,
+  filter(compliance_level == "100%",
+         iuu_prop == 0.05, iuu_reduction == 1.0,
          !efficacy_scenario %in% c("No Mitigation", "Full Elimination")) %>%
   mutate(cov_r = round(effective_coverage, 2),
          eff_r = round(effective_efficacy, 2)) %>%
-  group_by(cov_r, eff_r) %>%
+  group_by(cov_r, eff_r, iuu_label, iuu_red_label) %>%
   summarise(efficacy_scenario = paste(efficacy_scenario, collapse = " / "),
             effective_coverage = first(effective_coverage),
             effective_efficacy = first(effective_efficacy),
@@ -2355,20 +2369,19 @@ p_iuu_12panel_mean <- ggplot(iuu_heatmap_grid, aes(x = coverage, y = efficacy, z
   geom_point(data = iuu_fleet_pts %>% filter(efficacy_scenario != "No Mitigation"),
              aes(x = effective_coverage, y = effective_efficacy, shape = compliance_level),
              inherit.aes = FALSE, size = 1.5, color = "black") +
-  # Scenario labels (50% compliance points, first panel only)
-  geom_label(data = iuu_labels_12,
-             aes(x = effective_coverage, y = effective_efficacy, label = efficacy_scenario),
-             inherit.aes = FALSE,
-             size = 2.5, fill = "white", alpha = 0.8,
-             label.padding = unit(0.10, "lines"),
-             hjust = 1.05, vjust = 0.5) +
-  # No mitigation: diamond in all panels, label in first panel only
+  # Scenario labels: top-right panel only, placed outside panel to the right as a legend
+  geom_text(data = iuu_labels_12,
+            aes(x = 1.03, y = effective_efficacy, label = efficacy_scenario),
+            inherit.aes = FALSE,
+            size = 2.5, hjust = 0, vjust = 0.5) +
+  # No mitigation: diamond in all panels, label in top-right panel only
   geom_point(data = iuu_fleet_pts %>%
                filter(efficacy_scenario == "No Mitigation", compliance_level == "100%"),
              aes(x = effective_coverage, y = effective_efficacy),
              inherit.aes = FALSE, size = 2.5, shape = 18, color = "black") +
   geom_label(data = iuu_fleet_pts %>%
-               filter(efficacy_scenario == "No Mitigation", compliance_level == "100%"),
+               filter(efficacy_scenario == "No Mitigation", compliance_level == "100%",
+                      iuu_prop == 0.05, iuu_reduction == 1.0),
              aes(x = effective_coverage, y = effective_efficacy + 0.04,
                  label = "No mitigation"),
              inherit.aes = FALSE,
@@ -3323,6 +3336,49 @@ p_det_runs_check <- ggplot(uncert_long) +
 p_det_runs_check
 ```
 
+**diagnostic: mean vs median lambda by scenario — checks for distributional skew**
+```{r fig.width=14, fig.height=5}
+# If mean ≈ median, distribution is symmetric and mean ~ 50th percentile.
+# If median > mean, distribution is left-skewed: most draws above mean,
+# a minority of low-VR draws pulling mean down. This would explain P(λ≥1) > 50%
+# when deterministic λ < 1.
+mean_vs_median <- uncert_long %>%
+  group_by(scenario, coverage) %>%
+  summarise(
+    mean_lambda   = mean(lambda),
+    median_lambda = median(lambda),
+    skew          = mean_lambda - median_lambda,  # negative = left-skewed
+    .groups = "drop"
+  )
+
+p_mean_median <- ggplot(mean_vs_median) +
+  geom_line(aes(x = coverage, y = mean_lambda,   color = scenario, linetype = "Mean"),
+            linewidth = 0.8) +
+  geom_line(aes(x = coverage, y = median_lambda, color = scenario, linetype = "Median"),
+            linewidth = 0.8) +
+  geom_hline(yintercept = 1, color = "darkgrey", linetype = "dashed", alpha = 0.6) +
+  scale_linetype_manual(values = c("Mean" = "solid", "Median" = "dashed"), name = NULL) +
+  scale_color_manual(values = scenario_colors, name = "Scenario") +
+  labs(x = "% fisheries with bycatch mitigation", y = expression(lambda),
+       title = "Diagnostic: mean vs median \u03bb by scenario",
+       subtitle = "Gap between lines indicates skew. Median > mean = left-skewed distribution.") +
+  themeo +
+  guides(color = guide_legend(nrow = 2))
+p_mean_median
+
+# Print skew summary at coverage = 0 (no mitigation baseline)
+mean_vs_median %>%
+  filter(coverage == 0) %>%
+  select(scenario, mean_lambda, median_lambda, skew) %>%
+  arrange(skew) %>%
+  print()
+
+  mean_vs_median %>%                                        
+    filter(coverage > 0.4) %>%          # focus on higher coverage where lambda nears 1
+    arrange(scenario, coverage) %>%                                                                                                                          
+    print(n = 50)
+```
+
 **delta method: analytical VR uncertainty (comparison with simulation)**
 ```{r}
 # Sensitivities from Pardo analysis (baseline deterministic matrix)
@@ -4071,7 +4127,7 @@ ggsave(fig_path("26_fixed_iuu_prob_recovery"),   p_fixed_iuu_prob,   width = 14,
 
 
 ggsave(fig_path("27_hm_mean_prob"),   p_hm_mean_prob,   width = 14, height = 6, dpi = 200)
-ggsave(fig_path("28_iuu_12panel_mean"), p_iuu_12panel_mean, width = 16, height = 14, dpi = 200)
+ggsave(fig_path("28_iuu_9panel_mean"),  p_iuu_12panel_mean, width = 16, height = 14, dpi = 200)
 
 message("All 27 figures saved to output/figures/ with suffix ", out_sfx)
 ```

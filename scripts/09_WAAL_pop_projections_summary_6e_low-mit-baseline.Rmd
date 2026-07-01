@@ -195,17 +195,19 @@ n0_vec
 
 
 # --- Full 3/3 mitigation matrix (Bell et al. 2025 ACAP efficacy: BLW + NS + BSL) ---
-# ns_* = 1 - (FM_total * (1 - eff_3of3_acap) + natural_mortality)
+# ns_* = 1 - (FM_total * fm_scale_to_none * (1 - eff_3of3_acap) + natural_mortality)
+# fm_scale_to_none rescales observed (low-mit) FM to F_none before applying the Bell et al.
+# efficacy, since eff_3of3_acap is defined relative to F_none, not relative to the low-mit baseline
 # J1 and J2J3 have separate FM, so ns_Juv1 (fecundity term) and ns_Juv (transitions) differ
-ns_Juv1 <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff_3of3_acap) + nm_j1)
-ns_Juv  <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_3of3_acap) + nm_juv)
-ns_Imm  <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_3of3_acap) + nm_imm)
-ns_EF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3_acap) + nm_efb)
-ns_ES   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3_acap) + nm_esb)
-ns_ENB  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3_acap) + nm_enb)
-ns_IF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_3of3_acap) + nm_ifb)
-ns_IS   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_3of3_acap) + nm_isb)
-ns_PF   <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_3of3_acap) + nm_pf)
+ns_Juv1 <- 1 - ((dem_fm_j1  + pel_fm_j1) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_j1)
+ns_Juv  <- 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_juv)
+ns_Imm  <- 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_imm)
+ns_EF   <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_efb)
+ns_ES   <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_esb)
+ns_ENB  <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_enb)
+ns_IF   <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_ifb)
+ns_IS   <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_isb)
+ns_PF   <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff_3of3_acap) + nm_pf)
 
 m_3of3 <- matrix(data = c(
   0,      0,       0,       0,       0,                                           0.5*ns_Juv1,              0,                        0.5*ns_Juv1,              0,                        0,                          0,
@@ -2656,8 +2658,11 @@ no delay or phase-in.
 **build and project all Bell scenarios**
 ```{r part7-bell-scenarios}
 bell_scenarios <- tibble(
-  # "efficacy = 0" applied to observed (low-mit) FM reproduces the low-mit baseline exactly,
-  # not a true zero-mitigation world -- see m_no_mit / lambda_no_mit for the real counterfactual
+  # All efficacies are relative to F_none (Bell et al. convention); the loop below applies
+  # fm_scale_to_none * (1 - efficacy) to observed (low-mit) FM. The baseline row uses
+  # eff_low_mit_20S (not 0) so that fm_scale_to_none * (1 - eff_low_mit_20S) = 1 exactly,
+  # reproducing the low-mit baseline with no special-casing. See m_no_mit / lambda_no_mit
+  # for the true zero-mitigation counterfactual (efficacy = 0 in this frame).
   scenario = c("Low mitigation (1990–2009 baseline)",
                "HSD",
                "BLW + NS",
@@ -2666,7 +2671,7 @@ bell_scenarios <- tibble(
                "Mean 2/3 ACAP",
                "3/3 ACAP",
                "Complete elimination"),
-  efficacy = c(0,
+  efficacy = c(eff_low_mit_20S,
                eff_hsd_acap,
                eff_blw_ns_acap,
                eff_blw_bsl_acap,
@@ -2694,15 +2699,15 @@ bell_proj <- map_dfr(1:nrow(bell_scenarios), function(i) {
   scen <- bell_scenarios$scenario[i]
 
   # Survival rates under this efficacy (lowercase to avoid overwriting outer ns_* variables)
-  ns_j1  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
-  ns_juv <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
-  ns_imm <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
-  ns_ef  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
-  ns_es  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
-  ns_enb <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
-  ns_if  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
-  ns_is  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
-  ns_pf  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+  ns_j1  <- 1 - ((dem_fm_j1  + pel_fm_j1) * fm_scale_to_none * (1 - eff) + nm_j1)
+  ns_juv <- 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none * (1 - eff) + nm_juv)
+  ns_imm <- 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none * (1 - eff) + nm_imm)
+  ns_ef  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_efb)
+  ns_es  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_esb)
+  ns_enb <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_enb)
+  ns_if  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_ifb)
+  ns_is  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_isb)
+  ns_pf  <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_pf)
 
   m_bell <- matrix(data = c(
     0,       0,       0,       0,       0,                                          0.5*ns_j1,                0,                         0.5*ns_j1,                0,                         0,                           0,
@@ -2851,15 +2856,15 @@ bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
   scen <- bell_scen_mitig$scenario[i]
 
   # Fully-mitigated survival rates for this scenario
-  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
-  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
-  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
-  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
-  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
-  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
-  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
-  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
-  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1) * fm_scale_to_none * (1 - eff) + nm_j1)
+  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none * (1 - eff) + nm_juv)
+  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none * (1 - eff) + nm_imm)
+  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_efb)
+  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_esb)
+  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_enb)
+  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_ifb)
+  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_isb)
+  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_pf)
 
   map_dfr(1:nrow(phase_df), function(j) {
     n_steps <- phase_df$n_steps[j]
@@ -3049,15 +3054,15 @@ bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
   eff  <- bell_scen_mitig$efficacy[i]
   scen <- bell_scen_mitig$scenario[i]
 
-  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff) + nm_j1)
-  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff) + nm_juv)
-  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff) + nm_imm)
-  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_efb)
-  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_esb)
-  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_enb)
-  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff) + nm_ifb)
-  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff) + nm_isb)
-  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff) + nm_pf)
+  ns_j1_f  <- 1 - ((dem_fm_j1  + pel_fm_j1) * fm_scale_to_none * (1 - eff) + nm_j1)
+  ns_juv_f <- 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none * (1 - eff) + nm_juv)
+  ns_imm_f <- 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none * (1 - eff) + nm_imm)
+  ns_ef_f  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_efb)
+  ns_es_f  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_esb)
+  ns_enb_f <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_enb)
+  ns_if_f  <- 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff) + nm_ifb)
+  ns_is_f  <- 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff) + nm_isb)
+  ns_pf_f  <- 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff) + nm_pf)
 
   map_dfr(1:nrow(phase_df), function(j) {
     n_steps <- phase_df$n_steps[j]
@@ -3298,22 +3303,28 @@ make_11stage <- function(s_j1, s_juv, s_imm, s_ef, s_es, s_enb, s_if, s_is, s_pf
 # Helper: compute survival rates for a given efficacy × compliance product
 surv_2of3 <- function(eff_compliance) {
   list(
-    s_j1  = 1 - ((dem_fm_j1  + pel_fm_j1)  * (1 - eff_compliance) + nm_j1),
-    s_juv = 1 - ((dem_fm_juv + pel_fm_juv) * (1 - eff_compliance) + nm_juv),
-    s_imm = 1 - ((dem_fm_imm + pel_fm_imm) * (1 - eff_compliance) + nm_imm),
-    s_ef  = 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_compliance) + nm_efb),
-    s_es  = 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_compliance) + nm_esb),
-    s_enb = 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_compliance) + nm_enb),
-    s_if  = 1 - ((dem_fm_fb  + pel_fm_fb)  * (1 - eff_compliance) + nm_ifb),
-    s_is  = 1 - ((dem_fm_sb  + pel_fm_sb)  * (1 - eff_compliance) + nm_isb),
-    s_pf  = 1 - ((dem_fm_nb  + pel_fm_nb)  * (1 - eff_compliance) + nm_pf)
+    s_j1  = 1 - ((dem_fm_j1  + pel_fm_j1) * fm_scale_to_none * (1 - eff_compliance) + nm_j1),
+    s_juv = 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none * (1 - eff_compliance) + nm_juv),
+    s_imm = 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none * (1 - eff_compliance) + nm_imm),
+    s_ef  = 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff_compliance) + nm_efb),
+    s_es  = 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff_compliance) + nm_esb),
+    s_enb = 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff_compliance) + nm_enb),
+    s_if  = 1 - ((dem_fm_fb  + pel_fm_fb) * fm_scale_to_none * (1 - eff_compliance) + nm_ifb),
+    s_is  = 1 - ((dem_fm_sb  + pel_fm_sb) * fm_scale_to_none * (1 - eff_compliance) + nm_isb),
+    s_pf  = 1 - ((dem_fm_nb  + pel_fm_nb) * fm_scale_to_none * (1 - eff_compliance) + nm_pf)
   )
 }
 
-# Build phase-in matrix list: compliance ramps linearly over n_phase_steps years
+# Build phase-in matrix list: compliance ramps linearly over n_phase_steps years.
+# Ramp starts at eff_low_mit_20S (not 0) so it continues smoothly from m_base: since
+# surv_2of3(eff_low_mit_20S) reproduces the low-mit baseline exactly (fm_scale_to_none *
+# (1 - eff_low_mit_20S) = 1), starting the ramp at 0 would jump straight to the no-mitigation
+# level (fm_scale_to_none applied with no reduction) instead of continuing from baseline.
 build_phase_2of3 <- function(max_compliance) {
+  target_eff <- bell_2of3_acap * max_compliance
   lapply(seq_len(n_phase_steps), function(i) {
-    s <- surv_2of3(bell_2of3_acap * (i / n_phase_steps) * max_compliance)
+    eff_i <- eff_low_mit_20S + (i / n_phase_steps) * (target_eff - eff_low_mit_20S)
+    s <- surv_2of3(eff_i)
     make_11stage(s$s_j1, s$s_juv, s$s_imm, s$s_ef, s$s_es, s$s_enb, s$s_if, s$s_is, s$s_pf)
   })
 }
@@ -3506,6 +3517,9 @@ realistic_scenarios_pairs <- bind_rows(
 p_9a <- ggplot(realistic_scenarios,
                aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
+  # Redraw baseline on top -- it overlaps the 50% compliance scenarios and would otherwise be hidden
+  geom_line(data = realistic_scenarios %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
+            linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_vline(xintercept = yr_phase_start, color = "grey60", linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = yr_upgrade,     color = "grey60", linetype = "dotted", linewidth = 0.4) +
@@ -3559,6 +3573,9 @@ p_9a
 p_9a_pairs <- ggplot(realistic_scenarios_pairs,
                aes(x = year, y = predicted_pairs, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
+  # Redraw baseline on top -- it overlaps the 50% compliance scenarios and would otherwise be hidden
+  geom_line(data = realistic_scenarios_pairs %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
+            linewidth = 0.9) +
   geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_vline(xintercept = yr_phase_start, color = "grey60", linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = yr_upgrade,     color = "grey60", linetype = "dotted", linewidth = 0.4) +
@@ -3721,6 +3738,9 @@ realistic_300_pairs <- bind_rows(
 p_9b <- ggplot(realistic_300,
                aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
+  # Redraw baseline on top -- it overlaps the 50% compliance scenarios and would otherwise be hidden
+  geom_line(data = realistic_300 %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
+            linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_vline(xintercept = yr_phase_start, color = "grey60", linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = yr_upgrade,     color = "grey60", linetype = "dotted", linewidth = 0.4) +
@@ -3767,6 +3787,9 @@ p_9b
 p_9b_pairs <- ggplot(realistic_300_pairs,
                aes(x = year, y = predicted_pairs, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
+  # Redraw baseline on top -- it overlaps the 50% compliance scenarios and would otherwise be hidden
+  geom_line(data = realistic_300_pairs %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
+            linewidth = 0.9) +
   geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_vline(xintercept = yr_phase_start, color = "grey60", linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = yr_upgrade,     color = "grey60", linetype = "dotted", linewidth = 0.4) +

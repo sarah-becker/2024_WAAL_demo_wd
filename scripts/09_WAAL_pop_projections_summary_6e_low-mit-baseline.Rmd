@@ -1,7 +1,16 @@
 ---
-title: "WAAL Population Projections — Summary"
+title: "WAAL Population Projections — Summary (low-mit baseline)"
 output: html_document
 ---
+
+**Changes from 09_WAAL_pop_projections_summary_6e.Rmd (2026-07-30):**
+- Added low-mitigation baseline: F_low_mit = midpoint between F_none and F_mean_2/3 (Bell et al.)
+  (1 out of 3 measures = half efficacy of mean 2/3; represents actual 1990–2009 management conditions)
+- Added m_no_mit: no-mitigation counterfactual matrix with FM scaled up to Bell et al. F_none
+- Relabeled "Low mitigation (1990–2009 baseline)" → "Low mitigation (1990–2009 baseline)" throughout
+- Added "No mitigation (counterfactual)" trajectory to all projection figures
+- Update input_sfx to "2026-07-30_low-mit-baseline" after running 06e_low-mit-baseline
+- All output file names updated with low-mit-baseline suffix to avoid overwriting old outputs
 
 ```{r setup, echo = FALSE, include = FALSE}
 library(here)
@@ -9,8 +18,8 @@ library(tidyverse)
 library(RColorBrewer)
 
 
-input_sfx     <- "2026-03-30"                    # date 06e was last run — must match saved CSV
-output_sfx    <- format(Sys.Date(), "%Y-%m-%d")  # today's date, used when saving figures
+input_sfx     <- "2026-07-30_low-mit-baseline"                    # date 06e was last run — must match saved CSV
+output_sfx    <- "2026-07-30_low-mit-baseline"   # fixed suffix — update when re-running
 target_period <- "1990-2009" # full-period baseline (06e output)
 
 themeo <- theme_classic() + #custom plotting theme
@@ -81,6 +90,12 @@ eff_ns_bsl_acap  <- bell_F$eff_acap_20S[bell_F$scenario == "NS_BSL"]
 eff_3of3_acap    <- bell_F$eff_acap_20S[bell_F$scenario == "BLW_NS_BSL"]
 eff_hsd_acap     <- bell_F$eff_acap_20S[bell_F$scenario == "HSD"]
 bell_2of3_acap   <- mean(bell_F$eff_acap_20S[bell_F$scenario %in% c("BLW_NS", "BLW_BSL", "NS_BSL")])
+
+# Low mitigation baseline: 1 out of 3 measures = half the efficacy of mean 2/3 scenario
+F_mean_2of3_20S  <- F_none_20S * (1 - bell_2of3_acap)
+F_low_mit_20S    <- (F_none_20S + F_mean_2of3_20S) / 2
+eff_low_mit_20S  <- 1 - (F_low_mit_20S / F_none_20S)
+fm_scale_to_none <- F_none_20S / F_low_mit_20S  # scalar to scale observed FM up to F_none level
 ```
 
 **load per-capita fishing mortality and natural mortality from 06a output**
@@ -131,9 +146,9 @@ N0 <- sum(pop_period$Pop) * 0.6  # scale SG counts to Bird Island (BI = SG × 0.
 
 **build matrices and extract lambdas**
 ```{r build-matrices}
-# --- No mitigation matrix ---
-# Survival = observed Pardo rates, which already encode fishing mortality
-# as it existed in the baseline period (1990-1994)
+# --- Low mitigation (1990-2009 observed baseline) matrix ---
+# Survival = observed Pardo rates, which encode FM from the low-mitigation historical period
+# (1 out of 3 measures in use; represents actual 1990-2009 management conditions)
 # Stages: J2 J3 Imm4 Imm5 PB IS IF ES EF ENB Sabb
 m_base <- matrix(data = c(
   0,     0,      0,      0,      0,                                          0.5*s_Juv1,             0,                       0.5*s_Juv1,             0,                       0,                         0,
@@ -211,8 +226,37 @@ lambda_3of3 <- as.numeric(eigen(m_3of3)$values[1])
 m_3of3
 lambda_3of3
 
-tibble(scenario  = c("No mitigation (baseline)", "3/3 ACAP (BLW + NS + BSL, Bell et al. 2025)"),
-       lambda    = c(lambda_base, lambda_3of3))
+# --- No mitigation counterfactual matrix ---
+# FM scaled up from observed (low-mit) to Bell et al. F_none level
+nm_Juv1 <- 1 - ((dem_fm_j1  + pel_fm_j1)  * fm_scale_to_none + nm_j1)
+nm_Juv  <- 1 - ((dem_fm_juv + pel_fm_juv) * fm_scale_to_none + nm_juv)
+nm_Imm  <- 1 - ((dem_fm_imm + pel_fm_imm) * fm_scale_to_none + nm_imm)
+nm_EF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * fm_scale_to_none + nm_efb)
+nm_ES   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * fm_scale_to_none + nm_esb)
+nm_ENB  <- 1 - ((dem_fm_nb  + pel_fm_nb)  * fm_scale_to_none + nm_enb)
+nm_IF   <- 1 - ((dem_fm_fb  + pel_fm_fb)  * fm_scale_to_none + nm_ifb)
+nm_IS   <- 1 - ((dem_fm_sb  + pel_fm_sb)  * fm_scale_to_none + nm_isb)
+nm_PF   <- 1 - ((dem_fm_nb  + pel_fm_nb)  * fm_scale_to_none + nm_pf)
+
+m_no_mit <- matrix(data = c(
+  0,      0,       0,       0,       0,                                           0.5*nm_Juv1,              0,                        0.5*nm_Juv1,              0,                        0,                          0,
+  nm_Juv, 0,       0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      nm_Juv,  0,       0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       nm_Imm,  0,       0,                                           0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       nm_Imm,  nm_Imm*r_Imm*(1-b_Imm)+nm_Imm*(1-r_Imm),   0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       nm_Imm*r_Imm*b_Imm*k_Imm,                   0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       nm_Imm*r_Imm*b_Imm*(1-k_Imm),               0,                        0,                        0,                        0,                        0,                          0,
+  0,      0,       0,       0,       0,                                           nm_IS*r_IS*b_IS*k_IS,     nm_IF*r_IF*b_IF*k_IF,     nm_ES*r_ES*b_ES*k_ES,     nm_EF*r_EF*b_EF*k_EF,     nm_ENB*r_ENB*b_ENB*k_ENB,   nm_PF*r_PF*b_PF*k_PF,
+  0,      0,       0,       0,       0,                                           nm_IS*r_IS*b_IS*(1-k_IS), nm_IF*r_IF*b_IF*(1-k_IF), nm_ES*r_ES*b_ES*(1-k_ES), nm_EF*r_EF*b_EF*(1-k_EF), nm_ENB*r_ENB*b_ENB*(1-k_ENB),nm_PF*r_PF*b_PF*(1-k_PF),
+  0,      0,       0,       0,       0,                                           nm_IS*r_IS*(1-b_IS),      nm_IF*r_IF*(1-b_IF),      nm_ES*r_ES*(1-b_ES),      nm_EF*r_EF*(1-b_EF),      nm_ENB*r_ENB*(1-b_ENB),     nm_PF*r_PF*(1-b_PF),
+  0,      0,       0,       0,       0,                                           nm_IS*(1-r_IS),           nm_IF*(1-r_IF),           nm_ES*(1-r_ES),           nm_EF*(1-r_EF),           nm_ENB*(1-r_ENB),           nm_PF*(1-r_PF)
+), nrow = 11, byrow = TRUE)
+
+lambda_no_mit <- as.numeric(eigen(m_no_mit)$values[1])
+
+tibble(scenario  = c("No mitigation (counterfactual)", "Low mitigation (1990-2009 baseline)",
+                     "3/3 ACAP (BLW + NS + BSL, Bell et al. 2025)"),
+       lambda    = c(lambda_no_mit, lambda_base, lambda_3of3))
 ```
 
 ---
@@ -338,47 +382,55 @@ yearslong <- 500
 
 stage_names <- c("J2", "J3", "Imm4", "Imm5", "PB", "IS", "IF", "ES", "EF", "ENB", "Sabb")
 
-#no mitigation vs immediate mitigation, ove 100 and 500 year time periods
+# low-mit baseline, no-mitigation counterfactual, and immediate full mitigation
 output_base      <- matrix(nrow = years     + 1, ncol = 1) %>% as.data.frame()
 output_imm       <- matrix(nrow = years     + 1, ncol = 1) %>% as.data.frame()
+output_nomit     <- matrix(nrow = years     + 1, ncol = 1) %>% as.data.frame()
 output_base_long <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
 output_imm_long  <- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
+output_nomit_long<- matrix(nrow = yearslong + 1, ncol = 1) %>% as.data.frame()
 
-output_base[1, 1]      <- N0
-output_imm[1, 1]       <- N0
-output_base_long[1, 1] <- N0
-output_imm_long[1, 1]  <- N0
+output_base[1, 1]       <- N0
+output_imm[1, 1]        <- N0
+output_nomit[1, 1]      <- N0
+output_base_long[1, 1]  <- N0
+output_imm_long[1, 1]   <- N0
+output_nomit_long[1, 1] <- N0
 
 for (k in 1:years) {
-  output_base[k + 1, 1] <- lambda_base * output_base[k, 1]
-  output_imm[k + 1, 1]  <- lambda_3of3 * output_imm[k, 1]
+  output_base[k + 1, 1]  <- lambda_base   * output_base[k, 1]
+  output_imm[k + 1, 1]   <- lambda_3of3   * output_imm[k, 1]
+  output_nomit[k + 1, 1] <- lambda_no_mit * output_nomit[k, 1]
 }
 
 for (k in 1:yearslong) {
-  output_base_long[k + 1, 1] <- lambda_base * output_base_long[k, 1]
-  output_imm_long[k + 1, 1]  <- lambda_3of3 * output_imm_long[k, 1]
+  output_base_long[k + 1, 1]  <- lambda_base   * output_base_long[k, 1]
+  output_imm_long[k + 1, 1]   <- lambda_3of3   * output_imm_long[k, 1]
+  output_nomit_long[k + 1, 1] <- lambda_no_mit * output_nomit_long[k, 1]
 }
 
+scen_levels_part1 <- c("No mitigation (counterfactual)",
+                        "Low mitigation (1990–2009 baseline)",
+                        "Immediate 3/3 (100% coverage)")
 
-#combine output to use later in plotting
 proj_part1 <- bind_rows(
-  output_base %>% mutate(scenario = "No mitigation (baseline)"),
-  output_imm  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
+  output_nomit %>% mutate(scenario = "No mitigation (counterfactual)"),
+  output_base  %>% mutate(scenario = "Low mitigation (1990–2009 baseline)"),
+  output_imm   %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
 ) %>%
-  mutate(year     = rep(0:years, 2),
+  mutate(year     = rep(0:years, 3),
          N        = V1,
-         scenario = factor(scenario,
-           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
+         scenario = factor(scenario, levels = scen_levels_part1)) %>%
   select(year, N, scenario)
 
 proj_part1_long <- bind_rows(
-  output_base_long %>% mutate(scenario = "No mitigation (baseline)"),
-  output_imm_long  %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
+  output_nomit_long %>% mutate(scenario = "No mitigation (counterfactual)"),
+  output_base_long  %>% mutate(scenario = "Low mitigation (1990–2009 baseline)"),
+  output_imm_long   %>% mutate(scenario = "Immediate 3/3 (100% coverage)")
 ) %>%
-  mutate(year     = rep(0:yearslong, 2),
+  mutate(year     = rep(0:yearslong, 3),
          N        = V1,
-         scenario = factor(scenario,
-           levels = c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)"))) %>%
+         scenario = factor(scenario, levels = scen_levels_part1)) %>%
   select(year, N, scenario)
 ```
 
@@ -404,10 +456,12 @@ p_1a <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = sce
   geom_text(data = bird_obs,
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(-20, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -417,7 +471,7 @@ p_1a <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = sce
   labs(x = "Years since 2000 (1990\u20132009 mean)",
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
-       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 4),
+       subtitle = paste0("\u03BB (low mitigation baseline) = ", round(lambda_base, 4),
                          ";  \u03BB (full 3/3) = ", round(lambda_3of3, 4),
                          ";  N\u2080 = ", scales::comma(round(N0)),
                          " | black triangles = Clay 2019 population totals;\n orange dots = census breeding pairs")) +
@@ -442,9 +496,9 @@ p_1b <- ggplot(proj_part1, aes(x = year, y = N, color = scenario, linetype = sce
   geom_text(data = dem_obs,
             aes(x = year, y = N_obs, label = Period),
             inherit.aes = FALSE, color = "black", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+  scale_color_manual(values = c("Low mitigation (1990–2009 baseline)"      = "#d73027",
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+  scale_linetype_manual(values = c("Low mitigation (1990–2009 baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "Adults"                        = "solid",
                                     "Immatures"                     = "dashed"),
@@ -477,10 +531,12 @@ p_1c <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
   geom_text(data = bird_obs,
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -491,7 +547,7 @@ p_1c <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
        y = "Population (N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection vs observed breeding pairs — ", target_period, " baseline"),
-       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
+       subtitle = paste0("\u03BB (low mitigation baseline) = ", round(lambda_base, 5),
                          ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
                          ";  orange dots = census breeding pairs")) +
   themeo + theme(legend.position = "bottom")
@@ -515,9 +571,9 @@ p_1d <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
   geom_text(data = dem_obs,
             aes(x = year, y = N_obs, label = Period),
             inherit.aes = FALSE, color = "black", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
+  scale_color_manual(values = c("Low mitigation (1990–2009 baseline)"      = "#d73027",
                                  "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
+  scale_linetype_manual(values = c("Low mitigation (1990–2009 baseline)"      = "dashed",
                                     "Immediate 3/3 (100% coverage)" = "solid",
                                     "Adults"                        = "solid",
                                     "Immatures"                     = "dashed"),
@@ -550,10 +606,12 @@ p_1e <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
   geom_text(data = bird_obs,
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
@@ -561,7 +619,7 @@ p_1e <- ggplot(proj_part1_long, aes(x = year, y = N, color = scenario, linetype 
        y = "log\u2081\u2080(N individuals)",
        color = NULL, linetype = NULL,
        title = paste0("500-year projection, log scale — ", target_period, " baseline"),
-       subtitle = paste0("\u03BB (no mitigation) = ", round(lambda_base, 5),
+       subtitle = paste0("\u03BB (low mitigation baseline) = ", round(lambda_base, 5),
                          ";  \u03BB (full 3/3) = ", round(lambda_3of3, 5),
                          ";  orange dots = census breeding pairs\n"#,
                         # "Straight lines in log space reflect constant fixed lambda"
@@ -582,17 +640,19 @@ lambda_ts <- proj_part1_long %>%
 p_1f <- ggplot(lambda_ts, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
   labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
        y = expression(lambda[t] ~ "(N(t+1) / N(t))"),
        color = NULL, linetype = NULL,
        title = paste0("Annual \u03BB over 500-year horizon — ", target_period, " baseline") ) + #,
-       # subtitle = paste0("Fixed-lambda scalar model: lines are flat at \u03BB (no mitigation) = ",
+       # subtitle = paste0("Fixed-lambda scalar model: lines are flat at \u03BB (low mitigation baseline) = ",
        #                   round(lambda_base, 5), " and \u03BB (full 3/3) = ", round(lambda_3of3, 5),
        #                   "\nDashed grey line = \u03BB = 1 (population stable)")) +
   themeo + theme(legend.position = "bottom")
@@ -610,16 +670,20 @@ p_1f
   
 **project**
 ```{r part2-project}
-mat_base  <- matrix(0, nrow = years + 1, ncol = 11)
-mat_mitig <- matrix(0, nrow = years + 1, ncol = 11)
-colnames(mat_base)  <- stage_names
-colnames(mat_mitig) <- stage_names
-mat_base[1, ]  <- n0_vec
-mat_mitig[1, ] <- n0_vec
+mat_base   <- matrix(0, nrow = years + 1, ncol = 11)
+mat_mitig  <- matrix(0, nrow = years + 1, ncol = 11)
+mat_no_mit <- matrix(0, nrow = years + 1, ncol = 11)
+colnames(mat_base)   <- stage_names
+colnames(mat_mitig)  <- stage_names
+colnames(mat_no_mit) <- stage_names
+mat_base[1, ]   <- n0_vec
+mat_mitig[1, ]  <- n0_vec
+mat_no_mit[1, ] <- n0_vec
 
 for (k in 1:years) {
-  mat_base[k + 1, ]  <- m_base %*% mat_base[k, ]
-  mat_mitig[k + 1, ] <- m_3of3 %*% mat_mitig[k, ]
+  mat_base[k + 1, ]   <- m_base   %*% mat_base[k, ]
+  mat_mitig[k + 1, ]  <- m_3of3   %*% mat_mitig[k, ]
+  mat_no_mit[k + 1, ] <- m_no_mit %*% mat_no_mit[k, ]
 }
 
 # Convert to long format with broad stage groupings for plotting in ggplot
@@ -641,11 +705,13 @@ to_long <- function(mat, scenario_label) {
 }
 
 proj_part2 <- bind_rows(
-  to_long(mat_base,  "No mitigation (baseline)"),
-  to_long(mat_mitig, "Immediate 3/3 (100% coverage)")
+  to_long(mat_no_mit, "No mitigation (counterfactual)"),
+  to_long(mat_base,   "Low mitigation (1990–2009 baseline)"),
+  to_long(mat_mitig,  "Immediate 3/3 (100% coverage)")
 ) %>%
   mutate(scenario = factor(scenario,
-                            levels = c("No mitigation (baseline)",
+                            levels = c("No mitigation (counterfactual)",
+                                       "Low mitigation (1990–2009 baseline)",
                                        "Immediate 3/3 (100% coverage)")))
 
 proj_part2_groups <- proj_part2 %>%
@@ -656,7 +722,8 @@ proj_part2_groups <- proj_part2 %>%
 proj_part2_total <- proj_part2 %>%
   group_by(year, scenario) %>%
   summarise(N = sum(N), .groups = "drop") %>%
-  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)",
+                                                 "Low mitigation (1990–2009 baseline)",
                                                  "Immediate 3/3 (100% coverage)")))
 
 # Predicted breeding pairs: active breeders (IS+IF+ES+EF) / 2 at each time step
@@ -677,10 +744,12 @@ p_2a <- ggplot(proj_part2_total, aes(x = year, y = N, color = scenario, linetype
             inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -714,10 +783,12 @@ p_2a_pairs <- ggplot(proj_part2_pairs, aes(x = year, y = predicted_pairs, color 
              inherit.aes = FALSE, color = "#2166ac", size = 3, shape = 15) +
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
   labs(x = "Years since 2000 (1990\u20132009 mean)",
@@ -732,35 +803,43 @@ p_2a_pairs
 
 **500-year stage-structured projection (Part 2 extension)**
 ```{r part2-project-long}
-mat_base_long  <- matrix(0, nrow = yearslong + 1, ncol = 11)
-mat_mitig_long <- matrix(0, nrow = yearslong + 1, ncol = 11)
+mat_base_long   <- matrix(0, nrow = yearslong + 1, ncol = 11)
+mat_mitig_long  <- matrix(0, nrow = yearslong + 1, ncol = 11)
+mat_nomit_long  <- matrix(0, nrow = yearslong + 1, ncol = 11)
 colnames(mat_base_long)  <- stage_names
 colnames(mat_mitig_long) <- stage_names
+colnames(mat_nomit_long) <- stage_names
 mat_base_long[1, ]  <- n0_vec
 mat_mitig_long[1, ] <- n0_vec
+mat_nomit_long[1, ] <- n0_vec
 
 for (k in 1:yearslong) {
-  mat_base_long[k + 1, ]  <- m_base %*% mat_base_long[k, ]
-  mat_mitig_long[k + 1, ] <- m_3of3 %*% mat_mitig_long[k, ]
+  mat_base_long[k + 1, ]  <- m_base   %*% mat_base_long[k, ]
+  mat_mitig_long[k + 1, ] <- m_3of3   %*% mat_mitig_long[k, ]
+  mat_nomit_long[k + 1, ] <- m_no_mit %*% mat_nomit_long[k, ]
 }
 
+scen_levels_part2 <- c("No mitigation (counterfactual)",
+                        "Low mitigation (1990–2009 baseline)",
+                        "Immediate 3/3 (100% coverage)")
+
 proj_part2_total_long <- bind_rows(
-  as.data.frame(mat_base_long)  %>% mutate(year = 0:yearslong, scenario = "No mitigation (baseline)"),
+  as.data.frame(mat_nomit_long) %>% mutate(year = 0:yearslong, scenario = "No mitigation (counterfactual)"),
+  as.data.frame(mat_base_long)  %>% mutate(year = 0:yearslong, scenario = "Low mitigation (1990–2009 baseline)"),
   as.data.frame(mat_mitig_long) %>% mutate(year = 0:yearslong, scenario = "Immediate 3/3 (100% coverage)")
 ) %>%
   mutate(N        = rowSums(across(all_of(stage_names))),
-         scenario = factor(scenario, levels = c("No mitigation (baseline)",
-                                                 "Immediate 3/3 (100% coverage)"))) %>%
+         scenario = factor(scenario, levels = scen_levels_part2)) %>%
   select(year, N, scenario)
 
 # Predicted breeding pairs for 500-year Part 2 projection
 proj_part2_pairs_long <- bind_rows(
-  as.data.frame(mat_base_long)  %>% mutate(year = 0:yearslong, scenario = "No mitigation (baseline)"),
+  as.data.frame(mat_nomit_long) %>% mutate(year = 0:yearslong, scenario = "No mitigation (counterfactual)"),
+  as.data.frame(mat_base_long)  %>% mutate(year = 0:yearslong, scenario = "Low mitigation (1990–2009 baseline)"),
   as.data.frame(mat_mitig_long) %>% mutate(year = 0:yearslong, scenario = "Immediate 3/3 (100% coverage)")
 ) %>%
   mutate(predicted_pairs = (IS + IF + ES + EF) / 2,
-         scenario = factor(scenario, levels = c("No mitigation (baseline)",
-                                                 "Immediate 3/3 (100% coverage)"))) %>%
+         scenario = factor(scenario, levels = scen_levels_part2)) %>%
   select(year, predicted_pairs, scenario)
 ```
 
@@ -773,10 +852,12 @@ p_2c <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, lin
              inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -805,10 +886,12 @@ p_2c_pairs <- ggplot(proj_part2_pairs_long, aes(x = year, y = predicted_pairs, c
              inherit.aes = FALSE, color = "#2166ac", size = 3, shape = 15) +
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
   labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
@@ -826,10 +909,12 @@ p_2c_pairs
 p_2e <- ggplot(proj_part2_total_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
@@ -853,10 +938,12 @@ lambda_ts_2 <- proj_part2_total_long %>%
 p_2f <- ggplot(lambda_ts_2, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
   labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
@@ -1631,7 +1718,8 @@ proj_part3_compare <- bind_rows(
   proj_part2_total,
   proj_part3_total
 ) %>%
-  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)",
+                                                 "Low mitigation (1990–2009 baseline)",
                                                  "Immediate 3/3 (100% coverage)",
                                                  "5-year phase-in")))
 
@@ -1644,12 +1732,14 @@ p_3a <- ggplot(proj_part3_compare, aes(x = year, y = N, color = scenario, linety
             inherit.aes = FALSE, color = "#e6550d", linewidth = 0.5, linetype = "dotted") +
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -1671,7 +1761,8 @@ proj_part3_compare_pairs <- bind_rows(
   proj_part2_pairs,
   proj_part3_pairs
 ) %>%
-  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)",
+                                                 "Low mitigation (1990–2009 baseline)",
                                                  "Immediate 3/3 (100% coverage)",
                                                  "5-year phase-in")))
 
@@ -1688,12 +1779,14 @@ p_3a_pairs <- ggplot(proj_part3_compare_pairs, aes(x = year, y = predicted_pairs
              inherit.aes = FALSE, color = "#2166ac", size = 3, shape = 15) +
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, years, 10), limits = c(-20, years)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
   labs(x = "Years since 2000 (1990\u20132009 mean)",
@@ -1728,7 +1821,8 @@ proj_part3_compare_long <- bind_rows(
   proj_part2_total_long,
   proj_part3_total_long
 ) %>%
-  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)",
+                                                 "Low mitigation (1990–2009 baseline)",
                                                  "Immediate 3/3 (100% coverage)",
                                                  "5-year phase-in")))
 
@@ -1749,12 +1843,14 @@ p_3c <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, l
              inherit.aes = FALSE, color = "#e6550d", size = 3, shape = 16) +
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma,
                      breaks = scales::pretty_breaks(n = 6),
@@ -1776,7 +1872,8 @@ proj_part3_compare_pairs_long <- bind_rows(
   proj_part2_pairs_long,
   proj_part3_pairs_long
 ) %>%
-  mutate(scenario = factor(scenario, levels = c("No mitigation (baseline)",
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)",
+                                                 "Low mitigation (1990–2009 baseline)",
                                                  "Immediate 3/3 (100% coverage)",
                                                  "5-year phase-in")))
 
@@ -1791,12 +1888,14 @@ p_3c_pairs <- ggplot(proj_part3_compare_pairs_long, aes(x = year, y = predicted_
              inherit.aes = FALSE, color = "#2166ac", size = 3, shape = 15) +
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(-20, yearslong)) +
   scale_y_continuous(labels = scales::comma, breaks = scales::pretty_breaks(n = 6)) +
   labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
@@ -1814,12 +1913,14 @@ p_3c_pairs
 p_3e <- ggplot(proj_part3_compare_long, aes(x = year, y = N, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_log10(labels = scales::comma,
                 breaks = scales::trans_breaks("log10", function(x) 10^x)) +
@@ -1843,12 +1944,14 @@ lambda_ts_3 <- proj_part3_compare_long %>%
 p_3f <- ggplot(lambda_ts_3, aes(x = year, y = lambda_t, color = scenario, linetype = scenario)) +
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
-  scale_color_manual(values = c("No mitigation (baseline)"      = "#d73027",
-                                 "Immediate 3/3 (100% coverage)" = "#253494",
-                                 "5-year phase-in"               = "#1a9641")) +
-  scale_linetype_manual(values = c("No mitigation (baseline)"      = "dashed",
-                                    "Immediate 3/3 (100% coverage)" = "solid",
-                                    "5-year phase-in"               = "solid")) +
+  scale_color_manual(values = c("No mitigation (counterfactual)"           = "#b2182b",
+                                 "Low mitigation (1990–2009 baseline)"      = "#d73027",
+                                 "Immediate 3/3 (100% coverage)"           = "#253494",
+                                 "5-year phase-in"                         = "#1a9641")) +
+  scale_linetype_manual(values = c("No mitigation (counterfactual)"           = "dotted",
+                                    "Low mitigation (1990–2009 baseline)"      = "dashed",
+                                    "Immediate 3/3 (100% coverage)"           = "solid",
+                                    "5-year phase-in"                         = "solid")) +
   scale_x_continuous(breaks = seq(0, yearslong, 100), limits = c(0, yearslong)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 6)) +
   labs(x = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
@@ -1973,7 +2076,8 @@ all_scenarios_pairs <- bind_rows(
   proj_d20_p5_pairs
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "Immediate 3/3 (100% coverage)",
     "5-year phase-in",
     "10-year phase-in",
@@ -1999,7 +2103,8 @@ all_scenarios <- bind_rows(
   proj_d20_p5
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "Immediate 3/3 (100% coverage)",
     "5-year phase-in",
     "10-year phase-in",
@@ -2016,7 +2121,8 @@ all_scenarios <- bind_rows(
 **plot 6a — phase-in speed comparison**
 ```{r plot-6a, fig.width = 9, fig.height = 5}
 p_6a <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-year phase-in",
                           "10-year phase-in",
@@ -2031,13 +2137,15 @@ p_6a <- all_scenarios %>%
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"      = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"      = "#d73027",
     "Immediate 3/3 (100% coverage)" = "#253494",
     "5-year phase-in"               = "#1a9641",
     "10-year phase-in"              = "#78c679",
     "20-year phase-in"              = "#c2e699")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"      = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"      = "dashed",
     "Immediate 3/3 (100% coverage)" = "solid",
     "5-year phase-in"               = "solid",
     "10-year phase-in"              = "solid",
@@ -2059,7 +2167,8 @@ p_6a
 **plot 6a-pairs — phase-in speed comparison in breeding pairs (observed data unconverted)**
 ```{r plot-6a-pairs, fig.width = 9, fig.height = 5}
 p_6a_pairs <- all_scenarios_pairs %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-year phase-in",
                           "10-year phase-in",
@@ -2078,13 +2187,15 @@ p_6a_pairs <- all_scenarios_pairs %>%
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"      = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"      = "#d73027",
     "Immediate 3/3 (100% coverage)" = "#253494",
     "5-year phase-in"               = "#1a9641",
     "10-year phase-in"              = "#78c679",
     "20-year phase-in"              = "#c2e699")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"      = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"      = "dashed",
     "Immediate 3/3 (100% coverage)" = "solid",
     "5-year phase-in"               = "solid",
     "10-year phase-in"              = "solid",
@@ -2102,7 +2213,8 @@ p_6a_pairs
 **plot 6b — cost of delaying then implementing immediately**
 ```{r plot-6b, fig.width = 9, fig.height = 5}
 p_6b <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then immediate 3/3",
                           "10-yr delay, then immediate 3/3",
@@ -2117,13 +2229,15 @@ p_6b <- all_scenarios %>%
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then immediate 3/3"  = "#2166ac",
     "10-yr delay, then immediate 3/3" = "#74add1",
     "20-yr delay, then immediate 3/3" = "#abd9e9")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
@@ -2145,7 +2259,8 @@ p_6b
 **plot 6b-pairs — cost of delaying then implementing immediately in breeding pairs (observed data unconverted)**
 ```{r plot-6b-pairs, fig.width = 9, fig.height = 5}
 p_6b_pairs <- all_scenarios_pairs %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then immediate 3/3",
                           "10-yr delay, then immediate 3/3",
@@ -2164,13 +2279,15 @@ p_6b_pairs <- all_scenarios_pairs %>%
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then immediate 3/3"  = "#2166ac",
     "10-yr delay, then immediate 3/3" = "#74add1",
     "20-yr delay, then immediate 3/3" = "#abd9e9")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
@@ -2188,7 +2305,8 @@ p_6b_pairs
 **plot 6c — cost of delaying then using 5-year phase-in**
 ```{r plot-6c, fig.width = 9, fig.height = 5}
 p_6c <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then 5-yr phase-in",
                           "10-yr delay, then 5-yr phase-in",
@@ -2203,13 +2321,15 @@ p_6c <- all_scenarios %>%
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then 5-yr phase-in"  = "#762a83",
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
@@ -2231,7 +2351,8 @@ p_6c
 **plot 6c-pairs — cost of delaying then using 5-year phase-in in breeding pairs (observed data unconverted)**
 ```{r plot-6c-pairs, fig.width = 9, fig.height = 5}
 p_6c_pairs <- all_scenarios_pairs %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then 5-yr phase-in",
                           "10-yr delay, then 5-yr phase-in",
@@ -2250,13 +2371,15 @@ p_6c_pairs <- all_scenarios_pairs %>%
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then 5-yr phase-in"  = "#762a83",
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
@@ -2283,7 +2406,8 @@ p_6d <- ggplot(all_scenarios, aes(x = year, y = N, color = scenario, linetype = 
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-year phase-in"                 = "#1a9641",
     "10-year phase-in"                = "#78c679",
@@ -2295,7 +2419,8 @@ p_6d <- ggplot(all_scenarios, aes(x = year, y = N, color = scenario, linetype = 
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-year phase-in"                 = "solid",
     "10-year phase-in"                = "solid",
@@ -2337,7 +2462,8 @@ p_6d_pairs <- ggplot(all_scenarios_pairs, aes(x = year, y = predicted_pairs, col
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-year phase-in"                 = "#1a9641",
     "10-year phase-in"                = "#78c679",
@@ -2349,7 +2475,8 @@ p_6d_pairs <- ggplot(all_scenarios_pairs, aes(x = year, y = predicted_pairs, col
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-year phase-in"                 = "solid",
     "10-year phase-in"                = "solid",
@@ -2374,7 +2501,8 @@ p_6d_pairs
 **plot 6e — annual lambda, delay-then-immediate scenarios**
 ```{r plot-6e, fig.width = 9, fig.height = 5}
 lambda_delay_imm <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then immediate 3/3",
                           "10-yr delay, then immediate 3/3",
@@ -2388,13 +2516,15 @@ p_6e <- ggplot(lambda_delay_imm, aes(x = year, y = lambda_t, color = scenario, l
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then immediate 3/3"  = "#2166ac",
     "10-yr delay, then immediate 3/3" = "#74add1",
     "20-yr delay, then immediate 3/3" = "#abd9e9")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
@@ -2413,7 +2543,8 @@ p_6e
 **plot 6f — annual lambda, delay-then-phase-in scenarios**
 ```{r plot-6f, fig.width = 9, fig.height = 5}
 lambda_delay_phasein <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then 5-yr phase-in",
                           "10-yr delay, then 5-yr phase-in",
@@ -2427,13 +2558,15 @@ p_6f <- ggplot(lambda_delay_phasein, aes(x = year, y = lambda_t, color = scenari
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then 5-yr phase-in"  = "#762a83",
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then 5-yr phase-in"  = "solid",
     "10-yr delay, then 5-yr phase-in" = "solid",
@@ -2452,7 +2585,8 @@ p_6f
 **plot 6g — annual lambda, all 6 delay scenarios**
 ```{r plot-6g, fig.width = 11, fig.height = 5}
 lambda_all_delays <- all_scenarios %>%
-  filter(scenario %in% c("No mitigation (baseline)",
+  filter(scenario %in% c("No mitigation (counterfactual)",
+                          "Low mitigation (1990–2009 baseline)",
                           "Immediate 3/3 (100% coverage)",
                           "5-yr delay, then immediate 3/3",
                           "10-yr delay, then immediate 3/3",
@@ -2469,7 +2603,8 @@ p_6g <- ggplot(lambda_all_delays, aes(x = year, y = lambda_t, color = scenario, 
   geom_line(linewidth = 0.9) +
   geom_hline(yintercept = 1, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"        = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"        = "#d73027",
     "Immediate 3/3 (100% coverage)"   = "#253494",
     "5-yr delay, then immediate 3/3"  = "#2166ac",
     "10-yr delay, then immediate 3/3" = "#74add1",
@@ -2478,7 +2613,8 @@ p_6g <- ggplot(lambda_all_delays, aes(x = year, y = lambda_t, color = scenario, 
     "10-yr delay, then 5-yr phase-in" = "#af8dc3",
     "20-yr delay, then 5-yr phase-in" = "#e7d4e8")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"        = "dashed",
     "Immediate 3/3 (100% coverage)"   = "solid",
     "5-yr delay, then immediate 3/3"  = "solid",
     "10-yr delay, then immediate 3/3" = "solid",
@@ -2520,7 +2656,9 @@ no delay or phase-in.
 **build and project all Bell scenarios**
 ```{r part7-bell-scenarios}
 bell_scenarios <- tibble(
-  scenario = c("No mitigation",
+  # "efficacy = 0" applied to observed (low-mit) FM reproduces the low-mit baseline exactly,
+  # not a true zero-mitigation world -- see m_no_mit / lambda_no_mit for the real counterfactual
+  scenario = c("Low mitigation (1990–2009 baseline)",
                "HSD",
                "BLW + NS",
                "BLW + BSL",
@@ -2539,7 +2677,8 @@ bell_scenarios <- tibble(
 )
 
 bell_colors <- c(
-  "No mitigation"        = "#d73027",
+  "No mitigation (counterfactual)" = "#b2182b",
+  "Low mitigation (1990–2009 baseline)" = "#d73027",
   "HSD"                  = "#d95f02",
   "BLW + NS"             = "#a1d99b",
   "BLW + BSL"            = "#74c476",
@@ -2588,17 +2727,33 @@ bell_proj <- map_dfr(1:nrow(bell_scenarios), function(i) {
   tibble(year = 0:years, N = N_t, scenario = scen, lambda = lam)
 })
 
-bell_proj <- bell_proj %>%
-  mutate(scenario = factor(scenario, levels = bell_scenarios$scenario))
+# True no-mitigation counterfactual: FM scaled up to Bell et al. F_none (see m_no_mit in setup),
+# not the efficacy=0 row above (which reproduces the low-mit baseline)
+N_t_nomit    <- numeric(years + 1)
+N_t_nomit[1] <- N0
+for (k in 1:years) N_t_nomit[k + 1] <- lambda_no_mit * N_t_nomit[k]
+
+bell_proj <- bind_rows(
+  tibble(year = 0:years, N = N_t_nomit, scenario = "No mitigation (counterfactual)", lambda = lambda_no_mit),
+  bell_proj
+) %>%
+  mutate(scenario = factor(scenario, levels = c("No mitigation (counterfactual)", bell_scenarios$scenario)))
 
 bell_proj_pairs <- bell_proj %>%
   mutate(predicted_pairs = N / pairs_scale)
 
 # Lambda summary
+efficacy_lookup <- bind_rows(
+  tibble(scenario = "No mitigation (counterfactual)", efficacy = NA_real_),
+  bell_scenarios
+)
+
 bell_proj %>%
   distinct(scenario, lambda) %>%
-  mutate(efficacy_pct = round(bell_scenarios$efficacy * 100, 1),
+  left_join(efficacy_lookup, by = "scenario") %>%
+  mutate(efficacy_pct = round(efficacy * 100, 1),
          lambda       = round(lambda, 5)) %>%
+  select(scenario, efficacy_pct, lambda) %>%
   print()
 ```
 
@@ -2615,7 +2770,8 @@ p_7a <- ggplot(bell_proj, aes(x = year, y = N, color = scenario, linetype = scen
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = bell_colors) +
   scale_linetype_manual(values = c(
-    "No mitigation"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)" = "dashed",
     "HSD"                  = "solid",
     "BLW + NS"             = "solid",
     "BLW + BSL"            = "solid",
@@ -2651,7 +2807,8 @@ p_7a_pairs <- ggplot(bell_proj_pairs, aes(x = year, y = predicted_pairs, color =
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = bell_colors) +
   scale_linetype_manual(values = c(
-    "No mitigation"        = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)" = "dashed",
     "HSD"                  = "solid",
     "BLW + NS"             = "solid",
     "BLW + BSL"            = "solid",
@@ -2686,8 +2843,8 @@ phase_df <- tibble(
   n_steps  = c(0L, 5L, 10L, 20L, 30L, 40L, 50L, 60L)
 )
 
-# Mitigation scenarios only (No mitigation efficacy = 0; phase-in has no effect, shown as baseline)
-bell_scen_mitig <- bell_scenarios %>% filter(scenario != "No mitigation")
+# Mitigation scenarios only (Low mitigation baseline efficacy = 0; phase-in has no effect, shown as baseline)
+bell_scen_mitig <- bell_scenarios %>% filter(scenario != "Low mitigation (1990–2009 baseline)")
 
 bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
   eff  <- bell_scen_mitig$efficacy[i]
@@ -2751,7 +2908,7 @@ bell_phase_proj <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
   })
 })
 
-# No-mitigation baseline: stage-structured projection with m_base (consistent with above)
+# Low-mitigation baseline: stage-structured projection with m_base (consistent with above)
 N_vec_base    <- n0_vec
 N_base        <- numeric(years + 1)
 pairs_base    <- numeric(years + 1)
@@ -2763,12 +2920,25 @@ for (k in 1:years) {
   pairs_base[k + 1]  <- sum(N_vec_base[6:9]) / 2
 }
 
+# No-mitigation counterfactual: stage-structured projection with m_no_mit (FM scaled to F_none)
+N_vec_nomit    <- n0_vec
+N_nomit        <- numeric(years + 1)
+pairs_nomit    <- numeric(years + 1)
+N_nomit[1]     <- sum(N_vec_nomit)
+pairs_nomit[1] <- sum(N_vec_nomit[6:9]) / 2
+for (k in 1:years) {
+  N_vec_nomit         <- m_no_mit %*% N_vec_nomit
+  N_nomit[k + 1]      <- sum(N_vec_nomit)
+  pairs_nomit[k + 1]  <- sum(N_vec_nomit[6:9]) / 2
+}
+
 bell_phase_proj <- bind_rows(
   bell_phase_proj,
-  tibble(year = 0:years, N = N_base, predicted_pairs = pairs_base, scenario = "No mitigation", phase_in = "Immediate")
+  tibble(year = 0:years, N = N_base,  predicted_pairs = pairs_base,  scenario = "Low mitigation (1990–2009 baseline)", phase_in = "Immediate"),
+  tibble(year = 0:years, N = N_nomit, predicted_pairs = pairs_nomit, scenario = "No mitigation (counterfactual)",      phase_in = "Immediate")
 ) %>%
   mutate(
-    scenario = factor(scenario, levels = bell_scenarios$scenario),
+    scenario = factor(scenario, levels = c("No mitigation (counterfactual)", bell_scenarios$scenario)),
     phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year", "50-year", "60-year"))
   )
 
@@ -2795,14 +2965,17 @@ phase_linetypes <- c(
 )
 
 p_8a <- ggplot(
-  bell_phase_proj %>% filter(scenario != "No mitigation"),
+  bell_phase_proj %>% filter(!scenario %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")),
   aes(x = year, y = N, color = scenario, linetype = phase_in)
 ) +
   geom_line(linewidth = 0.8) +
-  # No-mitigation baseline shown as a single reference line (phase-in has no effect at eff = 0)
-  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation"),
+  # Low-mit baseline and no-mit counterfactual shown as single reference lines (phase-in has no effect at eff = 0)
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
             aes(x = year, y = N),
             inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation (counterfactual)"),
+            aes(x = year, y = N),
+            inherit.aes = FALSE, color = "#b2182b", linetype = "dotted", linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_point(data        = bird_obs,
              aes(x = year, y = N_scaled),
@@ -2811,7 +2984,7 @@ p_8a <- ggplot(
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(
-    values = bell_colors[names(bell_colors) != "No mitigation"],
+    values = bell_colors[!names(bell_colors) %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")],
     name   = "Scenario"
   ) +
   scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
@@ -2827,7 +3000,7 @@ p_8a <- ggplot(
     x        = "Years since 2000 (1990\u20132009 mean)",
     y        = "Population (N individuals)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
-    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation. Orange dots = observed breeding pairs"
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual. Orange dots = observed breeding pairs"
   ) +
   themeo + theme(legend.position = "right")
 p_8a
@@ -2836,13 +3009,16 @@ p_8a
 **plot 8a (pairs) — Bell et al. 2025 scenarios × phase-in timing, breeding pairs as primary y-axis**
 ```{r plot-8a-pairs, fig.width = 11, fig.height = 6}
 p_8a_pairs <- ggplot(
-  bell_phase_proj %>% filter(scenario != "No mitigation"),
+  bell_phase_proj %>% filter(!scenario %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")),
   aes(x = year, y = predicted_pairs, color = scenario, linetype = phase_in)
 ) +
   geom_line(linewidth = 0.8) +
-  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation"),
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
             aes(x = year, y = predicted_pairs),
             inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_line(data        = bell_phase_proj %>% filter(scenario == "No mitigation (counterfactual)"),
+            aes(x = year, y = predicted_pairs),
+            inherit.aes = FALSE, color = "#b2182b", linetype = "dotted", linewidth = 0.9) +
   geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_point(data        = bird_obs,
              aes(x = year, y = pairs),
@@ -2851,7 +3027,7 @@ p_8a_pairs <- ggplot(
             aes(x = year, y = pairs, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(
-    values = bell_colors[names(bell_colors) != "No mitigation"],
+    values = bell_colors[!names(bell_colors) %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")],
     name   = "Scenario"
   ) +
   scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
@@ -2861,7 +3037,7 @@ p_8a_pairs <- ggplot(
     x        = "Years since 2000 (1990\u20132009 mean)",
     y        = "Breeding pairs (Bird Island)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
-    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation. Orange dots = observed breeding pairs"
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual. Orange dots = observed breeding pairs"
   ) +
   themeo + theme(legend.position = "right")
 p_8a_pairs
@@ -2929,7 +3105,7 @@ bell_phase_proj_long <- map_dfr(1:nrow(bell_scen_mitig), function(i) {
   })
 })
 
-# No-mitigation baseline (500-year)
+# Low-mitigation baseline (500-year)
 N_vec_base_long    <- n0_vec
 N_base_long        <- numeric(yearslong + 1)
 pairs_base_long    <- numeric(yearslong + 1)
@@ -2941,12 +3117,25 @@ for (k in 1:yearslong) {
   pairs_base_long[k + 1]  <- sum(N_vec_base_long[6:9]) / 2
 }
 
+# No-mitigation counterfactual (500-year)
+N_vec_nomit_long    <- n0_vec
+N_nomit_long        <- numeric(yearslong + 1)
+pairs_nomit_long    <- numeric(yearslong + 1)
+N_nomit_long[1]     <- sum(N_vec_nomit_long)
+pairs_nomit_long[1] <- sum(N_vec_nomit_long[6:9]) / 2
+for (k in 1:yearslong) {
+  N_vec_nomit_long         <- m_no_mit %*% N_vec_nomit_long
+  N_nomit_long[k + 1]      <- sum(N_vec_nomit_long)
+  pairs_nomit_long[k + 1]  <- sum(N_vec_nomit_long[6:9]) / 2
+}
+
 bell_phase_proj_long <- bind_rows(
   bell_phase_proj_long,
-  tibble(year = 0:yearslong, N = N_base_long, predicted_pairs = pairs_base_long, scenario = "No mitigation", phase_in = "Immediate")
+  tibble(year = 0:yearslong, N = N_base_long,  predicted_pairs = pairs_base_long,  scenario = "Low mitigation (1990–2009 baseline)", phase_in = "Immediate"),
+  tibble(year = 0:yearslong, N = N_nomit_long, predicted_pairs = pairs_nomit_long, scenario = "No mitigation (counterfactual)",      phase_in = "Immediate")
 ) %>%
   mutate(
-    scenario = factor(scenario, levels = bell_scenarios$scenario),
+    scenario = factor(scenario, levels = c("No mitigation (counterfactual)", bell_scenarios$scenario)),
     phase_in = factor(phase_in, levels = c("Immediate", "5-year", "10-year", "20-year", "30-year", "40-year", "50-year", "60-year"))
   )
 ```
@@ -2954,13 +3143,16 @@ bell_phase_proj_long <- bind_rows(
 **plot 8b — 500-year horizon, Bell et al. 2025 scenarios × phase-in timing**
 ```{r plot-8b, fig.width = 11, fig.height = 6}
 p_8b <- ggplot(
-  bell_phase_proj_long %>% filter(scenario != "No mitigation"),
+  bell_phase_proj_long %>% filter(!scenario %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")),
   aes(x = year, y = N, color = scenario, linetype = phase_in)
 ) +
   geom_line(linewidth = 0.8) +
-  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation"),
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
             aes(x = year, y = N),
             inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation (counterfactual)"),
+            aes(x = year, y = N),
+            inherit.aes = FALSE, color = "#b2182b", linetype = "dotted", linewidth = 0.9) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
    geom_point(data        = bird_obs,
              aes(x = year, y = N_scaled),
@@ -2969,7 +3161,7 @@ p_8b <- ggplot(
             aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(
-    values = bell_colors[names(bell_colors) != "No mitigation"],
+    values = bell_colors[!names(bell_colors) %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")],
     name   = "Scenario"
   ) +
   scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
@@ -2985,7 +3177,7 @@ p_8b <- ggplot(
     x        = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
     y        = "Population (N individuals)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
-    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual"
   ) +
   themeo + theme(legend.position = "right")
 p_8b
@@ -2994,13 +3186,16 @@ p_8b
 **plot 8b (pairs) — 500-year horizon, breeding pairs as primary y-axis**
 ```{r plot-8b-pairs, fig.width = 11, fig.height = 6}
 p_8b_pairs <- ggplot(
-  bell_phase_proj_long %>% filter(scenario != "No mitigation"),
+  bell_phase_proj_long %>% filter(!scenario %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")),
   aes(x = year, y = predicted_pairs, color = scenario, linetype = phase_in)
 ) +
   geom_line(linewidth = 0.8) +
-  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation"),
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "Low mitigation (1990–2009 baseline)"),
             aes(x = year, y = predicted_pairs),
             inherit.aes = FALSE, color = "#d73027", linetype = "dashed", linewidth = 0.9) +
+  geom_line(data        = bell_phase_proj_long %>% filter(scenario == "No mitigation (counterfactual)"),
+            aes(x = year, y = predicted_pairs),
+            inherit.aes = FALSE, color = "#b2182b", linetype = "dotted", linewidth = 0.9) +
   geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   geom_point(data        = bird_obs,
              aes(x = year, y = pairs),
@@ -3009,7 +3204,7 @@ p_8b_pairs <- ggplot(
             aes(x = year, y = pairs, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(
-    values = bell_colors[names(bell_colors) != "No mitigation"],
+    values = bell_colors[!names(bell_colors) %in% c("Low mitigation (1990–2009 baseline)", "No mitigation (counterfactual)")],
     name   = "Scenario"
   ) +
   scale_linetype_manual(values = phase_linetypes, name = "Phase-in") +
@@ -3019,7 +3214,7 @@ p_8b_pairs <- ggplot(
     x        = paste0("Years since 2000 (1990\u20132009 mean) (", yearslong, "-year horizon)"),
     y        = "Breeding pairs (Bird Island)",
     title    = paste0("Bell et al. 2025 ACAP scenarios \u00d7 phase-in timing \u2014 ", target_period, " baseline"),
-    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+    subtitle = "Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual"
   ) +
   themeo + theme(legend.position = "right")
 p_8b_pairs
@@ -3038,7 +3233,7 @@ p_8c <- p_8b +
   ) +
   geom_hline(yintercept = N0, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   labs(
-    subtitle = "Y-axis cropped at 50,000 to show recovery to baseline (N\u2080). Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+    subtitle = "Y-axis cropped at 50,000 to show recovery to baseline (N\u2080). Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual"
   )
 p_8c
 ```
@@ -3053,7 +3248,7 @@ p_8c_pairs <- p_8b_pairs +
   ) +
   geom_hline(yintercept = pairs_recovery_target, color = "grey50", linetype = "dashed", linewidth = 0.4) +
   labs(
-    subtitle = "Y-axis cropped to show recovery; dashed grey = 1983/84 Mackley target (1,370 pairs). Color = scenario; linetype = phase-in speed. Red dashed = no mitigation"
+    subtitle = "Y-axis cropped to show recovery; dashed grey = 1983/84 Mackley target (1,370 pairs). Color = scenario; linetype = phase-in speed. Red dashed = low mitigation baseline; dark red dotted = no mitigation counterfactual"
   )
 p_8c_pairs
 ```
@@ -3065,7 +3260,7 @@ p_8c_pairs
 *PART 9 — REALISTIC TRAJECTORY: 2/3 MEASURES PHASED IN FROM 2005, OPTIONAL UPGRADE TO 3/3 IN 2026*
 
 Timeline (year 0 = 1990):
-  - Years 0–14 (1990–2004): no mitigation
+  - Years 0–14 (1990–2004): low mitigation (observed 1990–2009 baseline, m_base)
   - Years 15–34 (2005–2024): 20-year phase-in of mean 2/3 ACAP measures (bell_2of3_acap efficacy)
   - Year 35 (2025): 2/3 at maximum compliance, held
   - Year 36+ (2026+): either stay at 2/3, or upgrade to full 3/3
@@ -3142,9 +3337,11 @@ m_3of3_50  <- make_11stage(s3of3_50$s_j1, s3of3_50$s_juv, s3of3_50$s_imm, s3of3_
 
 # Lambda verification
 tibble(
-  scenario = c("No mitigation", "2/3 at 50% compliance", "2/3 at 100% compliance",
+  scenario = c("No mitigation (counterfactual)", "Low mitigation (1990–2009 baseline)",
+               "2/3 at 50% compliance", "2/3 at 100% compliance",
                "3/3 at 50% compliance", "3/3 full compliance"),
-  lambda   = c(lambda_base,
+  lambda   = c(lambda_no_mit,
+               lambda_base,
                as.numeric(eigen(m_2of3_50)$values[1]),
                as.numeric(eigen(m_2of3_100)$values[1]),
                as.numeric(eigen(m_3of3_50)$values[1]),
@@ -3152,7 +3349,7 @@ tibble(
 ) %>% print()
 
 # Matrix selector per time step k (k = 1..years, where year 0 = 1990)
-# k < yr_phase_start          → m_base (no mitigation)
+# k < yr_phase_start          → m_base (low mitigation baseline)
 # yr_phase_start <= k <= 34   → phase-in step k - yr_phase_start + 1
 # k = 35                      → terminal 2/3
 # k >= yr_upgrade (36)        → 3/3 if upgrading, else continue with terminal 2/3
@@ -3210,7 +3407,7 @@ proj_2of3_100_upgrade <- run_proj(
   "2/3 phase-in (2005), 100% \u2192 3/3 (2026)")
 
 realistic_scenarios <- bind_rows(
-  proj_part1 %>% filter(scenario %in% c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)")),
+  proj_part1 %>% filter(scenario %in% c("No mitigation (counterfactual)", "Low mitigation (1990–2009 baseline)", "Immediate 3/3 (100% coverage)")),
   proj_2of3_50_stay,
   proj_2of3_50_upgrade,
   proj_2of3_50_upgrade_3of3_50,
@@ -3219,7 +3416,8 @@ realistic_scenarios <- bind_rows(
   proj_2of3_100_upgrade
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
@@ -3282,7 +3480,7 @@ proj_2of3_100_upgrade_pairs <- run_proj_pairs(
   "2/3 phase-in (2005), 100% \u2192 3/3 (2026)")
 
 realistic_scenarios_pairs <- bind_rows(
-  proj_part2_pairs %>% filter(scenario %in% c("No mitigation (baseline)", "Immediate 3/3 (100% coverage)")),
+  proj_part2_pairs %>% filter(scenario %in% c("No mitigation (counterfactual)", "Low mitigation (1990–2009 baseline)", "Immediate 3/3 (100% coverage)")),
   proj_2of3_50_stay_pairs,
   proj_2of3_50_upgrade_pairs,
   proj_2of3_50_upgrade_3of3_50_pairs,
@@ -3291,7 +3489,8 @@ realistic_scenarios_pairs <- bind_rows(
   proj_2of3_100_upgrade_pairs
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
@@ -3321,7 +3520,8 @@ p_9a <- ggplot(realistic_scenarios,
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"                  = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"                  = "#d73027",
     "2/3 phase-in (2005), 50% compliance"       = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "#f46d43",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "#b35806",
@@ -3330,7 +3530,8 @@ p_9a <- ggplot(realistic_scenarios,
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "#1a9641",
     "Immediate 3/3 (100% coverage)"             = "#253494")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"                  = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"                  = "dashed",
     "2/3 phase-in (2005), 50% compliance"       = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "solid",
@@ -3376,7 +3577,8 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
   # geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
   #           inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"                  = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"                  = "#d73027",
     "2/3 phase-in (2005), 50% compliance"       = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "#f46d43",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "#b35806",
@@ -3385,7 +3587,8 @@ p_9a_pairs <- ggplot(realistic_scenarios_pairs,
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)" = "#1a9641",
     "Immediate 3/3 (100% coverage)"             = "#253494")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"                  = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"                  = "dashed",
     "2/3 phase-in (2005), 50% compliance"       = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"     = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)" = "solid",
@@ -3453,11 +3656,13 @@ proj_2of3_50_upgrade_100_300 <- run_proj_n(function(k) { if (k < yr_phase_start)
 proj_2of3_100_stay_300   <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else m_2of3_100 }, "2/3 phase-in (2005), 100% compliance",      years_300)
 proj_2of3_100_upgrade_300 <- run_proj_n(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else if (k < yr_upgrade) m_2of3_100 else m_3of3 }, "2/3 phase-in (2005), 100% \u2192 3/3 (2026)", years_300)
 
-# Extend baseline and immediate 3/3 to 300 years for reference
-proj_base_300 <- run_proj_n(function(k) m_base,  "No mitigation (baseline)",       years_300)
-proj_3of3_300 <- run_proj_n(function(k) m_3of3,  "Immediate 3/3 (100% coverage)",  years_300)
+# Extend baseline, no-mit counterfactual, and immediate 3/3 to 300 years for reference
+proj_base_300  <- run_proj_n(function(k) m_base,   "Low mitigation (1990–2009 baseline)",       years_300)
+proj_nomit_300 <- run_proj_n(function(k) m_no_mit, "No mitigation (counterfactual)",            years_300)
+proj_3of3_300  <- run_proj_n(function(k) m_3of3,   "Immediate 3/3 (100% coverage)",  years_300)
 
 realistic_300 <- bind_rows(
+  proj_nomit_300,
   proj_base_300,
   proj_2of3_50_stay_300,
   proj_2of3_50_upgrade_300,
@@ -3468,7 +3673,8 @@ realistic_300 <- bind_rows(
   proj_3of3_300
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
@@ -3485,10 +3691,12 @@ proj_2of3_50_upgrade_3of3_50_300_pairs <- run_proj_n_pairs(function(k) { if (k <
 proj_2of3_50_upgrade_100_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_50[[k - yr_phase_start + 1]]  else if (k < yr_upgrade) m_2of3_50  else m_2of3_100 }, "2/3 phase-in (2005), 50% \u2192 100% (2026)", years_300)
 proj_2of3_100_stay_300_pairs   <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else m_2of3_100 }, "2/3 phase-in (2005), 100% compliance",      years_300)
 proj_2of3_100_upgrade_300_pairs <- run_proj_n_pairs(function(k) { if (k < yr_phase_start) m_base else if (k < yr_phase_start + n_phase_steps) phase_2of3_100[[k - yr_phase_start + 1]] else if (k < yr_upgrade) m_2of3_100 else m_3of3 }, "2/3 phase-in (2005), 100% \u2192 3/3 (2026)", years_300)
-proj_base_300_pairs <- run_proj_n_pairs(function(k) m_base,  "No mitigation (baseline)",       years_300)
-proj_3of3_300_pairs <- run_proj_n_pairs(function(k) m_3of3,  "Immediate 3/3 (100% coverage)",  years_300)
+proj_base_300_pairs  <- run_proj_n_pairs(function(k) m_base,   "Low mitigation (1990–2009 baseline)",       years_300)
+proj_nomit_300_pairs <- run_proj_n_pairs(function(k) m_no_mit, "No mitigation (counterfactual)",            years_300)
+proj_3of3_300_pairs  <- run_proj_n_pairs(function(k) m_3of3,   "Immediate 3/3 (100% coverage)",  years_300)
 
 realistic_300_pairs <- bind_rows(
+  proj_nomit_300_pairs,
   proj_base_300_pairs,
   proj_2of3_50_stay_300_pairs,
   proj_2of3_50_upgrade_300_pairs,
@@ -3499,7 +3707,8 @@ realistic_300_pairs <- bind_rows(
   proj_3of3_300_pairs
 ) %>%
   mutate(scenario = factor(scenario, levels = c(
-    "No mitigation (baseline)",
+    "No mitigation (counterfactual)",
+    "Low mitigation (1990–2009 baseline)",
     "2/3 phase-in (2005), 50% compliance",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)",
     "2/3 phase-in (2005), 50% \u2192 3/3 50% (2026)",
@@ -3522,14 +3731,16 @@ p_9b <- ggplot(realistic_300,
   geom_text(data = bird_obs, aes(x = year, y = N_scaled, label = season),
             inherit.aes = FALSE, color = "#e6550d", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"                   = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"                   = "#d73027",
     "2/3 phase-in (2005), 50% compliance"        = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"   = "#f46d43",
     "2/3 phase-in (2005), 100% compliance"       = "#4dac26",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)"  = "#1a9641",
     "Immediate 3/3 (100% coverage)"              = "#253494")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"                   = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"                   = "dashed",
     "2/3 phase-in (2005), 50% compliance"        = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"   = "solid",
     "2/3 phase-in (2005), 100% compliance"       = "solid",
@@ -3570,14 +3781,16 @@ p_9b_pairs <- ggplot(realistic_300_pairs,
   geom_text(data = clay_pairs, aes(x = year, y = pairs, label = Period),
             inherit.aes = FALSE, color = "#2166ac", size = 2.5, vjust = -0.8) +
   scale_color_manual(values = c(
-    "No mitigation (baseline)"                   = "#d73027",
+    "No mitigation (counterfactual)" = "#b2182b",
+    "Low mitigation (1990–2009 baseline)"                   = "#d73027",
     "2/3 phase-in (2005), 50% compliance"        = "#fdae61",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"   = "#f46d43",
     "2/3 phase-in (2005), 100% compliance"       = "#4dac26",
     "2/3 phase-in (2005), 100% \u2192 3/3 (2026)"  = "#1a9641",
     "Immediate 3/3 (100% coverage)"              = "#253494")) +
   scale_linetype_manual(values = c(
-    "No mitigation (baseline)"                   = "dashed",
+    "No mitigation (counterfactual)" = "dotted",
+    "Low mitigation (1990–2009 baseline)"                   = "dashed",
     "2/3 phase-in (2005), 50% compliance"        = "solid",
     "2/3 phase-in (2005), 50% \u2192 3/3 (2026)"   = "solid",
     "2/3 phase-in (2005), 100% compliance"       = "solid",
